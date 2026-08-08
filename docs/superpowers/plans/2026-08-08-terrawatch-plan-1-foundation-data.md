@@ -2198,7 +2198,7 @@ class QuakeRepository(
         val previous = previousById ?: result.replacesId?.let { dao.byId(it) }
             ?: dao.byId(result.canonical.id)?.takeIf { it.id != incoming.id }
         result.replacesId?.let { dao.delete(it) }
-        dao.upsert(result.canonical)
+        dao.replace(result.canonical)   // NOT upsert() — reconciler already resolved recency; see Task 9 DAO notes
         alerts.evaluate(previous, result.canonical, rules, home)?.let { _alertEvents.tryEmit(it) }
     }
 
@@ -2222,6 +2222,32 @@ DELETE FROM quake WHERE id = ?;
 fun delete(id: String) = db.quakeQueries.delete(id)
 fun metaGet(key: String): String? = db.quakeQueries.meta_get(key).executeAsOneOrNull()
 fun metaPut(key: String, value: String) { db.quakeQueries.meta_put(key, value) }
+
+/**
+ * Unconditional write for DedupeEngine-reconciled rows. The reconciler has already
+ * resolved recency (updatedAtMillis = max of both sides) and merged sources/revisions,
+ * so the upsert() recency gate must NOT run — it would silently drop a merge whenever
+ * the surviving updatedAtMillis equals the stored one (late-arriving agency twin with
+ * a lagging timestamp). Idempotent for self-merges: reconcile() of an already-stored
+ * row reproduces the stored row byte-for-byte.
+ */
+fun replace(quake: Quake) = db.transaction { db.quakeQueries.insertOrReplace(quake.toRow()) }
+```
+
+**Task 7 review carry-over (system seam, empirically proven):** `ingest()` MUST write the
+reconciled canonical via `replace()`, never `upsert()` — and MUST honor `replacesId` via
+`delete()`. Add this repository test alongside the others (the reviewer's exact probe):
+
+```kotlin
+@Test fun `lagging-timestamp emsc twin still contributes tsunami and sources`() = runTest {
+    val r = /* repo as in other tests */
+    r.ingest(quake("us1", Source.USGS, 5.5, t = 1_950_000, updated = 2_000_000))
+    r.ingest(quake("e1", Source.EMSC, 5.5, t = 1_960_000, updated = 1_500_000).copy(tsunami = true))
+    val stored = dao.byId("us1")!!
+    assertEquals(true, stored.tsunami)                 // OR survived the write
+    assertEquals("e1", stored.sources[Source.EMSC])    // union survived the write
+    assertEquals(1, dao.countAll())
+}
 ```
 
 Note for implementer: `dao.recent()` returns rows filtered by a fixed `sinceMillis` computed at call time — acceptable for Plan 1; Plan 2 re-queries on a timer.
