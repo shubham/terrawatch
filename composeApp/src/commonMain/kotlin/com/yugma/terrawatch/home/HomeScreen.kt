@@ -1,22 +1,28 @@
 package com.yugma.terrawatch.home
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.yugma.terrawatch.map.QuakeMap
 import com.yugma.terrawatch.ui.format.formatRelativeTime
 import com.yugma.terrawatch.ui.theme.TerraRadii
+import kotlinx.coroutines.delay
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
@@ -25,6 +31,13 @@ import kotlin.time.ExperimentalTime
 // render the map underneath" half; map desaturation and the Retry link are not part of this task's
 // brief and are left for whichever task next touches this banner.
 private const val STALE_AFTER_MILLIS = 10 * 60 * 1000L
+
+// Fix Round 2 (review finding): how often the ticker below re-reads wall-clock time. Without it,
+// isStale()'s verdict and the banner's "N min ago" text were computed once per recomposition of
+// the Content branch and never again — Compose has no State read to invalidate on there, so a
+// screen left open would freeze at whatever staleness/age it happened to show the moment `state`
+// last changed, however much real time then passed with zero new data.
+private const val TICKER_INTERVAL_MILLIS = 30_000L
 
 /**
  * The app's centerpiece: a full-bleed [QuakeMap] fed from [viewModel], with a translucent
@@ -48,6 +61,11 @@ private const val STALE_AFTER_MILLIS = 10 * 60 * 1000L
 @Composable
 fun HomeScreen(viewModel: HomeViewModel) {
     val state by viewModel.state.collectAsState()
+    // Fix Round 2 (review finding): feeds both isStale() and the banner's formatRelativeTime()
+    // call below, so the staleness verdict and the displayed age both actually advance every 30s
+    // instead of freezing at whatever they were when `state` last changed — see
+    // TICKER_INTERVAL_MILLIS and rememberNowMillisTicker() below.
+    val nowMillis by rememberNowMillisTicker()
     Box(Modifier.fillMaxSize()) {
         val content = state as? HomeUiState.Content
         // Mounted once, for good, regardless of state — see the kdoc above. Empty pins pre-Content
@@ -63,24 +81,50 @@ fun HomeScreen(viewModel: HomeViewModel) {
             HomeUiState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
             }
-            is HomeUiState.Content -> if (s.refreshFailed || isStale(s.lastUpdatedMillis)) {
+            is HomeUiState.Content -> if (s.refreshFailed || isStale(s.lastUpdatedMillis, nowMillis)) {
                 StalenessBanner(
                     lastUpdatedMillis = s.lastUpdatedMillis,
-                    modifier = Modifier.align(Alignment.TopCenter).padding(top = 16.dp),
+                    nowMillis = nowMillis,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        // Fix Round 2 (entangled minor): the banner used to float at a fixed 16dp
+                        // from the Box's top edge, which — under a full-bleed map with no Scaffold
+                        // padding — is the screen's physical top edge, i.e. under the status bar on
+                        // any device that draws one. This pushes it below the status bar first;
+                        // the 16dp visual gap is then added on top of that, not instead of it.
+                        .windowInsetsPadding(WindowInsets.statusBars)
+                        .padding(top = 16.dp),
                 )
             }
         }
     }
 }
 
-@OptIn(ExperimentalTime::class)
-private fun isStale(lastUpdatedMillis: Long?): Boolean =
-    lastUpdatedMillis != null &&
-        Clock.System.now().toEpochMilliseconds() - lastUpdatedMillis > STALE_AFTER_MILLIS
+/**
+ * Fix Round 2 (review finding): a plain wall-clock read inside a `@Composable` body is not itself
+ * a Compose `State` — recomposition happens when a `State` *value* changes, not merely because
+ * time passed, so `isStale`/the banner text used to be computed once and never revisited.
+ * `produceState` runs its block in a coroutine scoped to the caller's composition lifetime; looping
+ * forever and re-assigning `value` every [TICKER_INTERVAL_MILLIS] is what actually triggers
+ * recomposition of whatever reads this ticker.
+ */
+@Composable
+private fun rememberNowMillisTicker(): State<Long> =
+    produceState(initialValue = currentTimeMillis()) {
+        while (true) {
+            delay(TICKER_INTERVAL_MILLIS)
+            value = currentTimeMillis()
+        }
+    }
 
 @OptIn(ExperimentalTime::class)
+private fun currentTimeMillis(): Long = Clock.System.now().toEpochMilliseconds()
+
+private fun isStale(lastUpdatedMillis: Long?, nowMillis: Long): Boolean =
+    lastUpdatedMillis != null && nowMillis - lastUpdatedMillis > STALE_AFTER_MILLIS
+
 @Composable
-private fun StalenessBanner(lastUpdatedMillis: Long?, modifier: Modifier = Modifier) {
+private fun StalenessBanner(lastUpdatedMillis: Long?, nowMillis: Long, modifier: Modifier = Modifier) {
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(TerraRadii.pill),
@@ -89,7 +133,7 @@ private fun StalenessBanner(lastUpdatedMillis: Long?, modifier: Modifier = Modif
         shadowElevation = 2.dp,
     ) {
         val text = lastUpdatedMillis?.let {
-            "Updated ${formatRelativeTime(it, Clock.System.now().toEpochMilliseconds())}"
+            "Updated ${formatRelativeTime(it, nowMillis)}"
         } ?: "Not updated yet"
         Text(
             text = text,

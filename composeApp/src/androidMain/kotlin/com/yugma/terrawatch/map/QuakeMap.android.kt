@@ -1,8 +1,8 @@
 package com.yugma.terrawatch.map
 
-import android.util.Log
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -35,7 +35,6 @@ private const val WORLD_CENTER_LONGITUDE = 0.0
 private const val WORLD_ZOOM = 1.5
 
 private const val PIN_STROKE_WIDTH_DP = 1.5f
-private const val LOG_TAG = "TerraWatchMap"
 
 /**
  * Task 8: live magnitude-banded quake pins. maplibre-compose 0.14.0's runtime-layer API confirmed
@@ -52,10 +51,14 @@ private const val LOG_TAG = "TerraWatchMap"
  * exercised end-to-end. Instead, [pins] are grouped by [MagnitudeBand] in plain Kotlin and each
  * band gets its own `GeoJsonSource` + `CircleLayer` pair with constant paint values — still fully
  * data-driven per quake (which band's source a pin lands in is exactly a function of its
- * magnitude), just without the extra, unverified expression-DSL surface. Clustering is skipped
- * entirely per the brief's own allowance ("ONLY if ... <1h work; else skip, note, defer to Plan
- * 3") — the 3-layer cluster/unclustered pattern needs the same unverified expression machinery
- * this task is deliberately avoiding, so it's deferred, not attempted.
+ * magnitude), just without the extra, unverified expression-DSL surface.
+ *
+ * Clustering deferred to Task 10 by controller decision (2026-08-08): the spike's cluster pattern
+ * was inferred, not verified, against the real library API, and today's live pin count (~250) is
+ * bearable unclustered in the meantime — revisit once there's a verified `GeoJsonOptions` API to
+ * build the 3-layer cluster/unclustered pattern on. (Fix Round 2: replaces a prior version of this
+ * note that quoted the task brief as allowing the deferral "ONLY if ... <1h work" — no such
+ * passage exists in the brief; see task-8-report.md's Fix Round 2 corrections section.)
  *
  * BUG FIX (post-Task-8-device-verify): pin updates must flow through `GeoJsonSource.setData` on a
  * source that stays `remember`-ed for the composable's whole lifetime — never through tearing down
@@ -111,7 +114,13 @@ actual fun QuakeMap(
 
 @Composable
 private fun QuakeBandCircleLayer(band: MagnitudeBand, pins: List<QuakePin>, onPinTap: (String) -> Unit) {
-  val source = rememberGeoJsonSource(GeoJsonData.Features(pins.toFeatureCollection()))
+  // Fix Round 2 (entangled minor): was recomputed unconditionally on every recomposition of this
+  // composable, allocating a brand-new FeatureCollection/GeoJsonData.Features even when [pins]
+  // hadn't changed reference-wise (e.g. a recomposition triggered by something unrelated further
+  // up the tree). remember(pins) confines that allocation — and whatever rememberGeoJsonSource
+  // does internally in response to a "new" GeoJsonData instance — to actual pin-data changes.
+  val geoJsonData = remember(pins) { GeoJsonData.Features(pins.toFeatureCollection()) }
+  val source = rememberGeoJsonSource(geoJsonData)
   CircleLayer(
       id = "quake-pins-${band.name.lowercase()}",
       source = source,
@@ -120,10 +129,21 @@ private fun QuakeBandCircleLayer(band: MagnitudeBand, pins: List<QuakePin>, onPi
       strokeColor = const(Color.White),
       strokeWidth = const(PIN_STROKE_WIDTH_DP.dp),
       onClick = { features ->
+        // Fix Round 2 (entangled minor): used to unconditionally return Consume even when no
+        // feature id resolved (features empty, or a feature with a null/non-string id) — Pass
+        // lets a click that hit nothing meaningful here fall through instead of being silently
+        // swallowed. The Log.d that used to sit here (its one job — proving onPinTap(id) actually
+        // fires — was already discharged and recorded on-device in Fix Round 1's report) is
+        // removed rather than DEBUG-gated: this module has no BuildConfig (buildFeatures.buildConfig
+        // is not enabled anywhere in this project), so gating it would mean adding a build feature
+        // for one log line.
         val id = features.firstOrNull()?.id?.content
-        Log.d(LOG_TAG, "onPinTap(id=$id)")
-        id?.let(onPinTap)
-        ClickResult.Consume
+        if (id == null) {
+          ClickResult.Pass
+        } else {
+          onPinTap(id)
+          ClickResult.Consume
+        }
       },
   )
 }
@@ -139,10 +159,24 @@ private fun List<QuakePin>.toFeatureCollection() =
         }
     )
 
-// Brief's interfaces block (authoritative): "pin size 8+band.ordinal*4 dp-equivalent". Applied
-// literally across all five MagnitudeBand values: LOW=8, MODERATE=12, STRONG=16, MAJOR=20,
-// UNKNOWN=24 — note UNKNOWN (ordinal 4, magnitude data missing) ends up the largest radius, larger
-// than MAJOR. That's very likely an oversight in a formula meant for the four numbered severities,
-// but "interfaces authoritative" per the task brief and UNKNOWN pins are rare in practice (feeds
-// almost always carry a magnitude) — flagging here rather than silently special-casing it.
-private fun pinRadiusDp(band: MagnitudeBand): Float = 8f + band.ordinal * 4f
+// pinRadiusDp mapping: controller decision (Fix Round 2 dispatch, 2026-08-08) — LOW=4,
+// MODERATE=6, STRONG=8, MAJOR=10, UNKNOWN=3. Explicit per-band values now, not a formula:
+// UNKNOWN is deliberately the SMALLEST radius of all five (smaller than LOW) so a
+// missing-magnitude pin can never visually dominate a real one.
+//
+// This supersedes the original report's literal reading of the brief's interfaces-block formula
+// ("8 + band.ordinal*4 dp-equivalent" -> LOW=8/MODERATE=12/STRONG=16/MAJOR=20/UNKNOWN=24), which
+// put UNKNOWN largest of all five bands — flagged there as a likely oversight, now corrected here
+// by explicit controller decision rather than by extending the formula's own ordinal logic
+// (which has no way to produce a smallest-of-all-five UNKNOWN value).
+//
+// (Fix Round 2 also corrects a second, separate error from the original report: a "LOW 4dp ->
+// MAJOR 10dp" formula was attributed there to "the brief's other mention" — no such passage
+// exists in the brief either; see task-8-report.md's Fix Round 2 corrections section.)
+private fun pinRadiusDp(band: MagnitudeBand): Float = when (band) {
+  MagnitudeBand.LOW -> 4f
+  MagnitudeBand.MODERATE -> 6f
+  MagnitudeBand.STRONG -> 8f
+  MagnitudeBand.MAJOR -> 10f
+  MagnitudeBand.UNKNOWN -> 3f
+}

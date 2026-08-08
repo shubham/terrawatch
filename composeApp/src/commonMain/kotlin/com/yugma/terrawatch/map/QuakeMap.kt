@@ -41,7 +41,9 @@ data class QuakePin(
  * @param newQuakeId the most recently-inserted quake's id, if any — accepted by every actual as of
  *   Task 8 but not yet used to animate anything (Task 10).
  * @param onPinTap invoked with a tapped pin's [QuakePin.id] (Task 9 opens the detail sheet from
- *   this; Task 8 only proves the callback fires, via a logcat marker on the Android actual).
+ *   this; Task 8 proved the callback fires — a real device tap resolved a real quake id,
+ *   cross-checked against the device's own DB, see task-8-report.md's Fix Round 1 — via a logcat
+ *   marker on the Android actual that Fix Round 2 then removed as no-longer-needed debug noise).
  */
 @Composable
 expect fun QuakeMap(
