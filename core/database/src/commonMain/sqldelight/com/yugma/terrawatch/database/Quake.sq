@@ -1,0 +1,48 @@
+CREATE TABLE quake (
+  id TEXT NOT NULL PRIMARY KEY,
+  timeMillis INTEGER NOT NULL,
+  lat REAL NOT NULL,
+  lon REAL NOT NULL,
+  depthKm REAL,
+  mag REAL,
+  magType TEXT,
+  place TEXT NOT NULL,
+  tsunami INTEGER NOT NULL DEFAULT 0,
+  felt INTEGER,
+  status TEXT NOT NULL,
+  sourcesJson TEXT NOT NULL,
+  revisionsJson TEXT NOT NULL,
+  updatedAtMillis INTEGER NOT NULL,
+  fetchedAtMillis INTEGER NOT NULL
+);
+
+CREATE TABLE meta (
+  key TEXT NOT NULL PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
+CREATE INDEX quake_time ON quake(timeMillis DESC);
+CREATE INDEX quake_mag ON quake(mag);
+
+insertOrReplace:
+INSERT OR REPLACE INTO quake VALUES ?;
+
+byId:
+SELECT * FROM quake WHERE id = ?;
+
+recent:
+SELECT * FROM quake WHERE timeMillis >= ? ORDER BY timeMillis DESC;
+
+pageBefore:
+SELECT * FROM quake
+WHERE timeMillis < :timeMillis AND (:minMag IS NULL OR mag >= :minMag)
+ORDER BY timeMillis DESC LIMIT :limit;
+
+countAll:
+SELECT COUNT(*) FROM quake;
+
+meta_get:
+SELECT value FROM meta WHERE key = ?;
+
+meta_put:
+INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?);

@@ -19,5 +19,6 @@ dependencyResolutionManagement {
 include(":composeApp")
 include(":core:model")
 include(":core:network")
+include(":core:database")
 // core modules join in later tasks:
-// include(":core:database", ":core:data")
+// include(":core:data")
