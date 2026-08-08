@@ -57,4 +57,10 @@ class AlertRuleEngineTest {
     @Test fun `null magnitude never fires`() {
         assertNull(engine.evaluate(null, q(null), DEFAULT_RULES, home))
     }
+
+    @Test fun `previous without magnitude does not suppress firing`() {
+        // first report had no mag; revision adds M6.2 — must fire (null prev-mag = never crossed)
+        val e = engine.evaluate(q(null, lat = 35.0, lon = 140.0), q(6.2, lat = 35.0, lon = 140.0), DEFAULT_RULES, home)
+        assertEquals("world", assertNotNull(e).matchedRuleId)
+    }
 }
