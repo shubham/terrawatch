@@ -37,8 +37,8 @@ class UsgsApi(
         FeedResult.Failure(t)
     }
 
-    // Throws on network/HTTP/parse failure by design — callers (QuakeRepository.loadArchivePage)
-    // wrap. Contrast fetchFeed, which returns FeedResult because polling must never crash.
+    // Throws on network/HTTP/parse failure by design — the History feature's caller wraps.
+    // Contrast fetchFeed, which returns FeedResult because polling must never crash.
     @OptIn(ExperimentalTime::class)
     suspend fun queryArchive(
         endTimeMillis: Long,
