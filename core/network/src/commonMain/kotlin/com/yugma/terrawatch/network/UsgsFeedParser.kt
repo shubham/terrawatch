@@ -17,9 +17,17 @@ import kotlinx.serialization.json.longOrNull
 object UsgsFeedParser {
     private val json = Json { ignoreUnknownKeys = true }
 
+    /**
+     * Parses a USGS GeoJSON earthquake feed into a list of [Quake]s.
+     *
+     * Throws on malformed JSON or wrong document shape (e.g. a document that isn't an object,
+     * or has no "features" array); individually malformed features are skipped.
+     */
     fun parse(geojson: String): List<Quake> {
         val root = json.parseToJsonElement(geojson).jsonObject
-        return root.getValue("features").jsonArray.mapNotNull { f -> feature(f.jsonObject) }
+        return root.getValue("features").jsonArray.mapNotNull { f ->
+            runCatching { feature(f.jsonObject) }.getOrNull()
+        }
     }
 
     private fun feature(f: JsonObject): Quake? {

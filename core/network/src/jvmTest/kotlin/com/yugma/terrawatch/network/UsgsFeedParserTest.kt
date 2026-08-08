@@ -3,7 +3,6 @@ package com.yugma.terrawatch.network
 import com.yugma.terrawatch.model.QuakeStatus
 import com.yugma.terrawatch.model.Source
 import kotlin.test.Test
-import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.test.assertNotNull
 
@@ -33,5 +32,13 @@ class UsgsFeedParserTest {
     }
     @Test fun `malformed json throws`() {
         kotlin.test.assertFailsWith<Exception> { UsgsFeedParser.parse("{not json") }
+    }
+    @Test fun `shape-malformed feature is skipped, rest still parse`() {
+        val good = readFixture("usgs_all_hour.json")
+        // splice a garbage feature into the real document
+        val doc = good.replaceFirst("\"features\":[", "\"features\":[{\"properties\":{\"mag\":{\"weird\":true},\"time\":\"not-a-number\"},\"geometry\":{\"coordinates\":\"nope\"},\"id\":\"bad1\"},")
+        val quakes = UsgsFeedParser.parse(doc)
+        assertTrue(quakes.isNotEmpty())
+        assertTrue(quakes.none { it.id == "bad1" })
     }
 }
