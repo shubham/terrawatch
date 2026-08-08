@@ -44,6 +44,14 @@ data class QuakePin(
  *   this; Task 8 proved the callback fires — a real device tap resolved a real quake id,
  *   cross-checked against the device's own DB, see task-8-report.md's Fix Round 1 — via a logcat
  *   marker on the Android actual that Fix Round 2 then removed as no-longer-needed debug noise).
+ * @param onDebugLongPress Task 10 device-verification hook: invoked with a lat/lon when the user
+ *   long-presses the map. Real WS quake arrivals are rare on demand, so this is how the pin-drop
+ *   animation gets exercised deliberately on a real device — wired by HomeScreen to
+ *   `HomeViewModel.injectDebugQuake`. The Android actual only ever attaches the long-press gesture
+ *   that invokes this in a debuggable build (checked via `ApplicationInfo.FLAG_DEBUGGABLE` at the
+ *   call site, not a `BuildConfig` field — this module still has none, see QuakeMap.android.kt's
+ *   Task 8 fix note); jvm/wasmJs accept the parameter to keep the expect/actual signature aligned
+ *   but their placeholder panes have nothing to attach a gesture to.
  */
 @Composable
 expect fun QuakeMap(
@@ -51,4 +59,5 @@ expect fun QuakeMap(
     newQuakeId: String?,
     onPinTap: (String) -> Unit,
     modifier: Modifier = Modifier,
+    onDebugLongPress: (lat: Double, lon: Double) -> Unit = { _, _ -> },
 )

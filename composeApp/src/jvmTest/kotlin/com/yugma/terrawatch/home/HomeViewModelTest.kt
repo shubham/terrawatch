@@ -105,6 +105,31 @@ class HomeViewModelTest {
         }
     }
 
+    // Task 10: isLive now binds to the repository's real WS connection state
+    // (QuakeRepository.liveConnected -> EmscLiveSource.connected) instead of the old hardcoded
+    // `isLive = true` placeholder. NOTE on this task's brief: it asked to "update the existing
+    // HomeViewModelTest assertions that expect isLive==true" — grepped this file and the rest of
+    // composeApp/src before writing this test; no such assertion existed anywhere (the placeholder
+    // was never actually asserted on by name in this suite), so there is nothing to flip — this is
+    // a purely additive test. fakeRepositoryWithOneQuake() builds its EmscLiveSource over a
+    // MockEngine with no WebSockets plugin installed, so http.webSocket(...) can never actually
+    // open a session; liveConnected — and therefore isLive — must read false here. This is the
+    // honest, corrected behavior: a repository with no real WebSocket has no business claiming to
+    // be live.
+    @Test fun `isLive is false when the repository's WebSocket never actually connects`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val vm = HomeViewModel(fakeRepositoryWithOneQuake(), emptyHomeLocationStore(), LocationProvider())
+        vm.state.test {
+            var s = awaitItem()
+            while (s is HomeUiState.Loading || (s is HomeUiState.Content && s.quakes.isEmpty())) {
+                s = awaitItem()
+            }
+            val content = assertIs<HomeUiState.Content>(s)
+            assertFalse(content.isLive)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
     @Test fun `lastUpdatedMillis is populated from the repository's fetch clock`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val vm = HomeViewModel(fakeRepositoryWithOneQuake(), emptyHomeLocationStore(), LocationProvider())

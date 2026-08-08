@@ -20,12 +20,15 @@ import androidx.compose.ui.graphics.Color
 // wasmJsMain/main.kt renders a separate WebPlaceholder() today).
 // 0xFFD9E9F4 mirrors core:ui's TerraColors.Water, hardcoded rather than depending on core:ui here
 // — this is a hotfix placeholder, not a feature; core:ui's magnitudeColor has nothing to color yet.
+// [onDebugLongPress] (Task 10) is accepted to keep this actual's signature aligned with the expect
+// declaration but is unused — there is no gesture surface worth wiring on a static placeholder.
 @Composable
 actual fun QuakeMap(
     pins: List<QuakePin>,
     newQuakeId: String?,
     onPinTap: (String) -> Unit,
     modifier: Modifier,
+    onDebugLongPress: (lat: Double, lon: Double) -> Unit,
 ) {
   Box(modifier.fillMaxSize().background(Color(0xFFD9E9F4))) {
     Text("${pins.size} quakes — map on Android", modifier = Modifier.align(Alignment.Center))

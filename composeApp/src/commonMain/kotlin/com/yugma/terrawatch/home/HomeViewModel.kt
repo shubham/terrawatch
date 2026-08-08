@@ -8,7 +8,10 @@ import com.yugma.terrawatch.data.RefreshStatus
 import com.yugma.terrawatch.location.LocationProvider
 import com.yugma.terrawatch.map.QuakePin
 import com.yugma.terrawatch.model.GeoPoint
+import com.yugma.terrawatch.model.MagRevision
 import com.yugma.terrawatch.model.Quake
+import com.yugma.terrawatch.model.QuakeStatus
+import com.yugma.terrawatch.model.Source
 import com.yugma.terrawatch.model.magnitudeBand
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,6 +21,9 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlin.random.Random
+import kotlin.time.Clock
+import kotlin.time.ExperimentalTime
 
 sealed interface HomeUiState {
     data object Loading : HomeUiState
@@ -150,14 +156,15 @@ class HomeViewModel(
                     }
                     .flowOn(Dispatchers.Default),
                 refreshFailed,
-            ) { snapshot, failed ->
+                // Task 10: the Task 8/Plan 1 TODO dies here — isLive now reflects whether the
+                // EMSC WebSocket is actually open (QuakeRepository.liveConnected ->
+                // EmscLiveSource.connected), not merely "startLive() was called".
+                repository.liveConnected,
+            ) { snapshot, failed, live ->
                 HomeUiState.Content(
                     pins = snapshot.pins,
                     quakes = snapshot.quakes,
-                    // TODO(Task 10): bind to repository's live-WS connection state once that
-                    // exists. For now this only means "startLive() was called", the same
-                    // placeholder FeedViewModel uses (see FeedUiState.Content's own TODO).
-                    isLive = true,
+                    isLive = live,
                     lastUpdatedMillis = snapshot.lastUpdatedMillis,
                     refreshFailed = failed,
                 )
@@ -171,12 +178,50 @@ class HomeViewModel(
         _newSinceExpand.value = 0
     }
 
+    /**
+     * Task 10 device-verification hook: manufactures a fake M6.0 "quake" at the given point and
+     * pushes it through the exact same [QuakeRepository.ingest] path a real live-WS or feed-poll
+     * quake would take — the pin-drop animation, the feed sheet's "N NEW" chip, and
+     * [refreshFailed] clearing all fire exactly as they would for a real arrival, because
+     * `ingest()` has no way to tell this one didn't come off the wire. This method itself carries
+     * no debug/release branch (HomeViewModel stays platform/build-type agnostic, matching the rest
+     * of this class) — gating to debug builds only happens at the call site, where QuakeMap's
+     * Android actual decides whether to attach the long-press gesture that invokes this at all.
+     * The id includes a random suffix (not just the timestamp) so two presses landing in the same
+     * millisecond still both count as "new" rather than one silently overwriting the other.
+     */
+    @OptIn(ExperimentalTime::class)
+    fun injectDebugQuake(lat: Double, lon: Double) {
+        viewModelScope.launch {
+            val now = Clock.System.now().toEpochMilliseconds()
+            val id = "debug-$now-${Random.nextInt(100_000)}"
+            repository.ingest(
+                Quake(
+                    id = id,
+                    timeMillis = now,
+                    lat = lat,
+                    lon = lon,
+                    depthKm = 10.0,
+                    mag = 6.0,
+                    magType = "mw",
+                    place = "Debug-injected M6.0",
+                    tsunami = false,
+                    felt = null,
+                    status = QuakeStatus.AUTOMATIC,
+                    sources = mapOf(Source.USGS to id),
+                    revisions = listOf(MagRevision(6.0, "mw", now, Source.USGS)),
+                    updatedAtMillis = now,
+                ),
+            )
+        }
+    }
+
     private fun Quake.toPin() = QuakePin(
         id = id,
         lat = lat,
         lon = lon,
         mag = mag,
         band = magnitudeBand(mag),
-        isNew = false, // Task 10 wires pin-drop animation off newQuakeIds / QuakeMap's newQuakeId.
+        isNew = false, // Task 10 keys the pin-drop animation off QuakeMap's newQuakeId param instead.
     )
 }

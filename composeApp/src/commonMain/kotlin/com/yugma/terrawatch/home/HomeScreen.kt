@@ -25,7 +25,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,6 +41,8 @@ import com.yugma.terrawatch.ui.components.StatusShield
 import com.yugma.terrawatch.ui.format.formatRelativeTime
 import com.yugma.terrawatch.ui.theme.TerraRadii
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
@@ -60,6 +64,12 @@ private const val TICKER_INTERVAL_MILLIS = 30_000L
 // height is a fraction of the *screen's* height (via BoxWithConstraints below), not a fixed dp
 // value, so it stays proportionate across phone sizes.
 private const val SHEET_PEEK_FRACTION = 0.3f
+
+// Task 10: how long a newly-arrived quake's id stays "highlighted" as QuakeMap's `newQuakeId` —
+// long enough for the pin-drop pop + ring animation (~1.2s total, see QuakeMap.android.kt) to
+// fully play out, short enough that it can't still be "new" by the time a user who glances away
+// looks back.
+private const val NEW_QUAKE_HIGHLIGHT_EXPIRY_MILLIS = 1_500L
 
 /**
  * The app's centerpiece: a full-bleed [QuakeMap] fed from [viewModel], with a translucent
@@ -100,6 +110,9 @@ fun HomeScreen(viewModel: HomeViewModel) {
     // needs to keep advancing for exactly the same reason.
     val nowMillis by rememberNowMillisTicker()
     val content = state as? HomeUiState.Content
+    // Task 10: the pin-drop animation's trigger — see rememberExpiringNewQuakeId's own kdoc for
+    // why this needs its own expiry rather than passing viewModel.newQuakeIds straight through.
+    val newQuakeId by rememberExpiringNewQuakeId(viewModel.newQuakeIds)
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val scaffoldState = rememberBottomSheetScaffoldState()
@@ -136,9 +149,10 @@ fun HomeScreen(viewModel: HomeViewModel) {
             Box(Modifier.fillMaxSize()) {
                 QuakeMap(
                     pins = content?.pins.orEmpty(),
-                    newQuakeId = null, // TODO(Task 10): wire viewModel.newQuakeIds through here.
+                    newQuakeId = newQuakeId,
                     onPinTap = {}, // TODO(Task 11): open the quake detail sheet.
                     modifier = Modifier.fillMaxSize(),
+                    onDebugLongPress = { lat, lon -> viewModel.injectDebugQuake(lat, lon) },
                 )
                 when (val s = state) {
                     HomeUiState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -203,6 +217,28 @@ private fun rememberNowMillisTicker(): State<Long> =
             value = currentTimeMillis()
         }
     }
+
+/**
+ * Task 10: turns the hot, fire-and-forget [newQuakeIds] SharedFlow into a `State<String?>` that
+ * QuakeMap's `newQuakeId` param can key its pin-drop animation off of — holding each arrival for
+ * [NEW_QUAKE_HIGHLIGHT_EXPIRY_MILLIS] before reverting to null. `collectLatest` (not `collect`) is
+ * the "collects latest with 1.5s expiry" the brief calls for: if a second quake arrives before the
+ * first one's expiry delay finishes, that delay is cancelled outright and the value jumps straight
+ * to the new id — QuakeMap's own `LaunchedEffect(newQuakeId)` (keyed on this value) then restarts
+ * for the new arrival rather than ever seeing a spurious null in between.
+ */
+@Composable
+private fun rememberExpiringNewQuakeId(newQuakeIds: SharedFlow<String>): State<String?> {
+    val state = remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(newQuakeIds) {
+        newQuakeIds.collectLatest { id ->
+            state.value = id
+            delay(NEW_QUAKE_HIGHLIGHT_EXPIRY_MILLIS)
+            state.value = null
+        }
+    }
+    return state
+}
 
 @OptIn(ExperimentalTime::class)
 private fun currentTimeMillis(): Long = Clock.System.now().toEpochMilliseconds()

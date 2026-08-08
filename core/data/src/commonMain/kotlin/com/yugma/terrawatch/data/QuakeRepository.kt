@@ -12,6 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -43,6 +44,12 @@ class QuakeRepository(
     // replay every time an already-seen quake merely gets a magnitude revision.
     private val _insertedQuakeIds = MutableSharedFlow<String>(extraBufferCapacity = 16)
     val insertedQuakeIds: SharedFlow<String> = _insertedQuakeIds
+
+    // Task 10: truthful LIVE indicator — HomeUiState.isLive binds to this instead of the old
+    // "startLive() was called" placeholder (the Task 10 TODO from Plan 1 dies here). Pure
+    // pass-through: EmscLiveSource is the only thing that actually knows whether a WebSocket
+    // session is open right now, so this repository has no logic of its own to add on top.
+    val liveConnected: StateFlow<Boolean> get() = live.connected
 
     // Guards ingest()'s read-reconcile-write critical section: window-query, dedupe match, and
     // the replaceAndDelete() commit must run as one atomic unit across concurrent callers (poll,

@@ -3,9 +3,12 @@ package com.yugma.terrawatch
 import androidx.compose.material3.Surface
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import com.yugma.terrawatch.home.HomeScreen
 import com.yugma.terrawatch.home.HomeViewModel
+import com.yugma.terrawatch.motion.LocalReducedMotion
+import com.yugma.terrawatch.motion.systemReducedMotion
 import com.yugma.terrawatch.ui.theme.TerraTheme
 import org.koin.compose.viewmodel.koinViewModel
 
@@ -25,6 +28,11 @@ import org.koin.compose.viewmodel.koinViewModel
 fun App() {
     val homeViewModel = koinViewModel<HomeViewModel>()
     TerraTheme {
-        Surface(Modifier.fillMaxSize()) { HomeScreen(homeViewModel) }
+        // Task 10: resolved once here (composition root) and handed down via CompositionLocal so
+        // every screen/component that gates motion off LocalReducedMotion reads the same answer
+        // without each re-deriving the platform signal itself.
+        CompositionLocalProvider(LocalReducedMotion provides systemReducedMotion()) {
+            Surface(Modifier.fillMaxSize()) { HomeScreen(homeViewModel) }
+        }
     }
 }
