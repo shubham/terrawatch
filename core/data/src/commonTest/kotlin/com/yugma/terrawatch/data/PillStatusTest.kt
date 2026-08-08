@@ -69,6 +69,21 @@ class PillStatusTest {
         assertEquals(PillStatus.Kind.ALERT, status.kind)
     }
 
+    // Fix Round 1 (reviewer mutation-proof finding): the "stale-window exclusion" test below only
+    // ever exercised age == windowMs + 1 (one ms PAST the cutoff), which passes identically whether
+    // the implementation's comparison is `<=` or the strictly-wrong `<` — flipping
+    // PillStatus.kt's `nowMillis - it.timeMillis <= windowMs` to `<` still passed all 6 original
+    // tests (mutation-proved by the reviewer). This test pins age == windowMs EXACTLY (not
+    // windowMs - 1, not windowMs + 1), the same "test the literal boundary value, not just near
+    // it" technique the radius-boundary test above already uses — see this task's report for the
+    // red (mutated to `<`) / green (restored to `<=`) transcript.
+    @Test fun `quake exactly at the window boundary still alerts`() {
+        val windowMs = 86_400_000L
+        val atCutoff = q(mag = 5.0, timeMillis = NOW - windowMs)
+        val status = pillStatus(listOf(atCutoff), HOME, NOW, windowMs = windowMs)
+        assertEquals(PillStatus.Kind.ALERT, status.kind)
+    }
+
     @Test fun `quake outside the time window is excluded even if otherwise qualifying`() {
         val windowMs = 86_400_000L
         val stale = q(mag = 6.0, timeMillis = NOW - windowMs - 1)
