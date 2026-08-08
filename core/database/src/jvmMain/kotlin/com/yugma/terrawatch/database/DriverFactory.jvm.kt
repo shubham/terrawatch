@@ -7,8 +7,10 @@ import java.io.File
 actual class DriverFactory {
     actual fun createDriver(): SqlDriver {
         val dir = File(System.getProperty("user.home"), ".terrawatch").apply { mkdirs() }
-        val driver = JdbcSqliteDriver("jdbc:sqlite:${File(dir, "terrawatch.db").absolutePath}")
-        TerraWatchDb.Schema.create(driver)
+        val dbFile = File(dir, "terrawatch.db")
+        val isNew = !dbFile.exists()
+        val driver = JdbcSqliteDriver("jdbc:sqlite:${dbFile.absolutePath}")
+        if (isNew) TerraWatchDb.Schema.create(driver)
         return driver
     }
 }
