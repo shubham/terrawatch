@@ -24,7 +24,12 @@ private val TerraLightColorScheme = lightColorScheme(
     onSurface = TerraColors.Ink,
     surfaceVariant = TerraColors.Land,
     onSurfaceVariant = TerraColors.Ink,
-    outline = TerraColors.Water,
+    // Water at full opacity measures ~1.2:1 against White/Canvas (fails WCAG non-text 3:1) - Ink
+    // at partial alpha, same tuning approach as the dark outline below. alpha=0.50 was picked by
+    // luminance math, not guesswork: see the Task 5 fix-round-1 report for the full computation
+    // (0.48 already clears 3:1 on White/Canvas but dips to 2.94 on Land; 0.50 gives >=3.11 on all
+    // three light backgrounds outline can sit on - White, Canvas, Land - with headroom).
+    outline = TerraColors.Ink.copy(alpha = 0.50f),
     error = TerraColors.MagMajor,
     onError = Color.White,
     errorContainer = TerraColors.WarnBg,
@@ -44,9 +49,11 @@ private val TerraDarkColorScheme = darkColorScheme(
     onBackground = TerraColors.Canvas,
     surface = TerraColors.DuskCard,
     onSurface = TerraColors.Canvas,
-    surfaceVariant = TerraColors.DuskCard,
+    // One step lighter than DuskCard - a variant equal to surface renders as a single flat plane
+    // with a 1.00:1 self-contrast, defeating the point of having a "variant" role at all.
+    surfaceVariant = TerraColors.DuskCardVariant,
     onSurfaceVariant = TerraColors.Water,
-    outline = TerraColors.Water.copy(alpha = 0.4f),
+    outline = TerraColors.Water.copy(alpha = 0.4f), // ~3.25:1 against DuskCard - verified healthy
     error = TerraColors.MagMajor,
     onError = TerraColors.Canvas,
     errorContainer = TerraColors.WarnInk,

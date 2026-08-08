@@ -23,22 +23,28 @@ private const val HOUR_MILLIS = 3_600_000L
 private const val DAY_MILLIS = 86_400_000L
 private const val WEEK_MILLIS = 604_800_000L
 
-/** One-decimal rounding shared by [formatMagnitude] and [formatDepthKm]. */
+/**
+ * One-decimal rounding shared by [formatMagnitude] and [formatDepthKm]. Caller guarantees [value]
+ * is finite (NaN is intercepted before this is reached) - this only has to worry about rounding.
+ */
 private fun oneDecimal(value: Double): String {
     val d = (value * 10).roundToInt()
     val whole = d / 10
     val frac = abs(d % 10)
     // Integer division truncates toward zero, so a negative value that rounds to a magnitude
     // under 1.0 (e.g. -0.44 -> whole=0) loses its sign unless restored explicitly here.
-    return if (value < 0 && whole == 0) "-$whole.$frac" else "$whole.$frac"
+    val formatted = if (value < 0 && whole == 0) "-$whole.$frac" else "$whole.$frac"
+    // ...but a value that rounds all the way to zero (e.g. -0.01) hits that same branch with
+    // frac==0 too, which would otherwise print the meaningless "-0.0". Normalize it away.
+    return if (formatted == "-0.0") "0.0" else formatted
 }
 
-/** e.g. 6.1 -> "6.1", 6.0 -> "6.0", null -> "—". Always one decimal place. */
-fun formatMagnitude(mag: Double?): String = if (mag == null) "—" else oneDecimal(mag)
+/** e.g. 6.1 -> "6.1", 6.0 -> "6.0", null/NaN -> "—". Always one decimal place. */
+fun formatMagnitude(mag: Double?): String = if (mag == null || mag.isNaN()) "—" else oneDecimal(mag)
 
-/** e.g. 31.1599998 -> "31.2 km", null -> "depth unknown". Always one decimal place. */
+/** e.g. 31.1599998 -> "31.2 km", null/NaN -> "depth unknown". Always one decimal place. */
 fun formatDepthKm(depthKm: Double?): String =
-    if (depthKm == null) "depth unknown" else "${oneDecimal(depthKm)} km"
+    if (depthKm == null || depthKm.isNaN()) "depth unknown" else "${oneDecimal(depthKm)} km"
 
 /**
  * Human-relative age of an event, bucketed at minute/hour/day granularity and falling back to a
@@ -73,5 +79,6 @@ private fun groupThousands(n: Int): String {
     return if (n < 0) "-$grouped" else grouped
 }
 
-/** e.g. 4102.3 -> "4,102 km". Rounded to the nearest whole km, thousands-grouped. */
-fun formatDistanceKm(km: Double): String = "${groupThousands(km.roundToInt())} km"
+/** e.g. 4102.3 -> "4,102 km", NaN -> "0 km". Rounded to the nearest whole km, thousands-grouped. */
+fun formatDistanceKm(km: Double): String =
+    if (km.isNaN()) "0 km" else "${groupThousands(km.roundToInt())} km"

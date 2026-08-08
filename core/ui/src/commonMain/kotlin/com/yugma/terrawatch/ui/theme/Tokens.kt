@@ -24,6 +24,11 @@ object TerraColors {
     val MagMajor = Color(0xFFC43A2F)
     val DuskCanvas = Color(0xFF10161D)
     val DuskCard = Color(0xFF1A222C)
+
+    // Not in the spec's Global Constraints token table - added for TerraTheme's dark
+    // surfaceVariant, which was otherwise identical to DuskCard (1.00:1, no distinguishable
+    // "variant" plane). One step lighter than DuskCard, still clearly part of the dusk family.
+    val DuskCardVariant = Color(0xFF232D39)
 }
 
 /**

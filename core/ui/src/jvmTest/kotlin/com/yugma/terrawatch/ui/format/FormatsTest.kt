@@ -31,6 +31,17 @@ class FormatsTest {
     }
 
     @Test
+    fun `formatMagnitude normalizes negative near-zero instead of printing negative zero`() {
+        // -0.01 * 10 = -0.1 -> rounds to 0 -> whole=0, frac=0 -> naive output would be "-0.0".
+        assertEquals("0.0", formatMagnitude(-0.01))
+    }
+
+    @Test
+    fun `formatMagnitude returns em dash for NaN, same fallback as null`() {
+        assertEquals("—", formatMagnitude(Double.NaN))
+    }
+
+    @Test
     fun `formatDepthKm formats one decimal with unit suffix`() {
         val cases = listOf(
             31.1599998474121 to "31.2 km",
@@ -45,6 +56,11 @@ class FormatsTest {
     @Test
     fun `formatDepthKm returns depth unknown for null`() {
         assertEquals("depth unknown", formatDepthKm(null))
+    }
+
+    @Test
+    fun `formatDepthKm returns depth unknown for NaN, same fallback as null`() {
+        assertEquals("depth unknown", formatDepthKm(Double.NaN))
     }
 
     @Test
@@ -67,7 +83,7 @@ class FormatsTest {
 
     @Test
     fun `formatRelativeTime falls back to month-day date at 7 days and beyond`() {
-        val then = 1_754_179_200_000L // known epoch -> 2026-08-03T00:00:00Z ("Aug 3")
+        val then = 1_754_179_200_000L // known epoch -> 2025-08-03T00:00:00Z ("Aug 3")
         val now = then + 604_800_000L // exactly 7 days later -> boundary tips into date formatting
         assertEquals("Aug 3", formatRelativeTime(then, now))
     }
@@ -83,5 +99,10 @@ class FormatsTest {
         for ((input, expected) in cases) {
             assertEquals(expected, formatDistanceKm(input), "formatDistanceKm($input)")
         }
+    }
+
+    @Test
+    fun `formatDistanceKm returns zero km for NaN, same fallback style as the nullable formatters`() {
+        assertEquals("0 km", formatDistanceKm(Double.NaN))
     }
 }
