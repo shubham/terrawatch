@@ -24,6 +24,7 @@ kotlin {
             implementation(projects.core.database)
             implementation(projects.core.data)
             implementation(libs.koin.core)
+            implementation(libs.koin.compose.viewmodel)
             implementation(libs.androidx.lifecycle.viewmodel)
             implementation(libs.kotlinx.coroutines.core)
             // AppModule.kt references HttpClient directly (engine-agnostic type) in commonMain,

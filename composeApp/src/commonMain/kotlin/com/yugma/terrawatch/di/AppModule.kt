@@ -7,6 +7,7 @@ import com.yugma.terrawatch.network.EmscLiveSource
 import com.yugma.terrawatch.network.UsgsApi
 import io.ktor.client.HttpClient
 import org.koin.core.module.Module
+import org.koin.core.module.dsl.viewModel
 import org.koin.dsl.module
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
@@ -22,5 +23,8 @@ fun appModule(http: HttpClient, dao: QuakeDao): Module = module {
     single { EmscLiveSource(http) }
     single { dao }
     single { QuakeRepository(get(), get(), get(), clock = { Clock.System.now().toEpochMilliseconds() }) }
-    factory { FeedViewModel(get()) }
+    // viewModel {} (not factory {}) — scopes FeedViewModel to the platform ViewModelStore via
+    // koin-compose-viewmodel's koinViewModel<FeedViewModel>() at the App() call site, instead of
+    // minting a fresh instance (and a fresh startLive() collector) on every recomposition/rotation.
+    viewModel { FeedViewModel(get()) }
 }

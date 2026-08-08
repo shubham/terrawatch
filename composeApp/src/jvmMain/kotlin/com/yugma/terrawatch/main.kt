@@ -16,8 +16,8 @@ import org.koin.core.context.startKoin
 fun main() {
     val dao = QuakeDao(createDatabase(DriverFactory()), clock = { Clock.System.now().toEpochMilliseconds() })
     val http = HttpClient(CIO) { install(WebSockets) }
-    val koin = startKoin { modules(appModule(http, dao)) }.koin
+    startKoin { modules(appModule(http, dao)) }
     application {
-        Window(onCloseRequest = ::exitApplication, title = "TerraWatch") { App(koin.get()) }
+        Window(onCloseRequest = ::exitApplication, title = "TerraWatch") { App() }
     }
 }

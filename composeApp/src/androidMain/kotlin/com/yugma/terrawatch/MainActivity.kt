@@ -18,11 +18,18 @@ class MainActivity : ComponentActivity() {
     @OptIn(kotlin.time.ExperimentalTime::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val dao = QuakeDao(createDatabase(DriverFactory(applicationContext)), clock = { Clock.System.now().toEpochMilliseconds() })
-        val http = HttpClient(OkHttp) { install(WebSockets) }
         // Guard against a second startKoin() call if the Activity is ever recreated in the same
         // process (e.g. a config change) — Koin throws KoinAppAlreadyStartedException otherwise.
-        val koin = (GlobalContext.getOrNull() ?: startKoin { modules(appModule(http, dao)) }.koin)
-        setContent { App(koin.get()) }
+        // ALL construction lives inside this guard now: on a rotation, onCreate() runs again, but
+        // Koin (and the singletons it holds — QuakeRepository, etc.) is built exactly once per
+        // process. FeedViewModel itself is no longer built here at all — App() resolves it via
+        // koinViewModel(), which binds to this Activity's ViewModelStore (survives rotation) rather
+        // than being newly constructed on every onCreate().
+        if (GlobalContext.getOrNull() == null) {
+            val dao = QuakeDao(createDatabase(DriverFactory(applicationContext)), clock = { Clock.System.now().toEpochMilliseconds() })
+            val http = HttpClient(OkHttp) { install(WebSockets) }
+            startKoin { modules(appModule(http, dao)) }
+        }
+        setContent { App() }
     }
 }
