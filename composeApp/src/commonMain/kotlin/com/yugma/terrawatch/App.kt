@@ -1,21 +1,16 @@
 package com.yugma.terrawatch
 
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.yugma.terrawatch.feed.FeedScreen
+import com.yugma.terrawatch.feed.FeedViewModel
 
 @Composable
-fun App() {
+fun App(feedViewModel: FeedViewModel) {
     MaterialTheme {
-        Surface(Modifier.fillMaxSize()) {
-            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                Text("TerraWatch")
-            }
-        }
+        Surface(Modifier.fillMaxSize()) { FeedScreen(feedViewModel) }
     }
 }
