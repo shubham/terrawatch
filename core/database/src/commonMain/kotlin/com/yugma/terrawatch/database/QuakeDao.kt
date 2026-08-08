@@ -69,7 +69,25 @@ class QuakeDao(private val db: TerraWatchDb) {
      * a lagging timestamp). Idempotent for self-merges: reconcile() of an already-stored
      * row reproduces the stored row byte-for-byte.
      */
-    fun replace(quake: DomainQuake) = db.transaction { db.quakeQueries.insertOrReplace(quake.toRow()) }
+    fun replace(quake: DomainQuake) = replaceAndDelete(quake, deleteId = null)
+
+    /**
+     * Atomically remove [deleteId] (when non-null) and write [quake] as ONE transaction.
+     *
+     * ingest()'s merge-write path needs both the removal of a superseded/orphaned row and the
+     * write of the reconciled canonical to land together: doing them as two separate calls
+     * (delete() then replace()) is two separate transactions, and SQLDelight fires a table-changed
+     * notification per commit — so a live collector on recent()/[Flow] observes the transient
+     * state in between (e.g. a brief empty list when the deleted row was the only one in view).
+     * It also opens a crash window where the delete commits but the write never happens,
+     * permanently losing the quake. Wrapping both statements in one transaction means SQLDelight
+     * defers its invalidation notification until commit, so collectors see exactly one emission
+     * of the final state, and a crash before commit leaves the original row untouched.
+     */
+    fun replaceAndDelete(quake: DomainQuake, deleteId: String?) = db.transaction {
+        deleteId?.let { db.quakeQueries.delete(it) }
+        db.quakeQueries.insertOrReplace(quake.toRow())
+    }
 
     private fun DomainQuake.toRow() = Quake(
         id = id, timeMillis = timeMillis, lat = lat, lon = lon, depthKm = depthKm,

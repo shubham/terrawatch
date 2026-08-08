@@ -31,6 +31,11 @@ class QuakeRepository(
     private val _alertEvents = MutableSharedFlow<AlertEvent>(extraBufferCapacity = 16)
     val alertEvents: SharedFlow<AlertEvent> = _alertEvents
 
+    /**
+     * [windowMs] before "now" is computed once, at call time — the returned Flow re-queries
+     * against that frozen cutoff, it does not slide forward as time passes. Callers wanting a
+     * sliding window re-call this on a timer (Plan 2).
+     */
     fun recentQuakes(windowMs: Long = 86_400_000): Flow<List<Quake>> =
         dao.recent(clock() - windowMs)
 
@@ -69,8 +74,23 @@ class QuakeRepository(
         val result = dedupe.reconcile(window, incoming)
         val previous = previousById ?: result.replacesId?.let { dao.byId(it) }
             ?: dao.byId(result.canonical.id)?.takeIf { it.id != incoming.id }
-        result.replacesId?.let { dao.delete(it) }
-        dao.replace(result.canonical)   // NOT upsert() — reconciler already resolved recency; see Task 9 DAO notes
+        // DedupeEngine.merge() always sets canonical.id to either the matched row's id or
+        // incoming's own id (USGS-preference) — never a third value — so at most one of these
+        // two is ever non-null for a given call:
+        //  - replacesId: canonical adopted incoming's id, so the OLD row stored under the
+        //    match's id is superseded and must go.
+        //  - the incoming.id branch: canonical adopted the match's id while incoming was
+        //    ALREADY stored under its own id (e.g. an EMSC event whose epicenter drifts into a
+        //    USGS twin's radius on a later revision) — that old row is now an orphan. Left
+        //    behind, ingest() keeps reading it back as "previous" on every future update for
+        //    that id, freezing the alert-crossing baseline and re-firing every single time
+        //    (Task 9 review, Critical 1).
+        val deleteId = result.replacesId ?: incoming.id.takeIf { it != result.canonical.id }
+        // Delete + write as ONE transaction (Task 9 review, Important 2): two separate calls
+        // are two separate commits, so a live recentQuakes() collector observes the transient
+        // state in between (an empty list, if the deleted row was the only one in view), and a
+        // crash between the two commits permanently loses the quake.
+        dao.replaceAndDelete(result.canonical, deleteId)   // NOT upsert() — reconciler already resolved recency; see Task 9 DAO notes
         alerts.evaluate(previous, result.canonical, rules, home)?.let { _alertEvents.tryEmit(it) }
     }
 

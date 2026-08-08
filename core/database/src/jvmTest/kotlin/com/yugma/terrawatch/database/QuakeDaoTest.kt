@@ -1,10 +1,12 @@
 package com.yugma.terrawatch.database
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import app.cash.turbine.test
 import com.yugma.terrawatch.model.MagRevision
 import com.yugma.terrawatch.model.Quake
 import com.yugma.terrawatch.model.QuakeStatus
 import com.yugma.terrawatch.model.Source
+import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -102,5 +104,33 @@ class QuakeDaoTest {
         // with a lagging/equal timestamp must still contribute its merged fields).
         dao.upsert(quake(id = "us2", updated = 2000, sources = mapOf(Source.EMSC to "e1")))
         assertEquals(setOf(Source.USGS), assertNotNull(dao.byId("us2")).sources.keys)
+    }
+
+    // Task 9 review, Important 2 (bug-pinning half): calling delete() and replace() as two
+    // separate statements is two separate SQLDelight transactions, so a live recent() collector
+    // observes the transient state in between — here, an empty list — before the final state
+    // lands. This test documents why ingest() must never do this two-step dance itself; it is
+    // expected to keep passing (it pins the primitives' standalone behavior, not a bug in them).
+    @Test fun `separate delete then replace calls observably flicker to an empty list`() = runTest {
+        dao.upsert(quake(id = "old", updated = 1000).copy(timeMillis = 500))
+        dao.recent(0).test {
+            assertEquals(listOf("old"), awaitItem().map { it.id })
+            dao.delete("old")
+            assertEquals(emptyList(), awaitItem().map { it.id })   // the flicker
+            dao.replace(quake(id = "new", updated = 2000).copy(timeMillis = 600))
+            assertEquals(listOf("new"), awaitItem().map { it.id })
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `replaceAndDelete is atomic — recent() sees exactly one transition, never an empty list`() = runTest {
+        dao.upsert(quake(id = "old", updated = 1000).copy(timeMillis = 500))
+        dao.recent(0).test {
+            assertEquals(listOf("old"), awaitItem().map { it.id })
+            dao.replaceAndDelete(quake(id = "new", updated = 2000).copy(timeMillis = 600), deleteId = "old")
+            assertEquals(listOf("new"), awaitItem().map { it.id })   // straight to final state
+            expectNoEvents()
+            cancelAndIgnoreRemainingEvents()
+        }
     }
 }

@@ -107,4 +107,83 @@ class QuakeRepositoryTest {
         assertEquals("e1", stored.sources[Source.EMSC])    // union survived the write
         assertEquals(1, dao.countAll())
     }
+
+    private fun repoNoop(clockValue: Long) = QuakeRepository(
+        UsgsApi(HttpClient(MockEngine { respond("", HttpStatusCode.NotFound) })),
+        EmscLiveSource(HttpClient(MockEngine { respond("", HttpStatusCode.NotFound) })),
+        dao, clock = { clockValue })
+
+    // Task 9 review, Critical 1: DedupeEngine.merge() picks canonical.id from either the
+    // matched row's id or incoming's own id. The pre-existing code only ever deleted the
+    // matched row's id (via replacesId, when canonical adopted incoming's id) — it never
+    // deleted the row already stored at incoming.id when canonical instead adopted the
+    // MATCH's id. That row becomes a permanent orphan: dao.byId(incoming.id) keeps resolving
+    // to it as "previous" on every future update for the same id, freezing the alert-crossing
+    // baseline and re-firing on every subsequent update.
+    @Test fun `dedupe match adopting the match id deletes the stale row at incoming id (no orphan, no refire)`() = runTest {
+        val r = repoNoop(10_000_000)
+
+        // Seed two unrelated, far-apart rows — DedupeEngine must not merge them (>100km apart).
+        r.ingest(quake("e1", Source.EMSC, 5.5, t = 1_000_000, updated = 1_000_000).copy(lat = 0.0, lon = 0.0), home = null)
+        r.ingest(quake("us1", Source.USGS, 6.1, t = 1_050_000, updated = 1_050_000), home = null)
+        assertEquals(2, dao.countAll())
+
+        r.alertEvents.test {
+            // e1 revision: epicenter moves to us1's location (within 100km) with a newer
+            // timestamp. merge() picks canonical.id = "us1" (match has USGS) — the stale row
+            // still sitting at incoming.id="e1" must be deleted or it orphans permanently.
+            r.ingest(quake("e1", Source.EMSC, 5.5, t = 1_060_000, updated = 1_060_000), home = null)
+            assertEquals("world", awaitItem().matchedRuleId)   // baseline was the pre-merge mag-5.5 e1 row
+
+            assertEquals(1, dao.countAll())
+            assertEquals(null, dao.byId("e1"))
+            assertEquals("e1", dao.byId("us1")!!.sources[Source.EMSC])
+
+            // Regression probe: pre-fix, "previous" kept resolving to the frozen orphan
+            // (mag 5.5 < 6.0 world threshold), so this identical-shape update re-fired "world"
+            // every single time. Post-fix, previous correctly resolves to the live merged row
+            // (mag 6.1, already at/above threshold), so no re-fire.
+            r.ingest(quake("e1", Source.EMSC, 5.5, t = 1_060_000, updated = 1_070_000), home = null)
+            expectNoEvents()
+
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    // Task 9 review, Important 3: the replacesId/delete branch (EMSC arrives first, USGS
+    // arrives second and takes over the row's id) had zero direct coverage in this suite —
+    // every existing test merged USGS-first, where replacesId is always null. This pins that
+    // branch: deleting the delete call breaks this test.
+    @Test fun `usgs twin arriving second replaces emsc row under usgs id`() = runTest {
+        val r = repoNoop(2_000_000)
+        r.alertEvents.test {
+            r.ingest(quake("e1", Source.EMSC, 5.5, t = 1_950_000, updated = 1_950_000), home = null)
+            r.ingest(quake("us1", Source.USGS, 6.1, t = 1_960_000, updated = 1_960_000), home = null)
+
+            assertEquals(1, dao.countAll())
+            assertEquals(null, dao.byId("e1"))
+            val stored = dao.byId("us1")!!
+            assertEquals("e1", stored.sources[Source.EMSC])
+
+            assertEquals("world", awaitItem().matchedRuleId)   // previous resolved via replacesId to the pre-merge e1 row
+            expectNoEvents()
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    // Task 9 review, Important 2 (end-to-end half): the merge-write must be one atomic
+    // transaction, or a live recentQuakes() collector observes a transient empty-list frame
+    // between the delete of the superseded row and the write of the merged canonical.
+    @Test fun `ingest of a merging update emits exactly one transition on recentQuakes (no empty-list flicker)`() = runTest {
+        val r = repoNoop(2_000_000)
+        r.ingest(quake("e1", Source.EMSC, 5.5, t = 1_950_000, updated = 1_950_000))
+        r.recentQuakes(windowMs = 200_000).test {
+            assertEquals(listOf("e1"), awaitItem().map { it.id })
+            // Merges under "us1"; replacesId="e1" triggers the delete of the old row.
+            r.ingest(quake("us1", Source.USGS, 6.1, t = 1_960_000, updated = 1_960_000))
+            assertEquals(listOf("us1"), awaitItem().map { it.id })   // straight to final state
+            expectNoEvents()
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
 }
