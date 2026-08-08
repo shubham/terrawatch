@@ -16,5 +16,5 @@ fun haversineKm(a: GeoPoint, b: GeoPoint): Double {
     val dLon = (b.lon - a.lon).toRadians()
     val s = sin(dLat / 2) * sin(dLat / 2) +
         cos(a.lat.toRadians()) * cos(b.lat.toRadians()) * sin(dLon / 2) * sin(dLon / 2)
-    return 2 * EARTH_RADIUS_KM * asin(sqrt(s))
+    return 2 * EARTH_RADIUS_KM * asin(sqrt(s.coerceAtMost(1.0)))
 }

@@ -8,3 +8,11 @@ plugins {
     alias(libs.plugins.kotlinSerialization) apply false
     alias(libs.plugins.sqldelight) apply false
 }
+
+allprojects {
+    plugins.withType<org.jetbrains.kotlin.gradle.plugin.KotlinMultiplatformPluginWrapper> {
+        extensions.configure<org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension> {
+            jvmToolchain(17)
+        }
+    }
+}

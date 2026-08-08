@@ -21,4 +21,9 @@ class GeoTest {
         val d = haversineKm(GeoPoint(90.0, 0.0), GeoPoint(-90.0, 0.0))
         assertTrue(abs(d - 20015.0) < 30.0, "got $d")
     }
+    @Test fun `exact antipodal points do not produce NaN`() {
+        val d = haversineKm(GeoPoint(45.0, 45.0), GeoPoint(-45.0, -135.0))
+        assertTrue(d.isFinite(), "got $d")
+        assertTrue(abs(d - 20015.0) < 30.0, "got $d")
+    }
 }
