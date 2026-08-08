@@ -1,0 +1,77 @@
+package com.yugma.terrawatch.ui.theme
+
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Typography
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+
+// Light mode: Ink-on-Canvas per spec. Surface is plain white so cards read as distinct, slightly
+// raised planes against the tinted Canvas background.
+private val TerraLightColorScheme = lightColorScheme(
+    primary = TerraColors.Ink,
+    onPrimary = TerraColors.Canvas,
+    secondary = TerraColors.InfoBlue,
+    onSecondary = Color.White,
+    tertiary = TerraColors.Safe,
+    onTertiary = Color.White,
+    background = TerraColors.Canvas,
+    onBackground = TerraColors.Ink,
+    surface = Color.White,
+    onSurface = TerraColors.Ink,
+    surfaceVariant = TerraColors.Land,
+    onSurfaceVariant = TerraColors.Ink,
+    outline = TerraColors.Water,
+    error = TerraColors.MagMajor,
+    onError = Color.White,
+    errorContainer = TerraColors.WarnBg,
+    onErrorContainer = TerraColors.WarnInk,
+)
+
+// Dark mode ("Dusk"): Ink no longer has contrast against a near-black background, so primary/
+// on-surface roles invert to Canvas while background/surface move to the two dusk tokens.
+private val TerraDarkColorScheme = darkColorScheme(
+    primary = TerraColors.Canvas,
+    onPrimary = TerraColors.Ink,
+    secondary = TerraColors.InfoBlue,
+    onSecondary = TerraColors.Ink,
+    tertiary = TerraColors.Safe,
+    onTertiary = TerraColors.Ink,
+    background = TerraColors.DuskCanvas,
+    onBackground = TerraColors.Canvas,
+    surface = TerraColors.DuskCard,
+    onSurface = TerraColors.Canvas,
+    surfaceVariant = TerraColors.DuskCard,
+    onSurfaceVariant = TerraColors.Water,
+    outline = TerraColors.Water.copy(alpha = 0.4f),
+    error = TerraColors.MagMajor,
+    onError = TerraColors.Canvas,
+    errorContainer = TerraColors.WarnInk,
+    onErrorContainer = TerraColors.WarnBg,
+)
+
+// System-sans defaults from Typography() carry through everywhere except the two styles used for
+// magnitude numerals (the big number on a quake card/pin callout), which are bold so the number
+// - the single most important glanceable fact in this app - always reads as emphasized.
+private val TerraTypography = Typography().let { base ->
+    base.copy(
+        titleLarge = base.titleLarge.copy(fontWeight = FontWeight.Bold),
+        headlineMedium = base.headlineMedium.copy(fontWeight = FontWeight.Bold),
+    )
+}
+
+/**
+ * Calm Guardian theme. Wrap the app root in this instead of a bare `MaterialTheme` so every
+ * screen inherits the token-derived ColorScheme and bold-numeral Typography.
+ */
+@Composable
+fun TerraTheme(darkTheme: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
+    MaterialTheme(
+        colorScheme = if (darkTheme) TerraDarkColorScheme else TerraLightColorScheme,
+        typography = TerraTypography,
+        content = content,
+    )
+}
