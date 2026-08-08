@@ -325,7 +325,28 @@ Per-source attribution HTML also flows through automatically (`Source.attributio
 the style/tileset JSON's own `attribution` field) — switching tile providers later won't silently
 drop required attribution as long as `isAttributionEnabled` stays true.
 
-## (7) Decision recommendation
+## Update (post-spike hotfix): actual recorded decision differs from §7 below
+
+Section 7 below is the recommendation this spike originally produced, and its analysis is still
+accurate — kept verbatim as the record of what was found. The **decision actually recorded and
+implemented** is one notch more conservative: **Android is the only live-map target in Plan 2.**
+Desktop and web both use a shared `FallbackMapPane` (bundled world-map PNG + Compose-drawn pins);
+the real desktop render this spike proved works is deferred, not shipped in Plan 2. Recorded in
+`docs/superpowers/plans/2026-08-08-terrawatch-plan-2-ui-shell.md` (commit `a4c5c09`).
+
+What changed the call: this spike verified desktop against `:composeApp:run` and manual JDK 26
+invocation, but not against `:composeApp:jvmTest` — which Task 7's implementer found broken by the
+same root cause (maplibre-compose's desktop artifact is JDK-25-only bytecode, incompatible with
+this project's JDK 17 test toolchain) via `git stash`-bisection against a clean HEAD. Once that
+surfaced, shipping desktop's real map in Plan 2 would mean solving the Gradle-toolchain conflict
+*and* keeping it solved across every future commit's test run — real, ongoing cost this plan isn't
+committing to yet, versus a one-time "revisit later" deferral. The code now reflects this: `QuakeMap`
+is `expect`/`actual` (`composeApp/src/commonMain/.../map/QuakeMap.kt`), `maplibre-compose` lives
+only in `androidMain.dependencies`, and `jvmMain`/`wasmJsMain` each get a static placeholder actual
+pending Task 12's real `FallbackMapPane`. Full hotfix details:
+`.superpowers/sdd/2026-08-08-terrawatch-plan-2-ui-shell/task-6-report.md`.
+
+## (7) Decision recommendation (original spike analysis, superseded per above — kept for record)
 
 **Web: fallback (list + static-snapshot path, spec §7).** Not a close call. This isn't "the wasmJs
 build has rough edges" — the library has no wasmJs target at all (confirmed against Maven Central's

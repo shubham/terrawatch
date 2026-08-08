@@ -27,12 +27,6 @@ kotlin {
             implementation(libs.koin.compose.viewmodel)
             implementation(libs.androidx.lifecycle.viewmodel)
             implementation(libs.kotlinx.coroutines.core)
-            // SPIKE (Task 6): maplibre-compose has no wasmJs target (confirmed against v0.14.0
-            // source and Maven Central — it publishes android/desktop/ios*/js artifacts only, no
-            // maplibre-compose-wasm-js). Declaring it here, in commonMain, is intentional: it's
-            // exactly what the spike needs to prove that a naive commonMain dependency breaks the
-            // wasmJs target outright. See docs/superpowers/plans/plan-2-spike-maplibre.md.
-            implementation(libs.maplibre.compose)
             // AppModule.kt references HttpClient directly (engine-agnostic type) in commonMain,
             // which compiles for wasmJs too — core:network only exposes ktor-client-core as
             // `implementation`, so it doesn't leak through projects.core.network transitively.
@@ -45,17 +39,19 @@ kotlin {
             implementation(libs.androidx.activity.compose)
             implementation(libs.ktor.client.okhttp)
             implementation(libs.ktor.client.websockets)
+            // HOTFIX (Task 6 follow-up): moved here from commonMain. maplibre-compose has no
+            // wasmJs target and its desktop artifact requires a JDK 25 runtime this project's
+            // Gradle toolchain doesn't provide — leaving it in commonMain (or jvmMain) broke
+            // :composeApp:jvmTest (JDK25-only class files vs jvmToolchain(17)) and
+            // :composeApp:wasmJsBrowserDistribution (no matching variant) outright. Spike decision
+            // is Android-only live map for now; see docs/superpowers/plans/plan-2-spike-maplibre.md.
+            implementation(libs.maplibre.compose)
         }
         jvmMain.dependencies {
             implementation(compose.desktop.currentOs)
             implementation(libs.ktor.client.cio)
             implementation(libs.ktor.client.websockets)
             implementation(libs.coroutines.swing)
-            // SPIKE (Task 6): desktop needs one native-renderer runtime alongside the library
-            // itself (see "Set up Desktop (JVM)" in the maplibre-compose docs). This machine is
-            // macOS arm64, hence the Metal backend; a real multi-OS desktop target would need to
-            // select the matching runtime per build host (Vulkan for Linux/Windows).
-            runtimeOnly("org.maplibre.compose:maplibre-compose-runtime-metal-macos-arm64:${libs.versions.maplibreCompose.get()}")
         }
         // Real QuakeRepository construction needs the JVM-only SQLDelight JDBC driver, so this
         // suite lives in jvmTest rather than commonTest (commonTest compiles for androidTarget and
@@ -86,10 +82,5 @@ android {
 }
 
 compose.desktop {
-    application {
-        mainClass = "com.yugma.terrawatch.MainKt"
-        // SPIKE (Task 6): required per maplibre-compose's desktop setup docs — MapLibre Native's
-        // FFI binding makes FFM downcalls, which need explicit native-access on JDK 25+ modules.
-        jvmArgs += "--enable-native-access=ALL-UNNAMED"
-    }
+    application { mainClass = "com.yugma.terrawatch.MainKt" }
 }
