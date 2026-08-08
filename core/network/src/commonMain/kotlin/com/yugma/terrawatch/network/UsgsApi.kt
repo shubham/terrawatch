@@ -37,6 +37,8 @@ class UsgsApi(
         FeedResult.Failure(t)
     }
 
+    // Throws on network/HTTP/parse failure by design — callers (QuakeRepository.loadArchivePage)
+    // wrap. Contrast fetchFeed, which returns FeedResult because polling must never crash.
     @OptIn(ExperimentalTime::class)
     suspend fun queryArchive(
         endTimeMillis: Long,
@@ -49,6 +51,7 @@ class UsgsApi(
             minMagnitude?.let { append("&minmagnitude=$it") }
         }
         val resp = http.get(url)
+        check(resp.status.isSuccess()) { "FDSN archive query failed: HTTP ${resp.status.value}" }
         return UsgsFeedParser.parse(resp.bodyAsText())
     }
 }

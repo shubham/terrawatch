@@ -11,6 +11,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
@@ -82,5 +83,12 @@ class UsgsApiTest {
         testScheduler.advanceUntilIdle()
         assertTrue(job.isCancelled)
         assertEquals(null, completedNormallyWith, "fetchFeed() must not return a value (e.g. Failure) after cancellation — it must propagate CancellationException instead")
+    }
+
+    @Test fun `archive non-2xx throws clear http error, not parse garbage`() = runTest {
+        val engine = MockEngine { respond("<html>503</html>", HttpStatusCode.ServiceUnavailable) }
+        val api = UsgsApi(HttpClient(engine))
+        val ex = assertFailsWith<IllegalStateException> { api.queryArchive(endTimeMillis = 1_754_600_000_000) }
+        assertTrue(ex.message!!.contains("503"), "got: ${ex.message}")
     }
 }
