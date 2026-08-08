@@ -1,0 +1,21 @@
+{
+  "action": "create",
+  "data": {
+    "type": "Feature",
+    "geometry": { "type": "Point", "coordinates": [126.54, 7.12, -10.0] },
+    "id": "20260807_0000123",
+    "properties": {
+      "unid": "20260807_0000123",
+      "time": "2026-08-07T04:09:41.0Z",
+      "lastupdate": "2026-08-07T04:12:03.0Z",
+      "mag": 6.1,
+      "magtype": "mw",
+      "evtype": "ke",
+      "auto": true,
+      "flynn_region": "MINDANAO, PHILIPPINES",
+      "lat": 7.12,
+      "lon": 126.54,
+      "depth": 10.0
+    }
+  }
+}
