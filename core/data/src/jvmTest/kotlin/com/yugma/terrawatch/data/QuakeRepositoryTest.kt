@@ -186,4 +186,43 @@ class QuakeRepositoryTest {
             cancelAndIgnoreRemainingEvents()
         }
     }
+
+    // Task 9 review round 3 (re-review): disproves the "at most one of replacesId / incoming.id
+    // needs deleting" invariant the round-2 fix rested on. UsgsFeedParser sets Quake.id from
+    // properties.ids's first alias but sources[USGS] from the top-level feature "id" — nothing
+    // guarantees they're equal. When incoming.id ("X") diverges from incoming.sources[USGS]
+    // ("Y") and dedupe matches a DIFFERENT existing row (one lacking USGS, e.g. an EMSC row),
+    // DedupeEngine.merge() sets canonical.id = incoming.sources.getValue(USGS) = "Y" — a THIRD
+    // id, distinct from both match.id and incoming.id. Both the matched row (via replacesId)
+    // AND the stale row already stored at incoming.id ("X") need deleting simultaneously.
+    @Test fun `divergent usgs id and sources id cannot orphan the incoming row`() = runTest {
+        val r = repoNoop(10_000_000)
+
+        // 1) A USGS quake whose own id ("X") differs from its sources[USGS] value ("Y") — this
+        //    is exactly what UsgsFeedParser produces when the feature's top-level "id" isn't the
+        //    first alias in properties.ids. Far from where e1 will be.
+        val divergent = Quake(
+            "X", 1_000_000, 0.0, 0.0, 10.0, 5.5, "mw", "P", false, null, QuakeStatus.AUTOMATIC,
+            mapOf(Source.USGS to "Y"), listOf(MagRevision(5.5, "mw", 1_000_000, Source.USGS)), 1_000_000,
+        )
+        r.ingest(divergent, home = null)
+
+        // 2) An unrelated EMSC row, far from "X" — must not merge with it.
+        r.ingest(quake("e1", Source.EMSC, 5.5, t = 1_000_000, updated = 1_000_000).copy(lat = 50.0, lon = 50.0), home = null)
+        assertEquals(2, dao.countAll())
+
+        // 3) A revision of the SAME event (id="X", sources={USGS:"Y"} again), epicenter moved to
+        //    e1's location with a newer updatedAt. dedupe matches e1 (existing lacks USGS,
+        //    incoming has USGS) -> canonical.id = incoming.sources[USGS] = "Y", a THIRD id
+        //    distinct from match.id ("e1") AND incoming.id ("X"). Both must be deleted.
+        val revision = divergent.copy(lat = 50.0, lon = 50.0, timeMillis = 1_010_000, updatedAtMillis = 1_010_000)
+        r.ingest(revision, home = null)
+
+        assertEquals(1, dao.countAll())
+        assertEquals(null, dao.byId("X"))
+        assertEquals(null, dao.byId("e1"))
+        val stored = dao.byId("Y")
+        assertEquals("e1", stored?.sources?.get(Source.EMSC))
+        assertEquals("Y", stored?.sources?.get(Source.USGS))
+    }
 }

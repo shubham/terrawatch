@@ -74,23 +74,30 @@ class QuakeRepository(
         val result = dedupe.reconcile(window, incoming)
         val previous = previousById ?: result.replacesId?.let { dao.byId(it) }
             ?: dao.byId(result.canonical.id)?.takeIf { it.id != incoming.id }
-        // DedupeEngine.merge() always sets canonical.id to either the matched row's id or
-        // incoming's own id (USGS-preference) — never a third value — so at most one of these
-        // two is ever non-null for a given call:
-        //  - replacesId: canonical adopted incoming's id, so the OLD row stored under the
-        //    match's id is superseded and must go.
-        //  - the incoming.id branch: canonical adopted the match's id while incoming was
-        //    ALREADY stored under its own id (e.g. an EMSC event whose epicenter drifts into a
-        //    USGS twin's radius on a later revision) — that old row is now an orphan. Left
-        //    behind, ingest() keeps reading it back as "previous" on every future update for
-        //    that id, freezing the alert-crossing baseline and re-firing every single time
-        //    (Task 9 review, Critical 1).
-        val deleteId = result.replacesId ?: incoming.id.takeIf { it != result.canonical.id }
-        // Delete + write as ONE transaction (Task 9 review, Important 2): two separate calls
-        // are two separate commits, so a live recentQuakes() collector observes the transient
-        // state in between (an empty list, if the deleted row was the only one in view), and a
-        // crash between the two commits permanently loses the quake.
-        dao.replaceAndDelete(result.canonical, deleteId)   // NOT upsert() — reconciler already resolved recency; see Task 9 DAO notes
+        // Every stale row must go, and there can be up to two of them simultaneously — they are
+        // NOT mutually exclusive (Task 9 review round 3 disproved that assumption):
+        //  - replacesId: canonical adopted a DIFFERENT id than the matched row's, so the OLD
+        //    row stored under the match's id is superseded and must go.
+        //  - incoming.id: canonical adopted some OTHER id while incoming was ALREADY stored
+        //    under its own id (e.g. an EMSC event whose epicenter drifts into a USGS twin's
+        //    radius on a later revision) — that old row is now an orphan. Left behind, ingest()
+        //    keeps reading it back as "previous" on every future update for that id, freezing
+        //    the alert-crossing baseline and re-firing every single time (Task 9 review,
+        //    Critical 1).
+        // Both can fire on the SAME call: DedupeEngine.merge() can pick canonical.id from
+        // incoming.sources[USGS], which is not guaranteed to equal incoming.id (UsgsFeedParser
+        // derives them from different feed fields — the `ids` alias list vs. the top-level
+        // feature id) — so canonical.id can be a THIRD value, distinct from both the matched
+        // row's id and incoming's own id, orphaning both if only one were deleted.
+        val deleteIds = listOfNotNull(
+            result.replacesId,
+            incoming.id.takeIf { it != result.canonical.id },
+        ).distinct().filter { it != result.canonical.id }
+        // Delete + write as ONE transaction (Task 9 review, Important 2): separate calls are
+        // separate commits, so a live recentQuakes() collector observes the transient state in
+        // between (an empty list, if a deleted row was the only one in view), and a crash
+        // between commits can permanently lose the quake.
+        dao.replaceAndDelete(result.canonical, deleteIds)   // NOT upsert() — reconciler already resolved recency; see Task 9 DAO notes
         alerts.evaluate(previous, result.canonical, rules, home)?.let { _alertEvents.tryEmit(it) }
     }
 

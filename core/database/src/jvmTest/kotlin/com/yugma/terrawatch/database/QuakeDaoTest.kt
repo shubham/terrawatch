@@ -127,7 +127,7 @@ class QuakeDaoTest {
         dao.upsert(quake(id = "old", updated = 1000).copy(timeMillis = 500))
         dao.recent(0).test {
             assertEquals(listOf("old"), awaitItem().map { it.id })
-            dao.replaceAndDelete(quake(id = "new", updated = 2000).copy(timeMillis = 600), deleteId = "old")
+            dao.replaceAndDelete(quake(id = "new", updated = 2000).copy(timeMillis = 600), deleteIds = listOf("old"))
             assertEquals(listOf("new"), awaitItem().map { it.id })   // straight to final state
             expectNoEvents()
             cancelAndIgnoreRemainingEvents()

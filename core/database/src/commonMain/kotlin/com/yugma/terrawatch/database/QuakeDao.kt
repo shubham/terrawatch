@@ -69,23 +69,30 @@ class QuakeDao(private val db: TerraWatchDb) {
      * a lagging timestamp). Idempotent for self-merges: reconcile() of an already-stored
      * row reproduces the stored row byte-for-byte.
      */
-    fun replace(quake: DomainQuake) = replaceAndDelete(quake, deleteId = null)
+    fun replace(quake: DomainQuake) = replaceAndDelete(quake, deleteIds = emptyList())
 
     /**
-     * Atomically remove [deleteId] (when non-null) and write [quake] as ONE transaction.
+     * Atomically delete every id in [deleteIds] and write [quake], as ONE transaction — one
+     * emission of the final state for any live collector.
      *
-     * ingest()'s merge-write path needs both the removal of a superseded/orphaned row and the
-     * write of the reconciled canonical to land together: doing them as two separate calls
-     * (delete() then replace()) is two separate transactions, and SQLDelight fires a table-changed
-     * notification per commit — so a live collector on recent()/[Flow] observes the transient
-     * state in between (e.g. a brief empty list when the deleted row was the only one in view).
-     * It also opens a crash window where the delete commits but the write never happens,
-     * permanently losing the quake. Wrapping both statements in one transaction means SQLDelight
-     * defers its invalidation notification until commit, so collectors see exactly one emission
-     * of the final state, and a crash before commit leaves the original row untouched.
+     * ingest()'s merge-write path needs both the removal of superseded/orphaned row(s) and the
+     * write of the reconciled canonical to land together: doing them as separate calls (delete()
+     * then replace()) is separate transactions, and SQLDelight fires a table-changed notification
+     * per commit — so a live collector on recent()/[Flow] observes the transient state in between
+     * (e.g. a brief empty list when a deleted row was the only one in view). It also opens a
+     * crash window where a delete commits but the write never happens, permanently losing the
+     * quake. Wrapping every statement in one transaction means SQLDelight defers its invalidation
+     * notification until commit, so collectors see exactly one emission of the final state, and a
+     * crash before commit leaves the original rows untouched.
+     *
+     * Takes a list, not a single nullable id: a reconciled canonical's id can legitimately
+     * differ from BOTH the id superseded via DedupeEngine's `replacesId` AND the incoming
+     * quake's own id at the same time (e.g. a USGS-sourced quake whose own `id` — taken from
+     * the feed's `ids` alias list — differs from its `sources[USGS]` value — taken from the
+     * feed's top-level feature id; see Task 9 review round 3). Both stale rows must go.
      */
-    fun replaceAndDelete(quake: DomainQuake, deleteId: String?) = db.transaction {
-        deleteId?.let { db.quakeQueries.delete(it) }
+    fun replaceAndDelete(quake: DomainQuake, deleteIds: List<String> = emptyList()) = db.transaction {
+        deleteIds.forEach { db.quakeQueries.delete(it) }
         db.quakeQueries.insertOrReplace(quake.toRow())
     }
 
