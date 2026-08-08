@@ -4,9 +4,12 @@ package com.yugma.terrawatch.home
 // real QuakeRepository over app.cash.sqldelight's JDBC in-memory driver, a JVM-only artifact.
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import app.cash.turbine.test
+import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.data.QuakeRepository
 import com.yugma.terrawatch.database.QuakeDao
 import com.yugma.terrawatch.database.TerraWatchDb
+import com.yugma.terrawatch.location.LocationProvider
+import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.model.MagRevision
 import com.yugma.terrawatch.model.MagnitudeBand
 import com.yugma.terrawatch.model.Quake
@@ -56,7 +59,7 @@ class HomeViewModelTest {
     // specific transient shape, so these tests assert on the settled state, not an interim one.
     @Test fun `loads feed into content state`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
-        val vm = HomeViewModel(fakeRepositoryWithOneQuake())
+        val vm = HomeViewModel(fakeRepositoryWithOneQuake(), emptyHomeLocationStore(), LocationProvider())
         vm.state.test {
             var s = awaitItem()
             while (s is HomeUiState.Loading || (s is HomeUiState.Content && s.quakes.isEmpty())) {
@@ -70,7 +73,7 @@ class HomeViewModelTest {
 
     @Test fun `refreshFailed is true when the initial refresh fails`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
-        val vm = HomeViewModel(fakeRepositoryAlwaysFailing())
+        val vm = HomeViewModel(fakeRepositoryAlwaysFailing(), emptyHomeLocationStore(), LocationProvider())
         vm.state.test {
             var s = awaitItem()
             while (s is HomeUiState.Loading || (s is HomeUiState.Content && !s.refreshFailed)) {
@@ -87,7 +90,7 @@ class HomeViewModelTest {
 
     @Test fun `pins carry the id, magnitude and band of their quake`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
-        val vm = HomeViewModel(fakeRepositoryWithOneQuake())
+        val vm = HomeViewModel(fakeRepositoryWithOneQuake(), emptyHomeLocationStore(), LocationProvider())
         vm.state.test {
             var s = awaitItem()
             while (s is HomeUiState.Loading || (s is HomeUiState.Content && s.pins.isEmpty())) {
@@ -104,7 +107,7 @@ class HomeViewModelTest {
 
     @Test fun `lastUpdatedMillis is populated from the repository's fetch clock`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
-        val vm = HomeViewModel(fakeRepositoryWithOneQuake())
+        val vm = HomeViewModel(fakeRepositoryWithOneQuake(), emptyHomeLocationStore(), LocationProvider())
         vm.state.test {
             var s = awaitItem()
             while (s is HomeUiState.Loading || (s is HomeUiState.Content && s.lastUpdatedMillis == null)) {
@@ -124,7 +127,7 @@ class HomeViewModelTest {
     @Test fun `refreshFailed clears once a new quake proves data is flowing again`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val repository = fakeRepositoryAlwaysFailing()
-        val vm = HomeViewModel(repository)
+        val vm = HomeViewModel(repository, emptyHomeLocationStore(), LocationProvider())
         vm.state.test {
             var s = awaitItem()
             while (s is HomeUiState.Loading || (s is HomeUiState.Content && !s.refreshFailed)) {
@@ -161,7 +164,7 @@ class HomeViewModelTest {
     @Test fun `cached pins render immediately, before the pending network refresh resolves`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val gate = CompletableDeferred<Unit>()
-        val vm = HomeViewModel(fakeRepositorySeededWithOneQuake(gate))
+        val vm = HomeViewModel(fakeRepositorySeededWithOneQuake(gate), emptyHomeLocationStore(), LocationProvider())
         vm.state.test {
             var s = awaitItem()
             while (s is HomeUiState.Loading) s = awaitItem()
@@ -172,6 +175,61 @@ class HomeViewModelTest {
         }
         gate.complete(Unit) // let the pending refresh finish so it doesn't leak into later tests
     }
+
+    // Task 9: the feed sheet's "N NEW" chip. fakeRepositoryAlwaysFailing() (not …WithOneQuake())
+    // deliberately: its refreshFeed() never calls ingest() on anything, so the counter starts
+    // from a known, deterministic 0 rather than racing whatever the network-seeded quake in the
+    // "WithOneQuake" fake would otherwise add to it.
+    @Test fun `newSinceExpand increments once per newly inserted quake`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val repository = fakeRepositoryAlwaysFailing()
+        val vm = HomeViewModel(repository, emptyHomeLocationStore(), LocationProvider())
+        vm.newSinceExpand.test {
+            assertEquals(0, awaitItem())
+            repository.ingest(freshQuake("new1"))
+            assertEquals(1, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `markSheetExpanded resets newSinceExpand to zero`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val repository = fakeRepositoryAlwaysFailing()
+        val vm = HomeViewModel(repository, emptyHomeLocationStore(), LocationProvider())
+        vm.newSinceExpand.test {
+            assertEquals(0, awaitItem())
+            repository.ingest(freshQuake("new1"))
+            assertEquals(1, awaitItem())
+            vm.markSheetExpanded()
+            assertEquals(0, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    // Task 9: homeLocation. Seeds the store via HomeLocationStore.set() (the same dao-backed path
+    // HomeViewModel itself reads through), then asserts the ViewModel's own flow eventually
+    // reflects it — proving the init{} load actually reads from the injected store rather than,
+    // say, silently defaulting to null or only consulting LocationProvider.
+    @Test fun `homeLocation loads the previously stored point`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val store = emptyHomeLocationStore().apply { set(GeoPoint(12.34, 56.78)) }
+        val vm = HomeViewModel(fakeRepositoryAlwaysFailing(), store, LocationProvider())
+        vm.homeLocation.test {
+            var v = awaitItem()
+            while (v == null) v = awaitItem()
+            assertEquals(GeoPoint(12.34, 56.78), v)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+}
+
+// A fresh, empty in-memory-backed HomeLocationStore — used by every test above that needs
+// *a* HomeLocationStore to satisfy HomeViewModel's constructor but doesn't care what (if
+// anything) it resolves to.
+private fun emptyHomeLocationStore(): HomeLocationStore {
+    val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+    TerraWatchDb.Schema.create(driver)
+    return HomeLocationStore(QuakeDao(TerraWatchDb(driver)))
 }
 
 // Builds a real QuakeRepository over an in-memory JVM SQLDelight driver with a MockEngine that

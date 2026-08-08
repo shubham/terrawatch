@@ -19,6 +19,11 @@ kotlin {
             implementation(compose.material3)
             implementation(compose.ui)
             api(projects.core.model)
+            // Task 9: StatusShield's public signature takes a PillStatus (core:data's pure pill
+            // logic) directly, so consumers of core:ui's StatusShield need that type on their
+            // compile classpath too — api, not implementation, same reasoning as core.model above.
+            // No cycle: core:data depends on model/network/database only, never on core:ui.
+            api(projects.core.data)
             implementation(libs.kotlinx.datetime)
         }
         // Formats.kt's tests live in jvmTest (not commonTest): the Compose Multiplatform plugin's

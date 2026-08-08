@@ -36,5 +36,8 @@ fun appModule(http: HttpClient, dao: QuakeDao, locationProvider: LocationProvide
     viewModel { FeedViewModel(get()) }
     // Task 8: Home is now App()'s real screen; FeedViewModel/FeedScreen stay registered/on-disk
     // unreferenced (Task 9's detail sheet may reuse FeedScreen's list internals).
-    viewModel { HomeViewModel(get()) }
+    // Task 9: HomeViewModel gains the pill's home-location dependency — HomeLocationStore and
+    // LocationProvider are both already singles above, so get()/get() resolve them by the
+    // constructor's own parameter types, same pattern as QuakeRepository's get()-per-param above.
+    viewModel { HomeViewModel(get(), get(), get()) }
 }

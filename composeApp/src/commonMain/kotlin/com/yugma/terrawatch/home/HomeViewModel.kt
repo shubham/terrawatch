@@ -2,9 +2,12 @@ package com.yugma.terrawatch.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.data.QuakeRepository
 import com.yugma.terrawatch.data.RefreshStatus
+import com.yugma.terrawatch.location.LocationProvider
 import com.yugma.terrawatch.map.QuakePin
+import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.model.Quake
 import com.yugma.terrawatch.model.magnitudeBand
 import kotlinx.coroutines.Dispatchers
@@ -40,7 +43,11 @@ private data class HomeSnapshot(
     val lastUpdatedMillis: Long?,
 )
 
-class HomeViewModel(private val repository: QuakeRepository) : ViewModel() {
+class HomeViewModel(
+    private val repository: QuakeRepository,
+    private val homeLocationStore: HomeLocationStore,
+    private val locationProvider: LocationProvider,
+) : ViewModel() {
     private val _state = MutableStateFlow<HomeUiState>(HomeUiState.Loading)
     val state: StateFlow<HomeUiState> = _state
 
@@ -48,6 +55,21 @@ class HomeViewModel(private val repository: QuakeRepository) : ViewModel() {
     // what QuakeRepository already decided (previous == null at ingest time) — see
     // QuakeRepository.insertedQuakeIds's own kdoc for why updates/revisions don't emit here.
     val newQuakeIds: SharedFlow<String> = repository.insertedQuakeIds
+
+    // Task 9: the pill's other dependency, besides the quake list itself — pillStatus(quakes,
+    // home, now) is computed in HomeScreen's composition (cheap, pure), fed by this. Null until
+    // the init{} load below resolves (store empty AND no fix yet, or still loading) — pillStatus
+    // treats null exactly like "not yet known" (Kind.ASK_LOCATION), which is the correct answer
+    // in both cases: nothing to be unsafe *about* without a reference point.
+    private val _homeLocation = MutableStateFlow<GeoPoint?>(null)
+    val homeLocation: StateFlow<GeoPoint?> = _homeLocation
+
+    // Task 9: how many quakes have arrived since the feed sheet was last dragged open — the
+    // sheet's "N NEW" chip. Incremented alongside refreshFailed's clearing below (same triggering
+    // event: a genuinely new quake, per insertedQuakeIds' own not-on-updates contract), reset by
+    // [markSheetExpanded] when HomeScreen observes the sheet reach SheetValue.Expanded.
+    private val _newSinceExpand = MutableStateFlow(0)
+    val newSinceExpand: StateFlow<Int> = _newSinceExpand
 
     // Fix Round 2 (review finding): this used to be a `val status = repository.refreshFeed()`
     // local, captured ONCE inside the same coroutine that then went on to collect
@@ -74,6 +96,18 @@ class HomeViewModel(private val repository: QuakeRepository) : ViewModel() {
             repository.startLive(viewModelScope)
         }
 
+        // Task 9: home location, resolved once at startup. Dispatchers.Default because
+        // HomeLocationStore.get() is a synchronous DAO read (SQLDelight) and LocationProvider's
+        // android actual reads a system service — neither belongs on Main. A stored point always
+        // wins over asking the platform again; a freshly-resolved fix gets remembered as home so
+        // this only ever asks the platform once (matches the brief's `get() ?: current()?.also
+        // { set(it) }` — HomeLocationStore.set() is itself an ordinary synchronous DAO write, and
+        // running it here, still on Dispatchers.Default, keeps it off Main too).
+        viewModelScope.launch(Dispatchers.Default) {
+            val stored = homeLocationStore.get()
+            _homeLocation.value = stored ?: locationProvider.current()?.also { homeLocationStore.set(it) }
+        }
+
         // The cache-driven state loop. Starts collecting immediately — does NOT wait on the
         // refresh-loop launch above (see its comment).
         viewModelScope.launch {
@@ -89,8 +123,16 @@ class HomeViewModel(private val repository: QuakeRepository) : ViewModel() {
             // and no first-emission-doesn't-count edge case to get right. It's also exactly the
             // same signal Task 10's pin-drop animation already keys off of for "a new quake
             // landed", so this reuses rather than duplicates that notion of "data is flowing".
+            //
+            // Task 9 extends this same collector with the feed sheet's "N NEW" counter, rather
+            // than adding a second independent collect{} on the same hot SharedFlow: both effects
+            // react to the exact same event (ingest() just wrote a genuinely new quake), so it's
+            // one subscription with two consequences, not two subscriptions.
             launch {
-                repository.insertedQuakeIds.collect { refreshFailed.value = false }
+                repository.insertedQuakeIds.collect {
+                    refreshFailed.value = false
+                    _newSinceExpand.value += 1
+                }
             }
             // Fix Round 2 (review finding): pin mapping and the lastFetchedAtMillis() read used to
             // run directly inside collect{}'s lambda — i.e. on Dispatchers.Main, once per
@@ -121,6 +163,12 @@ class HomeViewModel(private val repository: QuakeRepository) : ViewModel() {
                 )
             }.collect { content -> _state.value = content }
         }
+    }
+
+    /** Called by HomeScreen when the feed sheet reaches [androidx.compose.material3.SheetValue]
+     * `.Expanded` — the user has now seen the list, so the "N NEW" chip resets. */
+    fun markSheetExpanded() {
+        _newSinceExpand.value = 0
     }
 
     private fun Quake.toPin() = QuakePin(
