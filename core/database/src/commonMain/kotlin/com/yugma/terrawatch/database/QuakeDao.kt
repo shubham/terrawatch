@@ -18,7 +18,7 @@ import kotlinx.serialization.Serializable
 @Serializable
 private data class RevisionJson(val mag: Double, val magType: String?, val atMillis: Long, val source: String)
 
-class QuakeDao(private val db: TerraWatchDb) {
+class QuakeDao(private val db: TerraWatchDb, private val clock: () -> Long = { 0L }) {
     private val json = Json
 
     fun upsert(quake: DomainQuake) = db.transaction { upsertInternal(quake) }
@@ -54,6 +54,8 @@ class QuakeDao(private val db: TerraWatchDb) {
         db.quakeQueries.pageBefore(timeMillis, minMag, limit.toLong()).executeAsList().map { it.toDomain() }
 
     fun countAll(): Long = db.quakeQueries.countAll().executeAsOne()
+
+    fun lastFetchedAtMillis(): Long? = db.quakeQueries.lastFetchedAt().executeAsOneOrNull()?.MAX
 
     fun delete(id: String) = db.quakeQueries.delete(id)
 
@@ -107,7 +109,7 @@ class QuakeDao(private val db: TerraWatchDb) {
             ListSerializer(RevisionJson.serializer()),
             revisions.map { RevisionJson(it.mag, it.magType, it.atMillis, it.source.name) }),
         updatedAtMillis = updatedAtMillis,
-        fetchedAtMillis = updatedAtMillis,
+        fetchedAtMillis = clock(),
     )
 
     private fun Quake.toDomain() = DomainQuake(

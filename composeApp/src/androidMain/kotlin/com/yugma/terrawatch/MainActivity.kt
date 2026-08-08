@@ -10,13 +10,15 @@ import com.yugma.terrawatch.di.appModule
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.websocket.WebSockets
+import kotlin.time.Clock
 import org.koin.core.context.GlobalContext
 import org.koin.core.context.startKoin
 
 class MainActivity : ComponentActivity() {
+    @OptIn(kotlin.time.ExperimentalTime::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val dao = QuakeDao(createDatabase(DriverFactory(applicationContext)))
+        val dao = QuakeDao(createDatabase(DriverFactory(applicationContext)), clock = { Clock.System.now().toEpochMilliseconds() })
         val http = HttpClient(OkHttp) { install(WebSockets) }
         // Guard against a second startKoin() call if the Activity is ever recreated in the same
         // process (e.g. a config change) — Koin throws KoinAppAlreadyStartedException otherwise.

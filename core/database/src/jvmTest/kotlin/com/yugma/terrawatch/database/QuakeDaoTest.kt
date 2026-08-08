@@ -14,11 +14,13 @@ import kotlin.test.BeforeTest
 
 class QuakeDaoTest {
     private lateinit var dao: QuakeDao
+    private lateinit var db: TerraWatchDb
 
     @BeforeTest fun setup() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         TerraWatchDb.Schema.create(driver)
-        dao = QuakeDao(TerraWatchDb(driver))
+        db = TerraWatchDb(driver)
+        dao = QuakeDao(db)
     }
 
     private fun quake(
@@ -132,5 +134,25 @@ class QuakeDaoTest {
             expectNoEvents()
             cancelAndIgnoreRemainingEvents()
         }
+    }
+
+    @Test fun `fetchedAtMillis comes from injected clock`() {
+        val clockedDao = QuakeDao(db, clock = { 42_000L })
+        clockedDao.upsert(quake())
+        assertEquals(42_000L, clockedDao.lastFetchedAtMillis())
+    }
+
+    @Test fun `lastFetchedAt tracks latest write clock, not quake timestamps`() {
+        var now = 42_000L
+        val clockedDao = QuakeDao(db, clock = { now })
+        clockedDao.upsert(quake(id = "a", updated = 999_999))
+        now = 99_000L
+        clockedDao.upsert(quake(id = "b", updated = 1))
+        assertEquals(99_000L, clockedDao.lastFetchedAtMillis())
+    }
+
+    @Test fun `lastFetchedAt null on empty table`() {
+        val clockedDao = QuakeDao(db, clock = { 42_000L })
+        assertEquals(null, clockedDao.lastFetchedAtMillis())
     }
 }

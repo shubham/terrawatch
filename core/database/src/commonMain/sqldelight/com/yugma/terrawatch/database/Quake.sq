@@ -49,3 +49,6 @@ SELECT value FROM meta WHERE key = ?;
 
 meta_put:
 INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?);
+
+lastFetchedAt:
+SELECT MAX(fetchedAtMillis) FROM quake;
