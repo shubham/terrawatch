@@ -4,6 +4,7 @@ import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.data.QuakeRepository
 import com.yugma.terrawatch.database.QuakeDao
 import com.yugma.terrawatch.feed.FeedViewModel
+import com.yugma.terrawatch.home.HomeViewModel
 import com.yugma.terrawatch.location.LocationProvider
 import com.yugma.terrawatch.network.EmscLiveSource
 import com.yugma.terrawatch.network.UsgsApi
@@ -33,4 +34,7 @@ fun appModule(http: HttpClient, dao: QuakeDao, locationProvider: LocationProvide
     // koin-compose-viewmodel's koinViewModel<FeedViewModel>() at the App() call site, instead of
     // minting a fresh instance (and a fresh startLive() collector) on every recomposition/rotation.
     viewModel { FeedViewModel(get()) }
+    // Task 8: Home is now App()'s real screen; FeedViewModel/FeedScreen stay registered/on-disk
+    // unreferenced (Task 9's detail sheet may reuse FeedScreen's list internals).
+    viewModel { HomeViewModel(get()) }
 }

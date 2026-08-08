@@ -1,11 +1,26 @@
 package com.yugma.terrawatch.map
 
+import android.util.Log
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
+import com.yugma.terrawatch.model.MagnitudeBand
+import com.yugma.terrawatch.ui.theme.magnitudeColor
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.compose.camera.rememberCameraState
+import org.maplibre.compose.expressions.dsl.const
+import org.maplibre.compose.layers.CircleLayer
 import org.maplibre.compose.map.MaplibreMap
+import org.maplibre.compose.sources.GeoJsonData
+import org.maplibre.compose.sources.rememberGeoJsonSource
 import org.maplibre.compose.style.BaseStyle
+import org.maplibre.compose.util.ClickResult
+import org.maplibre.spatialk.geojson.Feature
+import org.maplibre.spatialk.geojson.FeatureCollection
+import org.maplibre.spatialk.geojson.Point
 import org.maplibre.spatialk.geojson.Position
 
 // OpenFreeMap's "liberty" style — free, no API key, no attribution HTML to inject beyond what the
@@ -18,13 +33,36 @@ private const val WORLD_CENTER_LATITUDE = 20.0
 private const val WORLD_CENTER_LONGITUDE = 0.0
 private const val WORLD_ZOOM = 1.5
 
+private const val PIN_STROKE_WIDTH_DP = 1.5f
+private const val LOG_TAG = "TerraWatchMap"
+
 /**
- * SPIKE (Plan 2, Task 6): minimal maplibre-compose render — world basemap only, no quake pins yet.
- * Android-only per the spike decision — see docs/superpowers/plans/plan-2-spike-maplibre.md and
- * QuakeMap.kt's kdoc for why desktop/wasmJs get a placeholder instead.
+ * Task 8: live magnitude-banded quake pins. maplibre-compose 0.14.0's runtime-layer API confirmed
+ * directly against the library's own compiled classes (extracted from the resolved
+ * `maplibre-compose-android`/`geojson-jvm` artifacts and inspected with `javap`, per the spike's
+ * "VALIDATE before building" instruction — not re-derived from the spike doc's prose alone):
+ * `rememberGeoJsonSource`/`GeoJsonData.Features`/`CircleLayer`'s exact parameter names (`source`,
+ * `color`, `radius`, `strokeColor`, `strokeWidth`, `onClick`) and the click handler's
+ * `ClickResult.Consume`/`Pass` return type were all read back from the real bytecode's constant
+ * pool, not assumed from the spike's paraphrase.
+ *
+ * Deliberately NOT using per-feature paint expressions (`feature["band"]`, `match`/`step`) or
+ * GeoJsonOptions clustering: the spike explicitly flagged both as verified-in-source-only, not
+ * exercised end-to-end. Instead, [pins] are grouped by [MagnitudeBand] in plain Kotlin and each
+ * non-empty band gets its own `GeoJsonSource` + `CircleLayer` pair with constant paint values —
+ * still fully data-driven per quake (which band's source a pin lands in is exactly a function of
+ * its magnitude), just without the extra, unverified expression-DSL surface. Clustering is skipped
+ * entirely per the brief's own allowance ("ONLY if ... <1h work; else skip, note, defer to Plan
+ * 3") — the 3-layer cluster/unclustered pattern needs the same unverified expression machinery
+ * this task is deliberately avoiding, so it's deferred, not attempted.
  */
 @Composable
-actual fun QuakeMap(modifier: Modifier) {
+actual fun QuakeMap(
+    pins: List<QuakePin>,
+    newQuakeId: String?,
+    onPinTap: (String) -> Unit,
+    modifier: Modifier,
+) {
   val cameraState =
       rememberCameraState(
           firstPosition =
@@ -37,5 +75,49 @@ actual fun QuakeMap(modifier: Modifier) {
       modifier = modifier,
       baseStyle = BaseStyle.Uri(OPENFREEMAP_LIBERTY_STYLE_URL),
       cameraState = cameraState,
+  ) {
+    // Sorted so MAJOR/STRONG pins' CircleLayers are added (and therefore drawn) after LOW/
+    // MODERATE's — more severe quakes stay visually on top when pins overlap at low zoom.
+    pins.groupBy { it.band }.toSortedMap(compareBy { it.ordinal }).forEach { (band, bandPins) ->
+      QuakeBandCircleLayer(band, bandPins, onPinTap)
+    }
+  }
+}
+
+@Composable
+private fun QuakeBandCircleLayer(band: MagnitudeBand, pins: List<QuakePin>, onPinTap: (String) -> Unit) {
+  val source = rememberGeoJsonSource(GeoJsonData.Features(pins.toFeatureCollection()))
+  CircleLayer(
+      id = "quake-pins-${band.name.lowercase()}",
+      source = source,
+      color = const(magnitudeColor(band)),
+      radius = const(pinRadiusDp(band).dp),
+      strokeColor = const(Color.White),
+      strokeWidth = const(PIN_STROKE_WIDTH_DP.dp),
+      onClick = { features ->
+        val id = features.firstOrNull()?.id?.content
+        Log.d(LOG_TAG, "onPinTap(id=$id)")
+        id?.let(onPinTap)
+        ClickResult.Consume
+      },
   )
 }
+
+private fun List<QuakePin>.toFeatureCollection() =
+    FeatureCollection(
+        map { pin ->
+          Feature(
+              geometry = Point(Position(longitude = pin.lon, latitude = pin.lat)),
+              properties = JsonObject(emptyMap()),
+              id = JsonPrimitive(pin.id),
+          )
+        }
+    )
+
+// Brief's interfaces block (authoritative): "pin size 8+band.ordinal*4 dp-equivalent". Applied
+// literally across all five MagnitudeBand values: LOW=8, MODERATE=12, STRONG=16, MAJOR=20,
+// UNKNOWN=24 — note UNKNOWN (ordinal 4, magnitude data missing) ends up the largest radius, larger
+// than MAJOR. That's very likely an oversight in a formula meant for the four numbered severities,
+// but "interfaces authoritative" per the task brief and UNKNOWN pins are rare in practice (feeds
+// almost always carry a magnitude) — flagging here rather than silently special-casing it.
+private fun pinRadiusDp(band: MagnitudeBand): Float = 8f + band.ordinal * 4f

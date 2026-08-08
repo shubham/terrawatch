@@ -23,6 +23,9 @@ kotlin {
             implementation(projects.core.network)
             implementation(projects.core.database)
             implementation(projects.core.data)
+            // Task 8: HomeScreen wraps in TerraTheme and QuakeMap's Android actual sources pin
+            // colors from magnitudeColor(band) — both live in core:ui.
+            implementation(projects.core.ui)
             implementation(libs.koin.core)
             implementation(libs.koin.compose.viewmodel)
             implementation(libs.androidx.lifecycle.viewmodel)

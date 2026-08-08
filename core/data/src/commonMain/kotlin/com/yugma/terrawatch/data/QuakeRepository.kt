@@ -37,6 +37,13 @@ class QuakeRepository(
     private val _alertEvents = MutableSharedFlow<AlertEvent>(extraBufferCapacity = 16)
     val alertEvents: SharedFlow<AlertEvent> = _alertEvents
 
+    // Task 8: fires the canonical id exactly when ingest() resolves a genuinely-new quake
+    // (previous == null below) — never on an update/revision to an already-stored row. Home's map
+    // (via HomeViewModel) uses this to drive the pin-drop animation (Task 10), which must not
+    // replay every time an already-seen quake merely gets a magnitude revision.
+    private val _insertedQuakeIds = MutableSharedFlow<String>(extraBufferCapacity = 16)
+    val insertedQuakeIds: SharedFlow<String> = _insertedQuakeIds
+
     // Guards ingest()'s read-reconcile-write critical section: window-query, dedupe match, and
     // the replaceAndDelete() commit must run as one atomic unit across concurrent callers (poll,
     // live WebSocket, archive backfill can all be ingesting at once). Without this, two
@@ -52,6 +59,9 @@ class QuakeRepository(
      */
     fun recentQuakes(windowMs: Long = 86_400_000): Flow<List<Quake>> =
         dao.recent(clock() - windowMs)
+
+    /** Pass-through for Home's staleness banner (Task 8) — see [QuakeDao.lastFetchedAtMillis]. */
+    fun lastFetchedAtMillis(): Long? = dao.lastFetchedAtMillis()
 
     suspend fun refreshFeed(): RefreshStatus = withContext(ioDispatcher) {
         when (val result = api.fetchFeed(previousEtag = dao.metaGet(FEED_ETAG_KEY))) {
@@ -115,6 +125,7 @@ class QuakeRepository(
                 // between (an empty list, if a deleted row was the only one in view), and a crash
                 // between commits can permanently lose the quake.
                 dao.replaceAndDelete(result.canonical, deleteIds)   // NOT upsert() — reconciler already resolved recency; see Task 9 DAO notes
+                if (previous == null) _insertedQuakeIds.tryEmit(result.canonical.id)
                 alerts.evaluate(previous, result.canonical, rules, home)?.let { _alertEvents.tryEmit(it) }
             }
         }

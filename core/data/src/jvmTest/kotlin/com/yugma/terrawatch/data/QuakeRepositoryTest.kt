@@ -187,6 +187,31 @@ class QuakeRepositoryTest {
         }
     }
 
+    // Task 8: insertedQuakeIds must emit exactly when ingest() decides this is a brand-new quake
+    // (previous == null) — never on an update/revision to an already-stored row. HomeViewModel
+    // (Task 8) re-exposes this as-is to drive the map's pin-drop animation (Task 10); a false
+    // emission on every revision would replay the drop animation for quakes that aren't new.
+    @Test fun `ingest of a brand-new quake emits its canonical id on insertedQuakeIds`() = runTest {
+        val r = repoNoop(2_000_000)
+        r.insertedQuakeIds.test {
+            r.ingest(quake("us1", Source.USGS, 5.5, t = 1_950_000))
+            assertEquals("us1", awaitItem())
+            expectNoEvents()
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `ingest of a revision to an existing quake does not emit on insertedQuakeIds`() = runTest {
+        val r = repoNoop(2_000_000)
+        r.ingest(quake("us1", Source.USGS, 5.5, t = 1_950_000, updated = 1_950_000))
+        r.insertedQuakeIds.test {
+            // Same id, newer `updated` — a revision of the row seeded above, not a new event.
+            r.ingest(quake("us1", Source.USGS, 5.8, t = 1_950_000, updated = 1_960_000))
+            expectNoEvents()
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
     // Task 9 review round 3 (re-review): disproves the "at most one of replacesId / incoming.id
     // needs deleting" invariant the round-2 fix rested on. UsgsFeedParser sets Quake.id from
     // properties.ids's first alias but sources[USGS] from the top-level feature "id" — nothing
