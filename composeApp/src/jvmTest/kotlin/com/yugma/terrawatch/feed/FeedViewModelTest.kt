@@ -19,13 +19,22 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class FeedViewModelTest {
+    // Dispatchers.setMain(...) installs a classloader-global override — without resetting it,
+    // the next test in this class (or file) would silently inherit whichever TestDispatcher the
+    // previous test left behind instead of getting its own.
+    @AfterTest fun tearDown() {
+        Dispatchers.resetMain()
+    }
+
     // FeedViewModel.init unconditionally calls repository.startLive(viewModelScope), which
     // subscribes to EmscLiveSource.events() — a flow that retries forever with exponential
     // backoff delay() on any failure. The fake HttpClient below has no WebSockets plugin
@@ -53,6 +62,23 @@ class FeedViewModelTest {
             cancelAndIgnoreRemainingEvents()
         }
     }
+
+    // Review finding (Critical): on a fresh install with zero local rows, recentQuakes() emits
+    // its current (empty) snapshot immediately on subscribe — that emission ran unconditionally
+    // and clobbered the Error state set moments earlier, so a total refresh failure permanently
+    // settled on a blank Content(emptyList) screen instead of surfacing the error. Deterministic,
+    // not a race: the DB is empty here regardless of timing, since nothing was ever ingested.
+    @Test fun `total refresh failure on empty db settles on Error, not blank Content`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val vm = FeedViewModel(repository = fakeRepositoryAlwaysFailing())
+        vm.state.test {
+            var s = awaitItem()
+            while (s is FeedUiState.Loading) s = awaitItem()
+            assertIs<FeedUiState.Error>(s)
+            expectNoEvents()
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
 }
 
 // Builds a real QuakeRepository over an in-memory JVM SQLDelight driver with a MockEngine that
@@ -69,6 +95,24 @@ private fun fakeRepositoryWithOneQuake(): QuakeRepository {
             headersOf(HttpHeaders.ContentType to listOf("application/json")),
         )
     }
+    return QuakeRepository(
+        UsgsApi(HttpClient(engine)),
+        EmscLiveSource(HttpClient(engine)),
+        dao,
+        clock = { 2_000_000L },
+    )
+}
+
+// Builds a real QuakeRepository whose HttpClient returns HTTP 500 for every request: fetchFeed()
+// maps that to FeedResult.Failure -> RefreshStatus.FAILED, and the (unrelated) EMSC websocket
+// attempt fails immediately too — same MockEngine, no WebSockets plugin installed — which is
+// harmless here since nothing in this test ever drives that retry loop's scheduler forward (see
+// the UnconfinedTestDispatcher note above).
+private fun fakeRepositoryAlwaysFailing(): QuakeRepository {
+    val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+    TerraWatchDb.Schema.create(driver)
+    val dao = QuakeDao(TerraWatchDb(driver))
+    val engine = MockEngine { respond("", HttpStatusCode.InternalServerError) }
     return QuakeRepository(
         UsgsApi(HttpClient(engine)),
         EmscLiveSource(HttpClient(engine)),
