@@ -2,6 +2,7 @@ package com.yugma.terrawatch.map
 
 import android.util.Log
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -49,12 +50,31 @@ private const val LOG_TAG = "TerraWatchMap"
  * Deliberately NOT using per-feature paint expressions (`feature["band"]`, `match`/`step`) or
  * GeoJsonOptions clustering: the spike explicitly flagged both as verified-in-source-only, not
  * exercised end-to-end. Instead, [pins] are grouped by [MagnitudeBand] in plain Kotlin and each
- * non-empty band gets its own `GeoJsonSource` + `CircleLayer` pair with constant paint values —
- * still fully data-driven per quake (which band's source a pin lands in is exactly a function of
- * its magnitude), just without the extra, unverified expression-DSL surface. Clustering is skipped
+ * band gets its own `GeoJsonSource` + `CircleLayer` pair with constant paint values — still fully
+ * data-driven per quake (which band's source a pin lands in is exactly a function of its
+ * magnitude), just without the extra, unverified expression-DSL surface. Clustering is skipped
  * entirely per the brief's own allowance ("ONLY if ... <1h work; else skip, note, defer to Plan
  * 3") — the 3-layer cluster/unclustered pattern needs the same unverified expression machinery
  * this task is deliberately avoiding, so it's deferred, not attempted.
+ *
+ * BUG FIX (post-Task-8-device-verify): pin updates must flow through `GeoJsonSource.setData` on a
+ * source that stays `remember`-ed for the composable's whole lifetime — never through tearing down
+ * and recreating a layer/source. The original version only called [QuakeBandCircleLayer] for bands
+ * that *currently* had pins (`pins.groupBy{...}.toSortedMap{...}.forEach{...}`), with no `key()`.
+ * That's fine while the set of non-empty bands only ever grows, but the moment a band transiently
+ * empties out (e.g. its quakes age out of `recentQuakes()`'s 24h window) while a *different* band
+ * still has pins, Compose's positional slot-matching (nothing here was keyed) can silently rebind
+ * an existing composition slot — with its already-`remember`-ed `GeoJsonSource` — from one band to
+ * another: e.g. MODERATE's slot starts getting fed STRONG's pins and a `CircleLayer` `id` that
+ * changes from `"quake-pins-moderate"` to `"quake-pins-strong"` on what the underlying native layer
+ * still thinks is the same layer. That's exactly the class of "recreate the style instead of
+ * updating the source" bug that produced a silent blank render elsewhere in this screen (see
+ * HomeScreen.kt's fix note) — never triggered in this file specifically as far as I could
+ * reproduce, but a real latent risk once the live feed's population shifts over time, not just
+ * grows. Fixed by always composing exactly [MagnitudeBand.entries]' 5 bands, every recomposition,
+ * each wrapped in `key(band)` — the composition's shape and each band's identity are now invariant
+ * regardless of which bands currently have pins; only the data fed into each band's persistent,
+ * already-`remember`-ed `GeoJsonSource` ever changes.
  */
 @Composable
 actual fun QuakeMap(
@@ -76,10 +96,15 @@ actual fun QuakeMap(
       baseStyle = BaseStyle.Uri(OPENFREEMAP_LIBERTY_STYLE_URL),
       cameraState = cameraState,
   ) {
-    // Sorted so MAJOR/STRONG pins' CircleLayers are added (and therefore drawn) after LOW/
-    // MODERATE's — more severe quakes stay visually on top when pins overlap at low zoom.
-    pins.groupBy { it.band }.toSortedMap(compareBy { it.ordinal }).forEach { (band, bandPins) ->
-      QuakeBandCircleLayer(band, bandPins, onPinTap)
+    val pinsByBand = pins.groupBy { it.band }
+    // Fixed order (enum declaration order: LOW, MODERATE, STRONG, MAJOR, UNKNOWN) so MAJOR/STRONG
+    // pins' CircleLayers are added — and therefore drawn — after LOW/MODERATE's: more severe
+    // quakes stay visually on top when pins overlap at low zoom. Always all 5, never conditional
+    // on which bands currently have pins — see the fix note above for why.
+    for (band in MagnitudeBand.entries) {
+      key(band) {
+        QuakeBandCircleLayer(band, pinsByBand[band].orEmpty(), onPinTap)
+      }
     }
   }
 }

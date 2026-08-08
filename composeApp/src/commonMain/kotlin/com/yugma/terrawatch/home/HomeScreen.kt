@@ -31,39 +31,43 @@ private const val STALE_AFTER_MILLIS = 10 * 60 * 1000L
  * ("glass", per the Calm Guardian spec's floating-overlay rule) staleness/offline banner floating
  * over the top when the data on screen might be lying to the user. The map itself never goes
  * away — see [HomeUiState]'s own kdoc for why there's no Error state to swap it out for.
+ *
+ * BUG FIX (post-Task-8-device-verify, controller-diagnosed): this used to call `QuakeMap` from
+ * *inside* both branches of `when (state)` — one call site per branch. Compose treats those as two
+ * distinct call sites, so the Loading -> Content transition removed the Loading branch's QuakeMap
+ * from composition and mounted a brand-new one for Content: on Android, that tears down and
+ * recreates maplibre-compose's underlying AndroidView/GL surface, which silently re-inits to a
+ * blank white surface (no crash, no log — exactly the unexplained blank-render device symptom from
+ * the original device-verify pass, root-caused by inspection rather than by more on-device
+ * poking). `QuakeMap` is now called from exactly ONE call site, unconditionally, for the entire
+ * lifetime of this composable; only its `pins` argument changes across recompositions as [state]
+ * changes, which is the incremental-update path `rememberGeoJsonSource`'s `setData` is built for
+ * (see QuakeMap.android.kt's own fix note). The `when` below now only picks the *overlay* chrome
+ * (spinner vs. banner), never the map itself.
  */
 @Composable
 fun HomeScreen(viewModel: HomeViewModel) {
     val state by viewModel.state.collectAsState()
     Box(Modifier.fillMaxSize()) {
+        val content = state as? HomeUiState.Content
+        // Mounted once, for good, regardless of state — see the kdoc above. Empty pins pre-Content
+        // is fine: MapLibre's own tile/style fetch still overlaps the initial DB read/network
+        // refresh instead of waiting behind the spinner.
+        QuakeMap(
+            pins = content?.pins ?: emptyList(),
+            newQuakeId = null, // TODO(Task 10): wire viewModel.newQuakeIds through here.
+            onPinTap = {}, // TODO(Task 9): open the quake detail sheet.
+            modifier = Modifier.fillMaxSize(),
+        )
         when (val s = state) {
-            // The map mounts from the very first frame (empty pins) rather than waiting behind a
-            // spinner, so MapLibre's own tile fetch/style load overlaps the initial DB read/network
-            // refresh instead of starting only once Content arrives.
-            HomeUiState.Loading -> {
-                QuakeMap(
-                    pins = emptyList(),
-                    newQuakeId = null,
-                    onPinTap = {},
-                    modifier = Modifier.fillMaxSize(),
-                )
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
+            HomeUiState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
             }
-            is HomeUiState.Content -> {
-                QuakeMap(
-                    pins = s.pins,
-                    newQuakeId = null, // TODO(Task 10): wire viewModel.newQuakeIds through here.
-                    onPinTap = {}, // TODO(Task 9): open the quake detail sheet.
-                    modifier = Modifier.fillMaxSize(),
+            is HomeUiState.Content -> if (s.refreshFailed || isStale(s.lastUpdatedMillis)) {
+                StalenessBanner(
+                    lastUpdatedMillis = s.lastUpdatedMillis,
+                    modifier = Modifier.align(Alignment.TopCenter).padding(top = 16.dp),
                 )
-                if (s.refreshFailed || isStale(s.lastUpdatedMillis)) {
-                    StalenessBanner(
-                        lastUpdatedMillis = s.lastUpdatedMillis,
-                        modifier = Modifier.align(Alignment.TopCenter).padding(top = 16.dp),
-                    )
-                }
             }
         }
     }
