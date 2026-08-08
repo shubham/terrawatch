@@ -26,6 +26,8 @@ class EmscLiveSource(
                         }
                     }
                 }
+            } catch (ce: kotlinx.coroutines.CancellationException) {
+                throw ce
             } catch (_: Throwable) {
                 // fall through to backoff
             }

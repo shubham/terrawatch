@@ -31,6 +31,8 @@ class UsgsApi(
                 FeedResult.Fresh(UsgsFeedParser.parse(resp.bodyAsText()), resp.headers[HttpHeaders.ETag])
             else -> FeedResult.Failure(IllegalStateException("HTTP ${resp.status.value}"))
         }
+    } catch (ce: kotlinx.coroutines.CancellationException) {
+        throw ce
     } catch (t: Throwable) {
         FeedResult.Failure(t)
     }
