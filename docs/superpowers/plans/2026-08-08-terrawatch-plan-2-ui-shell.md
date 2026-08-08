@@ -425,7 +425,7 @@ Content per mockup: magnitude hero block (band color, big number), place, absolu
 
 **Files:**
 - Modify: `HomeScreen.kt` — `BoxWithConstraints`: width ≥ 900.dp → Row(map weight 1f, right panel 360.dp fixed: pill top + feed list + detail replaces list on selection); else phone layout
-- Modify: `composeApp/src/wasmJsMain/kotlin/com/yugma/terrawatch/main.kt` — per Task 6 decision: real App() + in-memory repository (no persistence, documented) if map works; else keep placeholder + `WebFallbackScreen` (feed list + static map snapshot via `Image` of a bundled world-map PNG with Compose-drawn pins)
+- Modify: `composeApp/src/wasmJsMain/kotlin/com/yugma/terrawatch/main.kt` — **SPIKE DECISION (recorded 2026-08-08): maplibre-compose publishes NO wasmJs artifact, and its desktop target demands a JDK 25 runtime (incompatible with our JDK 17 toolchain + Gradle 8.14). Therefore: web AND desktop both use `FallbackMapPane` (one shared implementation: bundled world-map PNG + Compose-drawn pins); live desktop map deferred to Plan 3 (entry-condition note). Android is the only live-map target in Plan 2 — it is also the only judged target.** Web keeps placeholder main until Task 12 wires the fallback screen.
 - Test: pure breakpoint fn `layoutMode(widthDp): LayoutMode` TDD (PHONE <900, TWO_PANE ≥900)
 
 - [ ] **Step 1: TDD layoutMode. Step 2: two-pane composition. Step 3: desktop run — resize window across 900dp, verify swap; screenshots. Step 4: wasm path per decision + browser screenshot. Step 5: commit** "Adaptive two-pane desktop; web per spike decision".
