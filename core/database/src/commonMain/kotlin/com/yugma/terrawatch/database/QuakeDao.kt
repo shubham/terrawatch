@@ -55,6 +55,22 @@ class QuakeDao(private val db: TerraWatchDb) {
 
     fun countAll(): Long = db.quakeQueries.countAll().executeAsOne()
 
+    fun delete(id: String) = db.quakeQueries.delete(id)
+
+    fun metaGet(key: String): String? = db.quakeQueries.meta_get(key).executeAsOneOrNull()
+
+    fun metaPut(key: String, value: String) { db.quakeQueries.meta_put(key, value) }
+
+    /**
+     * Unconditional write for DedupeEngine-reconciled rows. The reconciler has already
+     * resolved recency (updatedAtMillis = max of both sides) and merged sources/revisions,
+     * so the upsert() recency gate must NOT run — it would silently drop a merge whenever
+     * the surviving updatedAtMillis equals the stored one (late-arriving agency twin with
+     * a lagging timestamp). Idempotent for self-merges: reconcile() of an already-stored
+     * row reproduces the stored row byte-for-byte.
+     */
+    fun replace(quake: DomainQuake) = db.transaction { db.quakeQueries.insertOrReplace(quake.toRow()) }
+
     private fun DomainQuake.toRow() = Quake(
         id = id, timeMillis = timeMillis, lat = lat, lon = lon, depthKm = depthKm,
         mag = mag, magType = magType, place = place, tsunami = if (tsunami) 1 else 0,

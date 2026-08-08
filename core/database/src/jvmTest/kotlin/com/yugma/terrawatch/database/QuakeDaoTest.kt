@@ -67,4 +67,40 @@ class QuakeDaoTest {
         val page = dao.pageBefore(timeMillis = 400, limit = 10, minMag = 4.5)
         assertEquals(listOf("c", "b"), page.map { it.id })
     }
+
+    @Test fun `delete removes the row`() {
+        dao.upsert(quake())
+        dao.delete("us1")
+        assertEquals(null, dao.byId("us1"))
+        assertEquals(0, dao.countAll())
+    }
+
+    @Test fun `metaGet returns null for an unknown key`() {
+        assertEquals(null, dao.metaGet("feed_etag"))
+    }
+
+    @Test fun `metaPut then metaGet roundtrips and overwrites`() {
+        dao.metaPut("feed_etag", "\"e1\"")
+        assertEquals("\"e1\"", dao.metaGet("feed_etag"))
+        dao.metaPut("feed_etag", "\"e2\"")
+        assertEquals("\"e2\"", dao.metaGet("feed_etag"))
+    }
+
+    @Test fun `replace bypasses the upsert recency gate that silently drops equal-timestamp merges`() {
+        // Identical starting condition on two rows: stored updatedAt=2000, sources={USGS}.
+        dao.upsert(quake(id = "us1", updated = 2000))
+        dao.upsert(quake(id = "us2", updated = 2000))
+
+        // replace() with the SAME updatedAt (2000) but a different sources map must land —
+        // this is the DedupeEngine-reconciled-canonical write path.
+        dao.replace(quake(id = "us1", updated = 2000, sources = mapOf(Source.EMSC to "e1")))
+        assertEquals(setOf(Source.EMSC), assertNotNull(dao.byId("us1")).sources.keys)
+
+        // upsert() with the identical input is silently dropped by the recency gate
+        // (incoming.updatedAtMillis <= existing.updatedAtMillis) — the exact bug replace()
+        // exists to bypass for reconciled rows (Task 7 review: a late-arriving agency twin
+        // with a lagging/equal timestamp must still contribute its merged fields).
+        dao.upsert(quake(id = "us2", updated = 2000, sources = mapOf(Source.EMSC to "e1")))
+        assertEquals(setOf(Source.USGS), assertNotNull(dao.byId("us2")).sources.keys)
+    }
 }

@@ -41,6 +41,9 @@ ORDER BY timeMillis DESC LIMIT :limit;
 countAll:
 SELECT COUNT(*) FROM quake;
 
+delete:
+DELETE FROM quake WHERE id = ?;
+
 meta_get:
 SELECT value FROM meta WHERE key = ?;
 
