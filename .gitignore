@@ -1,0 +1,28 @@
+# Gradle
+.gradle/
+build/
+**/build/
+
+# Kotlin/JVM
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+.kotlin/
+local.properties
+
+# macOS
+.DS_Store
+
+# Secrets — never commit these
+*.keystore
+*.jks
+google-services.json
+secrets.properties
+
+# Session/agent artifacts
+.superpowers/
+.remember/

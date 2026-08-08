@@ -1,0 +1,163 @@
+<h2>The rest of the system</h2>
+<p class="subtitle">Layout 1 locked: map-first home + sheet, Map tab merged away. Nav = <b>Home · History · Insights</b>. Here's how the other three surfaces look as one family — this is a single proposal, not A/B. Tell me what to change.</p>
+
+<style>
+  .phone {
+    width: 270px; height: 540px; border-radius: 28px; overflow: hidden;
+    margin: 0 auto; position: relative; box-shadow: 0 8px 30px rgba(0,0,0,.22);
+    font-family: -apple-system, "SF Pro", Roboto, "Segoe UI", sans-serif;
+    text-align: left; flex-shrink: 0; background:#F6FAF9;
+  }
+  .phone * { box-sizing: border-box; }
+  .cards { align-items: flex-start; }
+  .statusbar { display:flex; justify-content:space-between; padding:10px 16px 4px; font-size:10px; color:#5C6B7A; position:relative; z-index:5;}
+  .navbar { position:absolute; bottom:0; left:0; right:0; display:flex; justify-content:space-around; padding:10px 0 14px; background:#FFFFFFEE; backdrop-filter:blur(10px); border-top:1px solid #E8EEF4; font-size:9px; color:#9AA8B8; text-align:center; z-index:9; }
+  .navbar b { color:#17222E; }
+  .adbar { position:absolute; bottom:52px; left:0; right:0; height:34px; background:#F2F6FAF2; display:flex; align-items:center; justify-content:center; font-size:9px; color:#B3C0CE; letter-spacing:1px; z-index:8; }
+  .chip { font-size:9.5px; padding:5px 10px; border-radius:99px; background:#fff; color:#44536B; box-shadow:0 1px 4px rgba(20,40,60,.08); }
+  .chip.on { background:#17222E; color:#fff; }
+  .wcard { background:#fff; border-radius:16px; box-shadow:0 2px 10px rgba(20,40,60,.08); }
+  .dot { width:32px; height:32px; border-radius:11px; display:flex; align-items:center; justify-content:center; font-size:11.5px; font-weight:800; color:#fff; flex-shrink:0; }
+  .d6 { background:#F0663B; } .d4 { background:#F5A524; } .d2 { background:#59B87D; } .d7 { background:#C43A2F; }
+</style>
+
+<div class="cards">
+
+  <!-- DETAIL SHEET -->
+  <div class="card" data-choice="detail-ok" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:18px 10px; background:#e9eef3;">
+      <div class="phone" style="background:#B9CFDF;">
+        <!-- dimmed map behind -->
+        <div style="position:absolute; inset:0; opacity:.5;">
+          <svg width="270" height="240" viewBox="0 0 270 240" xmlns="http://www.w3.org/2000/svg">
+            <rect width="270" height="240" fill="#D9E9F4"/>
+            <path d="M40 60 Q100 30 160 55 Q220 80 290 60 L290 240 L0 240 L0 90 Q20 70 40 60 Z" fill="#EFF3EC"/>
+          </svg>
+          <div style="position:absolute; top:80px; left:120px; width:26px; height:26px; border-radius:50%; background:#F0663B; border:2px solid #fff;"></div>
+        </div>
+        <div class="statusbar"><span>09:41</span><span>▲ ● ▮</span></div>
+        <!-- expanded detail sheet -->
+        <div style="position:absolute; top:120px; bottom:0; left:0; right:0; background:#FBFDFE; border-radius:24px 24px 0 0; padding:10px 16px; box-shadow:0 -8px 30px rgba(20,40,60,.2); z-index:6;">
+          <div style="width:34px;height:4px;border-radius:2px;background:#D5DEE7;margin:0 auto 10px;"></div>
+          <div style="display:flex; gap:13px; align-items:center;">
+            <div style="width:54px;height:54px;border-radius:18px;background:#F0663B;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;flex-shrink:0;">
+              <div style="font-size:19px;font-weight:800;line-height:1;">6.1</div>
+              <div style="font-size:7px;letter-spacing:1px;margin-top:2px;">MAGNITUDE</div>
+            </div>
+            <div>
+              <div style="font-size:15px;font-weight:750;color:#17222E;">Mindanao, Philippines</div>
+              <div style="font-size:10.5px;color:#8492A3;margin-top:2px;">Today 09:39 IST · 2 min ago</div>
+              <div style="font-size:9px;color:#B08A2E;background:#FCF3DD;border-radius:6px;padding:2px 6px;display:inline-block;margin-top:4px;">revised from M 5.9 · 12 min ago</div>
+            </div>
+          </div>
+          <div style="display:flex; gap:7px; margin-top:12px;">
+            <div class="wcard" style="flex:1; padding:9px 6px; text-align:center;"><div style="font-size:14px;font-weight:750;color:#17222E;">10 km</div><div style="font-size:8px;letter-spacing:1px;color:#8492A3;margin-top:2px;">DEPTH</div></div>
+            <div class="wcard" style="flex:1; padding:9px 6px; text-align:center;"><div style="font-size:14px;font-weight:750;color:#17222E;">4,102</div><div style="font-size:8px;letter-spacing:1px;color:#8492A3;margin-top:2px;">KM AWAY</div></div>
+            <div class="wcard" style="flex:1; padding:9px 6px; text-align:center;"><div style="font-size:14px;font-weight:750;color:#17222E;">1.2k</div><div style="font-size:8px;letter-spacing:1px;color:#8492A3;margin-top:2px;">FELT IT</div></div>
+          </div>
+          <div style="margin-top:10px; background:#DDF3E6; border-radius:14px; padding:10px 13px; display:flex; gap:9px; align-items:center;">
+            <span style="font-size:14px;">🌊</span>
+            <div style="font-size:11px; color:#1E5A3C; font-weight:600;">Tsunami not expected</div>
+          </div>
+          <div style="margin-top:10px;" class="wcard">
+            <div style="padding:10px 13px; display:flex; justify-content:space-between; border-bottom:1px solid #F0F4F8;"><span style="font-size:11px;color:#8492A3;">Coordinates</span><span style="font-size:11px;color:#17222E;font-weight:600;">7.12° N, 126.54° E</span></div>
+            <div style="padding:10px 13px; display:flex; justify-content:space-between; border-bottom:1px solid #F0F4F8;"><span style="font-size:11px;color:#8492A3;">Source</span><span style="font-size:11px;color:#17222E;font-weight:600;">USGS · confirmed by EMSC</span></div>
+            <div style="padding:10px 13px; display:flex; justify-content:space-between;"><span style="font-size:11px;color:#8492A3;">Shaking intensity</span><span style="font-size:11px;color:#17222E;font-weight:600;">VI — strong</span></div>
+          </div>
+          <div style="display:flex; gap:8px; margin-top:12px;">
+            <div style="flex:1; text-align:center; background:#17222E; color:#fff; border-radius:12px; padding:10px; font-size:11px; font-weight:650;">Share</div>
+            <div style="flex:1; text-align:center; background:#fff; color:#17222E; border-radius:12px; padding:10px; font-size:11px; font-weight:650; box-shadow:0 1px 4px rgba(20,40,60,.1);">Save</div>
+            <div style="flex:1; text-align:center; background:#fff; color:#17222E; border-radius:12px; padding:10px; font-size:11px; font-weight:650; box-shadow:0 1px 4px rgba(20,40,60,.1);">Directions</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Quake detail</h3>
+      <p>Tap pin/card → sheet expands over dimmed map (pin stays visible). Magnitude hero, stat trio, tsunami banner, revision history badge, share/save. <b>Ad hidden while detail open</b> — no banners on disaster content.</p>
+    </div>
+  </div>
+
+  <!-- HISTORY -->
+  <div class="card" data-choice="history-ok" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:18px 10px; background:#e9eef3;">
+      <div class="phone">
+        <div class="statusbar"><span>09:41</span><span>▲ ● ▮</span></div>
+        <div style="padding:6px 16px 0;">
+          <div style="font-size:19px;font-weight:750;color:#17222E;">History</div>
+          <div style="margin-top:9px; background:#fff; border-radius:12px; padding:9px 12px; font-size:11px; color:#9AA8B8; box-shadow:0 1px 5px rgba(20,40,60,.07);">🔍 Search region, e.g. "Japan"</div>
+          <div style="display:flex; gap:7px; margin-top:9px; overflow:hidden;">
+            <span class="chip on">M 4.5+</span><span class="chip">Near me</span><span class="chip">2026</span><span class="chip">Depth</span>
+          </div>
+          <div style="font-size:9px; color:#9AA8B8; margin:9px 2px 6px;">USGS archive · 23,412 events match</div>
+          <div style="font-size:10px; letter-spacing:1.5px; color:#8492A3; margin:6px 2px;">AUGUST 2026</div>
+          <div class="wcard" style="padding:10px 12px; display:flex; gap:10px; align-items:center; margin-bottom:7px;"><div class="dot d6">6.1</div><div style="flex:1;"><div style="font-size:12px;font-weight:650;color:#17222E;">Mindanao, Philippines</div><div style="font-size:10px;color:#8492A3;">Aug 7 · 10 km deep</div></div><span style="font-size:11px;color:#C6D0DA;">›</span></div>
+          <div class="wcard" style="padding:10px 12px; display:flex; gap:10px; align-items:center; margin-bottom:7px;"><div class="dot d7">7.2</div><div style="flex:1;"><div style="font-size:12px;font-weight:650;color:#17222E;">Drake Passage</div><div style="font-size:10px;color:#8492A3;">Aug 4 · 12 km deep · tsunami advisory</div></div><span style="font-size:11px;color:#C6D0DA;">›</span></div>
+          <div class="wcard" style="padding:10px 12px; display:flex; gap:10px; align-items:center; margin-bottom:7px;"><div class="dot d4">5.4</div><div style="flex:1;"><div style="font-size:12px;font-weight:650;color:#17222E;">Hindu Kush, Afghanistan</div><div style="font-size:10px;color:#8492A3;">Aug 3 · 190 km deep</div></div><span style="font-size:11px;color:#C6D0DA;">›</span></div>
+          <div style="font-size:10px; letter-spacing:1.5px; color:#8492A3; margin:8px 2px 6px;">JULY 2026</div>
+          <div class="wcard" style="padding:10px 12px; display:flex; gap:10px; align-items:center;"><div class="dot d6">6.8</div><div style="flex:1;"><div style="font-size:12px;font-weight:650;color:#17222E;">Kamchatka, Russia</div><div style="font-size:10px;color:#8492A3;">Jul 29 · 22 km deep</div></div><span style="font-size:11px;color:#C6D0DA;">›</span></div>
+        </div>
+        <div class="adbar">AD · 320×50</div>
+        <div class="navbar"><span>⌂<br>Home</span><span><b>≡</b><br><b>History</b></span><span>∿<br>Insights</span></div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>History</h3>
+      <p>Full archive: search + filter chips (magnitude / near-me / year / depth), sticky month headers, infinite scroll into USGS FDSN with local cache. Tap row → same detail sheet.</p>
+    </div>
+  </div>
+
+  <!-- INSIGHTS -->
+  <div class="card" data-choice="insights-ok" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:18px 10px; background:#e9eef3;">
+      <div class="phone">
+        <div class="statusbar"><span>09:41</span><span>▲ ● ▮</span></div>
+        <div style="padding:6px 16px 0;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div style="font-size:19px;font-weight:750;color:#17222E;">Insights</div>
+            <div style="display:flex; background:#fff; border-radius:99px; padding:3px; box-shadow:0 1px 5px rgba(20,40,60,.08); font-size:9.5px;">
+              <span style="padding:4px 10px; border-radius:99px; background:#17222E; color:#fff;">7d</span>
+              <span style="padding:4px 10px; color:#44536B;">30d</span>
+              <span style="padding:4px 10px; color:#44536B;">1y</span>
+            </div>
+          </div>
+          <div class="wcard" style="margin-top:10px; padding:12px 14px;">
+            <div style="font-size:10px; letter-spacing:1px; color:#8492A3;">QUAKES PER DAY · WORLD</div>
+            <div style="display:flex; align-items:flex-end; gap:5px; height:64px; margin-top:10px;">
+              <div style="flex:1;background:#D6E7F2;border-radius:4px 4px 0 0;height:38%;"></div>
+              <div style="flex:1;background:#D6E7F2;border-radius:4px 4px 0 0;height:52%;"></div>
+              <div style="flex:1;background:#D6E7F2;border-radius:4px 4px 0 0;height:44%;"></div>
+              <div style="flex:1;background:#D6E7F2;border-radius:4px 4px 0 0;height:70%;"></div>
+              <div style="flex:1;background:#D6E7F2;border-radius:4px 4px 0 0;height:57%;"></div>
+              <div style="flex:1;background:#D6E7F2;border-radius:4px 4px 0 0;height:49%;"></div>
+              <div style="flex:1;background:#2FA36B;border-radius:4px 4px 0 0;height:82%;"></div>
+            </div>
+            <div style="display:flex; justify-content:space-between; font-size:8px; color:#B3C0CE; margin-top:5px;"><span>Aug 1</span><span>today · 142</span></div>
+          </div>
+          <div class="wcard" style="margin-top:9px; padding:12px 14px;">
+            <div style="font-size:10px; letter-spacing:1px; color:#8492A3;">BY MAGNITUDE · 7 DAYS</div>
+            <div style="margin-top:9px; display:flex; flex-direction:column; gap:6px;">
+              <div style="display:flex; align-items:center; gap:8px;"><span style="font-size:9px; width:30px; color:#44536B;">M 2–4</span><div style="flex:1; height:9px; border-radius:5px; background:linear-gradient(90deg,#59B87D 88%, #EDF2F6 88%);"></div><span style="font-size:9px; color:#8492A3;">861</span></div>
+              <div style="display:flex; align-items:center; gap:8px;"><span style="font-size:9px; width:30px; color:#44536B;">M 4–6</span><div style="flex:1; height:9px; border-radius:5px; background:linear-gradient(90deg,#F5A524 34%, #EDF2F6 34%);"></div><span style="font-size:9px; color:#8492A3;">312</span></div>
+              <div style="display:flex; align-items:center; gap:8px;"><span style="font-size:9px; width:30px; color:#44536B;">M 6+</span><div style="flex:1; height:9px; border-radius:5px; background:linear-gradient(90deg,#F0663B 6%, #EDF2F6 6%);"></div><span style="font-size:9px; color:#8492A3;">4</span></div>
+            </div>
+          </div>
+          <div class="wcard" style="margin-top:9px; padding:12px 14px;">
+            <div style="font-size:10px; letter-spacing:1px; color:#8492A3;">STRONGEST THIS WEEK</div>
+            <div style="display:flex; gap:10px; align-items:center; margin-top:8px;"><div class="dot d7">7.2</div><div><div style="font-size:12px;font-weight:650;color:#17222E;">Drake Passage</div><div style="font-size:9.5px;color:#8492A3;">Aug 4 · deepest M6+ this month</div></div></div>
+          </div>
+        </div>
+        <div class="adbar">AD · 320×50</div>
+        <div class="navbar"><span>⌂<br>Home</span><span>≡<br>History</span><span><b>∿</b><br><b>Insights</b></span></div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Insights</h3>
+      <p>7d/30d/1y toggle. Quakes-per-day bars, magnitude distribution, "strongest" highlight. All computed from local cache — works offline, no extra API calls.</p>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:24px">
+  <p class="subtitle">Click any phone to approve it as-is, or tell me changes in the terminal (e.g. "detail needs a mini shake-intensity map", "insights add regional breakdown").</p>
+</div>

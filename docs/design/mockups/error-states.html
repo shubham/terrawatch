@@ -1,0 +1,182 @@
+<h2>Error &amp; empty states — the screens nobody designs</h2>
+<p class="subtitle">Four failure modes, Calm Guardian skin with 2026 adjustments: glass only on floating overlays (Liquid Glass restraint), springy M3-Expressive state changes, every state answers "what now?" with a CTA. Click a phone to approve, or comment in terminal.</p>
+
+<style>
+  .phone {
+    width: 250px; height: 500px; border-radius: 26px; overflow: hidden;
+    margin: 0 auto; position: relative; box-shadow: 0 8px 30px rgba(0,0,0,.22);
+    font-family: -apple-system, "SF Pro", Roboto, "Segoe UI", sans-serif;
+    text-align: left; flex-shrink: 0; background:#F6FAF9;
+  }
+  .phone * { box-sizing: border-box; }
+  .cards { align-items: flex-start; flex-wrap: wrap; }
+  .statusbar { display:flex; justify-content:space-between; padding:9px 15px 4px; font-size:9.5px; color:#5C6B7A; position:relative; z-index:5;}
+  .navbar { position:absolute; bottom:0; left:0; right:0; display:flex; justify-content:space-around; padding:9px 0 12px; background:rgba(255,255,255,.82); backdrop-filter:blur(12px); border-top:1px solid rgba(232,238,244,.9); font-size:8.5px; color:#9AA8B8; text-align:center; z-index:9; }
+  .navbar b { color:#17222E; }
+  .wcard { background:#fff; border-radius:15px; box-shadow:0 2px 10px rgba(20,40,60,.08); }
+  .glass { background:rgba(255,255,255,.72); backdrop-filter:blur(12px); border:1px solid rgba(255,255,255,.85); }
+  .cta { display:inline-block; background:#17222E; color:#fff; border-radius:11px; padding:8px 16px; font-size:10.5px; font-weight:650; }
+  .cta2 { display:inline-block; background:#fff; color:#17222E; border-radius:11px; padding:8px 16px; font-size:10.5px; font-weight:650; box-shadow:0 1px 4px rgba(20,40,60,.1); }
+  .dot { width:30px; height:30px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800; color:#fff; flex-shrink:0; }
+  .d6 { background:#F0663B; } .d4 { background:#F5A524; }
+</style>
+
+<div class="cards">
+
+  <!-- A: OFFLINE -->
+  <div class="card" data-choice="offline-ok" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:16px 8px; background:#e9eef3;">
+      <div class="phone" style="background:#DDE7EF;">
+        <div style="position:absolute; inset:0; opacity:.55; filter:saturate(.55);">
+          <svg width="250" height="500" viewBox="0 0 250 500" xmlns="http://www.w3.org/2000/svg">
+            <rect width="250" height="500" fill="#D9E9F4"/>
+            <path d="M-20 180 Q30 140 80 170 Q120 195 100 240 Q70 280 20 265 Z" fill="#EFF3EC"/>
+            <path d="M140 130 Q190 110 235 140 Q270 170 250 220 Q220 265 175 245 Q135 225 132 180 Z" fill="#EFF3EC"/>
+          </svg>
+          <div style="position:absolute; top:150px; left:180px; width:22px; height:22px; border-radius:50%; background:#F0663B; border:2px solid #fff; opacity:.8;"></div>
+        </div>
+        <div class="statusbar"><span>09:41</span><span>✈ ▮</span></div>
+        <!-- glass offline banner -->
+        <div class="glass" style="position:absolute; top:34px; left:14px; right:14px; z-index:6; border-radius:14px; padding:9px 13px; display:flex; align-items:center; gap:9px;">
+          <span style="font-size:13px;">📡</span>
+          <div style="flex:1;">
+            <div style="font-size:11px; font-weight:700; color:#17222E;">You're offline</div>
+            <div style="font-size:9px; color:#5C6B7A;">Showing data from 23 min ago</div>
+          </div>
+          <span style="font-size:9.5px; color:#17222E; font-weight:650; text-decoration:underline;">Retry</span>
+        </div>
+        <!-- sheet w/ cached content still usable -->
+        <div style="position:absolute; bottom:52px; left:0; right:0; z-index:6; background:#FBFDFE; border-radius:20px 20px 0 0; padding:8px 13px 12px; box-shadow:0 -6px 24px rgba(20,40,60,.14);">
+          <div style="width:32px;height:4px;border-radius:2px;background:#D5DEE7;margin:0 auto 7px;"></div>
+          <div style="display:flex; justify-content:space-between; align-items:center; margin:0 2px 7px;">
+            <span style="font-size:9px;letter-spacing:1.2px;color:#8492A3;">CACHED · 23 MIN OLD</span>
+            <span style="font-size:8.5px; color:#B08A2E; background:#FCF3DD; border-radius:5px; padding:2px 6px;">⏱ stale</span>
+          </div>
+          <div class="wcard" style="padding:9px 11px; display:flex; gap:9px; align-items:center; margin-bottom:6px;"><div class="dot d6">6.1</div><div><div style="font-size:11.5px;font-weight:650;color:#17222E;">Mindanao, Philippines</div><div style="font-size:9.5px;color:#8492A3;">25 min ago · 10 km deep</div></div></div>
+          <div class="wcard" style="padding:9px 11px; display:flex; gap:9px; align-items:center;"><div class="dot d4">4.6</div><div><div style="font-size:11.5px;font-weight:650;color:#17222E;">Nicobar Islands</div><div style="font-size:9.5px;color:#8492A3;">1 h ago · 35 km deep</div></div></div>
+        </div>
+        <div class="navbar"><span><b>⌂</b><br><b>Home</b></span><span>≡<br>History</span><span>∿<br>Insights</span></div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A · Offline</h3>
+      <p>App keeps working — cache is the product. Glass banner states fact + age, map desaturates, stale chip on sheet. No dead-end, no scary red.</p>
+    </div>
+  </div>
+
+  <!-- B: API DOWN -->
+  <div class="card" data-choice="apidown-ok" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:16px 8px; background:#e9eef3;">
+      <div class="phone">
+        <div class="statusbar"><span>09:41</span><span>▲ ● ▮</span></div>
+        <div style="padding:6px 15px 0;">
+          <div style="font-size:17px;font-weight:750;color:#17222E;">History</div>
+          <div style="margin-top:8px; background:#fff; border-radius:11px; padding:8px 11px; font-size:10px; color:#9AA8B8; box-shadow:0 1px 5px rgba(20,40,60,.07);">🔍 Search region</div>
+        </div>
+        <div style="position:absolute; top:150px; left:0; right:0; text-align:center; padding:0 30px;">
+          <svg width="90" height="90" viewBox="0 0 90 90" style="margin:0 auto;" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="45" cy="45" r="40" fill="#EDF4FB"/>
+            <path d="M25 55 L35 45 L42 52 L55 35 L65 45" stroke="#B3C7D9" stroke-width="3.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="63" cy="63" r="14" fill="#F5A524"/>
+            <text x="63" y="69" text-anchor="middle" font-size="17" fill="#fff" font-weight="800">!</text>
+          </svg>
+          <div style="font-size:14.5px; font-weight:750; color:#17222E; margin-top:12px;">Couldn't reach the archive</div>
+          <div style="font-size:10.5px; color:#6C7A89; margin-top:6px; line-height:1.5;">USGS isn't responding right now. Your earlier results are still below.</div>
+          <div style="margin-top:14px;"><span class="cta">Try again</span></div>
+          <div style="font-size:9px; color:#9AA8B8; margin-top:10px;">auto-retrying in 12s · attempt 2</div>
+        </div>
+        <div style="position:absolute; bottom:60px; left:15px; right:15px;">
+          <div style="font-size:9px; letter-spacing:1.2px; color:#8492A3; margin-bottom:6px;">PREVIOUSLY LOADED</div>
+          <div class="wcard" style="padding:9px 11px; display:flex; gap:9px; align-items:center; opacity:.75;"><div class="dot d6">7.2</div><div><div style="font-size:11.5px;font-weight:650;color:#17222E;">Drake Passage</div><div style="font-size:9.5px;color:#8492A3;">Aug 4 · 12 km deep</div></div></div>
+        </div>
+        <div class="navbar"><span>⌂<br>Home</span><span><b>≡</b><br><b>History</b></span><span>∿<br>Insights</span></div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B · API down</h3>
+      <p>Friendly illustration (no dead robot cliché), plain-language cause, auto-retry countdown + manual CTA, previously-loaded rows stay visible dimmed.</p>
+    </div>
+  </div>
+
+  <!-- C: LOCATION DENIED -->
+  <div class="card" data-choice="locdenied-ok" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:16px 8px; background:#e9eef3;">
+      <div class="phone" style="background:#DCEAF5;">
+        <div style="position:absolute; inset:0;">
+          <svg width="250" height="500" viewBox="0 0 250 500" xmlns="http://www.w3.org/2000/svg">
+            <rect width="250" height="500" fill="#D9E9F4"/>
+            <path d="M-20 180 Q30 140 80 170 Q120 195 100 240 Q70 280 20 265 Z" fill="#EFF3EC"/>
+            <path d="M140 130 Q190 110 235 140 Q270 170 250 220 Q220 265 175 245 Q135 225 132 180 Z" fill="#EFF3EC"/>
+            <path d="M50 360 Q110 330 170 355 Q230 380 270 360 L270 420 Q200 445 130 425 Q80 410 45 395 Z" fill="#EFF3EC"/>
+          </svg>
+          <div style="position:absolute; top:150px; left:180px; width:22px; height:22px; border-radius:50%; background:#F0663B; border:2px solid #fff;"></div>
+        </div>
+        <div class="statusbar"><span>09:41</span><span>▲ ● ▮</span></div>
+        <!-- neutral pill: not scary, shape-morphed to rounded-rect -->
+        <div class="glass" style="position:absolute; top:34px; left:14px; right:14px; z-index:6; border-radius:16px; padding:11px 13px;">
+          <div style="display:flex; gap:9px; align-items:center;">
+            <div style="width:28px;height:28px;border-radius:9px;background:#5C8DB8;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0;">📍</div>
+            <div style="flex:1;">
+              <div style="font-size:11.5px; font-weight:700; color:#17222E;">Where are you?</div>
+              <div style="font-size:9px; color:#5C6B7A; margin-top:1px;">Set a home city for nearby-quake status &amp; alerts</div>
+            </div>
+          </div>
+          <div style="display:flex; gap:7px; margin-top:9px;">
+            <span class="cta" style="flex:1; text-align:center; padding:7px 0; font-size:9.5px;">Choose city</span>
+            <span class="cta2" style="flex:1; text-align:center; padding:7px 0; font-size:9.5px;">Allow location</span>
+          </div>
+        </div>
+        <div style="position:absolute; bottom:52px; left:0; right:0; z-index:6; background:#FBFDFE; border-radius:20px 20px 0 0; padding:8px 13px 12px; box-shadow:0 -6px 24px rgba(20,40,60,.14);">
+          <div style="width:32px;height:4px;border-radius:2px;background:#D5DEE7;margin:0 auto 7px;"></div>
+          <div style="font-size:9px;letter-spacing:1.2px;color:#8492A3;margin:0 2px 7px;">WORLD · LIVE</div>
+          <div class="wcard" style="padding:9px 11px; display:flex; gap:9px; align-items:center;"><div class="dot d6">6.1</div><div><div style="font-size:11.5px;font-weight:650;color:#17222E;">Mindanao, Philippines</div><div style="font-size:9.5px;color:#8492A3;">2 min ago · 10 km deep</div></div></div>
+        </div>
+        <div class="navbar"><span><b>⌂</b><br><b>Home</b></span><span>≡<br>History</span><span>∿<br>Insights</span></div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C · Location denied / unset</h3>
+      <p>Never nag, never block. Pill morphs to a calm ask with two equal paths — manual city picker is first-class (also the desktop/web default). World feed works regardless.</p>
+    </div>
+  </div>
+
+  <!-- D: NO RESULTS -->
+  <div class="card" data-choice="noresults-ok" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:16px 8px; background:#e9eef3;">
+      <div class="phone">
+        <div class="statusbar"><span>09:41</span><span>▲ ● ▮</span></div>
+        <div style="padding:6px 15px 0;">
+          <div style="font-size:17px;font-weight:750;color:#17222E;">History</div>
+          <div style="margin-top:8px; background:#fff; border-radius:11px; padding:8px 11px; font-size:10px; color:#44536B; box-shadow:0 1px 5px rgba(20,40,60,.07);">🔍 "Antarctica"</div>
+          <div style="display:flex; gap:6px; margin-top:8px;">
+            <span style="font-size:9px;padding:4px 9px;border-radius:99px;background:#17222E;color:#fff;">M 7+</span>
+            <span style="font-size:9px;padding:4px 9px;border-radius:99px;background:#17222E;color:#fff;">2026</span>
+            <span style="font-size:9px;padding:4px 9px;border-radius:99px;background:#17222E;color:#fff;">&lt; 10 km</span>
+          </div>
+        </div>
+        <div style="position:absolute; top:190px; left:0; right:0; text-align:center; padding:0 30px;">
+          <svg width="90" height="90" viewBox="0 0 90 90" style="margin:0 auto;" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="45" cy="45" r="40" fill="#EDF7F0"/>
+            <path d="M28 50 Q45 38 62 50" stroke="#9CC9AE" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+            <circle cx="35" cy="38" r="3" fill="#9CC9AE"/><circle cx="55" cy="38" r="3" fill="#9CC9AE"/>
+          </svg>
+          <div style="font-size:14.5px; font-weight:750; color:#17222E; margin-top:12px;">Quiet — nothing matches</div>
+          <div style="font-size:10.5px; color:#6C7A89; margin-top:6px; line-height:1.5;">No M 7+ shallow quakes near Antarctica in 2026. That's good news for penguins.</div>
+          <div style="margin-top:14px;"><span class="cta">Clear filters</span> &nbsp;<span class="cta2">Try M 5+</span></div>
+        </div>
+        <div class="navbar"><span>⌂<br>Home</span><span><b>≡</b><br><b>History</b></span><span>∿<br>Insights</span></div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>D · No results</h3>
+      <p>Empty ≠ error: calm face, light copy, and the killer detail — a smart suggested-filter CTA computed from what WOULD return results, not just "clear".</p>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:20px">
+  <h3>Also specified (no mockup needed)</h3>
+  <p class="subtitle">
+    · First-load = skeleton shimmer cards, never spinner-on-blank &nbsp;·&nbsp; WS drop = tiny "live paused — reconnecting" chip on feed header, feed keeps polling &nbsp;·&nbsp; Detail fetch fail = sheet opens with cached data + inline retry row &nbsp;·&nbsp; All copy: cause + what still works + one action. No error codes on screen (codes go to logs).
+  </p>
+</div>

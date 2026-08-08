@@ -1,0 +1,168 @@
+<h2>Which design direction feels right?</h2>
+<p class="subtitle">Same app, three personalities. Home screen mockups — look at overall mood, not exact content. Click one (or tell me a mix in the terminal).</p>
+
+<style>
+  .phone {
+    width: 270px; height: 540px; border-radius: 28px; overflow: hidden;
+    margin: 0 auto; position: relative; box-shadow: 0 8px 30px rgba(0,0,0,.25);
+    font-family: -apple-system, "SF Pro", Roboto, "Segoe UI", sans-serif;
+    text-align: left; flex-shrink: 0;
+  }
+  .phone * { box-sizing: border-box; }
+  .cards { align-items: flex-start; }
+  .mono { font-family: "SF Mono", "JetBrains Mono", Menlo, monospace; }
+
+  /* ---------- A: SEISMO DARK ---------- */
+  .pA { background: #0B0E14; color: #E6EAF2; }
+  .pA .statusbar { display:flex; justify-content:space-between; padding:10px 16px 4px; font-size:10px; color:#5B6472; }
+  .pA .live { display:flex; align-items:center; gap:6px; padding:12px 16px 2px; }
+  .pA .livedot { width:7px; height:7px; border-radius:50%; background:#FF4757; box-shadow:0 0 8px #FF4757; animation:pulse 1.4s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+  .pA .livelabel { font-size:10px; letter-spacing:2px; color:#8B93A3; }
+  .pA .hero { padding: 6px 16px 12px; border-bottom: 1px solid #1A1F2B; }
+  .pA .hero .big { font-size:30px; font-weight:700; letter-spacing:-.5px; }
+  .pA .hero .sub { font-size:11px; color:#8B93A3; margin-top:3px; }
+  .pA .hero .ok { color:#3DD68C; }
+  .pA .wave { height: 34px; margin: 8px 16px 0; background:
+      repeating-linear-gradient(90deg, transparent 0 9px, #1E2634 9px 10px),
+      linear-gradient(180deg, transparent 46%, #23DC8E22 47%, transparent 54%);
+      border-radius: 4px; position: relative; }
+  .pA .wave::after { content:""; position:absolute; inset:0;
+      background: linear-gradient(90deg, transparent 60%, #0B0E14 100%),
+      url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="260" height="34"><polyline points="0,17 30,17 38,10 44,26 52,4 58,30 66,14 74,20 90,17 130,17 138,15 144,19 152,12 160,22 168,17 260,17" fill="none" stroke="%233DD68C" stroke-width="1.6"/></svg>') no-repeat; }
+  .pA .row { display:flex; align-items:center; gap:10px; padding:11px 16px; border-bottom:1px solid #141926; }
+  .pA .mag { width:44px; height:34px; border-radius:8px; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:15px; }
+  .pA .m6 { background:#3A0F14; color:#FF6B5E; box-shadow: 0 0 12px #FF6B5E33; }
+  .pA .m4 { background:#332A0E; color:#FFC53D; }
+  .pA .m2 { background:#0E2A1E; color:#3DD68C; }
+  .pA .place { font-size:12.5px; font-weight:600; }
+  .pA .meta { font-size:10px; color:#5B6472; margin-top:2px; }
+  .pA .new { font-size:8px; background:#FF4757; color:#fff; border-radius:3px; padding:1px 4px; margin-left:6px; vertical-align:1px; }
+  .pA .nav { position:absolute; bottom:0; left:0; right:0; display:flex; justify-content:space-around; padding:10px 0 14px; background:#0D111AF0; border-top:1px solid #1A1F2B; font-size:9px; color:#5B6472; text-align:center; }
+  .pA .nav b { color:#3DD68C; font-weight:600; }
+  .pA .ad { position:absolute; bottom:52px; left:0; right:0; height:34px; background:#131826; display:flex; align-items:center; justify-content:center; font-size:9px; color:#394152; letter-spacing:1px; }
+
+  /* ---------- B: CALM GUARDIAN ---------- */
+  .pB { background: linear-gradient(175deg,#EDF4FB 0%, #F7FAF7 60%, #FFFFFF 100%); color:#17222E; }
+  .pB .statusbar { display:flex; justify-content:space-between; padding:10px 16px 4px; font-size:10px; color:#93A3B4; }
+  .pB .greet { padding: 8px 18px 0; font-size:12px; color:#6C7A89; }
+  .pB .shield { margin: 10px 16px 0; background:linear-gradient(160deg,#DDF3E6,#C9EAD8); border-radius:24px; padding:18px; position:relative; overflow:hidden; }
+  .pB .shield::after{ content:""; position:absolute; width:150px; height:150px; border-radius:50%; background:#FFFFFF55; top:-60px; right:-50px; }
+  .pB .shield .icon { width:38px; height:38px; border-radius:50%; background:#2FA36B; color:#fff; display:flex; align-items:center; justify-content:center; font-size:19px; margin-bottom:9px; }
+  .pB .shield h1 { margin:0; font-size:19px; font-weight:750; letter-spacing:-.3px; }
+  .pB .shield p { margin:5px 0 0; font-size:11.5px; color:#3E5A4C; line-height:1.45; }
+  .pB .chips { display:flex; gap:8px; margin:12px 16px 4px; }
+  .pB .chip { font-size:10px; padding:6px 11px; border-radius:99px; background:#fff; box-shadow:0 1px 4px rgba(20,40,60,.08); color:#44536B; }
+  .pB .chip.on { background:#17222E; color:#fff; }
+  .pB .card { margin:8px 16px; background:#fff; border-radius:18px; padding:12px 14px; box-shadow:0 2px 10px rgba(20,40,60,.07); display:flex; gap:11px; align-items:center; }
+  .pB .dot { width:34px; height:34px; border-radius:12px; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800; color:#fff; }
+  .pB .d4 { background:#F5A524; } .pB .d5 { background:#F0663B; }
+  .pB .card .t { font-size:12.5px; font-weight:650; }
+  .pB .card .s { font-size:10.5px; color:#8492A3; margin-top:2px; }
+  .pB .nav { position:absolute; bottom:0; left:0; right:0; display:flex; justify-content:space-around; padding:10px 0 14px; background:#FFFFFFE8; backdrop-filter:blur(8px); border-top:1px solid #E8EEF4; font-size:9px; color:#9AA8B8; text-align:center; }
+  .pB .nav b { color:#17222E; }
+  .pB .ad { position:absolute; bottom:52px; left:0; right:0; height:34px; background:#F2F6FA; display:flex; align-items:center; justify-content:center; font-size:9px; color:#B3C0CE; letter-spacing:1px; }
+
+  /* ---------- C: FIELD JOURNAL ---------- */
+  .pC { background:#FCFBF8; color:#141412; }
+  .pC .statusbar { display:flex; justify-content:space-between; padding:10px 16px 4px; font-size:10px; color:#A8A49A; }
+  .pC .masthead { padding:10px 18px 8px; border-bottom:2.5px solid #141412; margin:0 16px; }
+  .pC .masthead .kicker { font-size:9px; letter-spacing:2.5px; color:#8A857A; }
+  .pC .masthead h1 { margin:2px 0 0; font-family: Georgia, "Times New Roman", serif; font-size:24px; font-weight:700; letter-spacing:-.4px; }
+  .pC .stats { display:flex; gap:0; margin:0 16px; border-bottom:1px solid #E5E1D8; }
+  .pC .stat { flex:1; padding:10px 6px 12px; border-right:1px solid #E5E1D8; }
+  .pC .stat:last-child { border-right:none; }
+  .pC .stat .n { font-family:Georgia,serif; font-size:20px; font-weight:700; }
+  .pC .stat .l { font-size:8.5px; letter-spacing:1.5px; color:#8A857A; margin-top:2px; }
+  .pC .rows { margin:0 16px; }
+  .pC .row { display:flex; align-items:baseline; gap:12px; padding:11px 2px; border-bottom:1px solid #ECE8DF; }
+  .pC .magnum { font-family:Georgia,serif; font-size:23px; font-weight:700; width:52px; }
+  .pC .c6 { color:#C43A2F; } .pC .c4 { color:#C77E1E; } .pC .c3 { color:#5F8C4E; }
+  .pC .row .place { font-size:12.5px; font-weight:600; }
+  .pC .row .meta { font-size:10px; color:#8A857A; margin-top:2px; }
+  .pC .nav { position:absolute; bottom:0; left:0; right:0; display:flex; justify-content:space-around; padding:10px 0 14px; background:#FCFBF8; border-top:1.5px solid #141412; font-size:9px; color:#A8A49A; text-align:center; }
+  .pC .nav b { color:#141412; }
+  .pC .ad { position:absolute; bottom:52px; left:0; right:0; height:34px; background:#F3F1EA; display:flex; align-items:center; justify-content:center; font-size:9px; color:#B5B0A3; letter-spacing:1px; }
+</style>
+
+<div class="cards">
+  <div class="card" data-choice="seismo-dark" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:18px 10px; background:#161a22;">
+      <div class="phone pA">
+        <div class="statusbar mono"><span>09:41</span><span>▲ ● ▮</span></div>
+        <div class="live"><span class="livedot"></span><span class="livelabel mono">LIVE · EMSC + USGS</span></div>
+        <div class="hero">
+          <div class="big">All quiet <span class="ok">●</span></div>
+          <div class="sub">Nearest event 412 km · Bengaluru · last 24 h</div>
+          <div class="wave"></div>
+        </div>
+        <div class="row"><div class="mag m6 mono">6.1</div><div><div class="place">Mindanao, Philippines <span class="new">NEW</span></div><div class="meta mono">2 min ago · 10 km deep · 4,102 km</div></div></div>
+        <div class="row"><div class="mag m4 mono">4.6</div><div><div class="place">Nicobar Islands, India</div><div class="meta mono">1 h ago · 35 km deep · 2,411 km</div></div></div>
+        <div class="row"><div class="mag m4 mono">4.2</div><div><div class="place">Kermadec Trench</div><div class="meta mono">3 h ago · 88 km deep</div></div></div>
+        <div class="row"><div class="mag m2 mono">2.8</div><div><div class="place">Ridgecrest, CA</div><div class="meta mono">4 h ago · 7 km deep</div></div></div>
+        <div class="ad mono">AD · 320×50</div>
+        <div class="nav"><span><b>◉</b><br><b>Pulse</b></span><span>◍<br>Map</span><span>≡<br>History</span><span>∿<br>Insights</span></div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A · Seismo Dark</h3>
+      <p>Instrument-grade dark UI. Monospace numerals, magnitude glow, live waveform strip, red LIVE pulse. Flightradar24 energy — for people who watch the planet.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="calm-guardian" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:18px 10px; background:#e9eef3;">
+      <div class="phone pB">
+        <div class="statusbar"><span>09:41</span><span>▲ ● ▮</span></div>
+        <div class="greet">Good morning, Shubham</div>
+        <div class="shield">
+          <div class="icon">✓</div>
+          <h1>All calm near you</h1>
+          <p>No earthquakes within 500 km in the last 24 hours. We'll notify you if that changes.</p>
+        </div>
+        <div class="chips"><span class="chip on">Near me</span><span class="chip">World</span><span class="chip">M 4.5+</span></div>
+        <div class="card"><div class="dot d5">6.1</div><div><div class="t">Mindanao, Philippines</div><div class="s">2 min ago · felt by 1.2k people</div></div></div>
+        <div class="card"><div class="dot d4">4.6</div><div><div class="t">Nicobar Islands</div><div class="s">1 h ago · 35 km deep</div></div></div>
+        <div class="ad">AD · 320×50</div>
+        <div class="nav"><span><b>⌂</b><br><b>Home</b></span><span>◍<br>Map</span><span>≡<br>History</span><span>∿<br>Insights</span></div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B · Calm Guardian</h3>
+      <p>Soft, reassuring, weather-app warmth. Big status shield answers "am I safe?" in one glance. Rounded cards, gentle color. For everyone, including your parents.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="field-journal" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:18px 10px; background:#efede6;">
+      <div class="phone pC">
+        <div class="statusbar"><span>09:41</span><span>▲ ● ▮</span></div>
+        <div class="masthead">
+          <div class="kicker">THURSDAY · AUG 7</div>
+          <h1>Earth, today</h1>
+        </div>
+        <div class="stats">
+          <div class="stat"><div class="n">142</div><div class="l">QUAKES 24H</div></div>
+          <div class="stat"><div class="n c6">6.1</div><div class="l">STRONGEST</div></div>
+          <div class="stat"><div class="n">0</div><div class="l">NEAR YOU</div></div>
+        </div>
+        <div class="rows">
+          <div class="row"><div class="magnum c6">6.1</div><div><div class="place">Mindanao, Philippines</div><div class="meta">2 min ago — 10 km deep, tsunami not expected</div></div></div>
+          <div class="row"><div class="magnum c4">4.6</div><div><div class="place">Nicobar Islands</div><div class="meta">1 h ago — 35 km deep</div></div></div>
+          <div class="row"><div class="magnum c4">4.2</div><div><div class="place">Kermadec Trench</div><div class="meta">3 h ago — 88 km deep</div></div></div>
+          <div class="row"><div class="magnum c3">2.8</div><div><div class="place">Ridgecrest, California</div><div class="meta">4 h ago — 7 km deep</div></div></div>
+        </div>
+        <div class="ad">AD · 320×50</div>
+        <div class="nav"><span><b>▙</b><br><b>Today</b></span><span>◍<br>Map</span><span>≡<br>History</span><span>∿<br>Insights</span></div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C · Field Journal</h3>
+      <p>Editorial, typographic, calm paper tones. Serif magnitude numerals, daily "front page" stats. Reads like a science publication — distinctive, no app looks like this.</p>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:24px">
+  <p class="subtitle">All three keep: bottom nav (Home / Map / History / Insights), anchored 320×50 ad slot above nav (Android only), magnitude color scale, live-updating feed. Only the skin changes.</p>
+</div>

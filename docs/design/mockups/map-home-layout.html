@@ -1,0 +1,180 @@
+<h2>How should the map live on the Home screen?</h2>
+<p class="subtitle">Calm Guardian skin locked. Three ways to put the map behind/around your content — click the one that feels right.</p>
+
+<style>
+  .phone {
+    width: 270px; height: 540px; border-radius: 28px; overflow: hidden;
+    margin: 0 auto; position: relative; box-shadow: 0 8px 30px rgba(0,0,0,.22);
+    font-family: -apple-system, "SF Pro", Roboto, "Segoe UI", sans-serif;
+    text-align: left; flex-shrink: 0; background:#DCEAF5;
+  }
+  .phone * { box-sizing: border-box; }
+  .cards { align-items: flex-start; }
+
+  /* shared map canvas */
+  .mapbg { position:absolute; inset:0; }
+  .pin { position:absolute; border-radius:50%; border:2px solid #fff; box-shadow:0 2px 6px rgba(10,30,50,.35); display:flex; align-items:center; justify-content:center; font-weight:800; color:#fff; }
+  .pulse-ring { position:absolute; border-radius:50%; border:2.5px solid #F0663B; animation:ring 1.8s ease-out infinite; }
+  @keyframes ring { 0% { transform:scale(.5); opacity:.9 } 100% { transform:scale(2.2); opacity:0 } }
+
+  .statusbar { position:relative; display:flex; justify-content:space-between; padding:10px 16px 4px; font-size:10px; color:#5C6B7A; z-index:5; }
+
+  /* shared bits */
+  .navbar { position:absolute; bottom:0; left:0; right:0; display:flex; justify-content:space-around; padding:10px 0 14px; background:#FFFFFFEE; backdrop-filter:blur(10px); border-top:1px solid #E8EEF4; font-size:9px; color:#9AA8B8; text-align:center; z-index:9; }
+  .navbar b { color:#17222E; }
+  .adbar { position:absolute; bottom:52px; left:0; right:0; height:34px; background:#F2F6FAF2; display:flex; align-items:center; justify-content:center; font-size:9px; color:#B3C0CE; letter-spacing:1px; z-index:9; }
+
+  .feedcard { background:#fff; border-radius:16px; padding:11px 13px; box-shadow:0 2px 10px rgba(20,40,60,.08); display:flex; gap:10px; align-items:center; }
+  .dot { width:32px; height:32px; border-radius:11px; display:flex; align-items:center; justify-content:center; font-size:11.5px; font-weight:800; color:#fff; flex-shrink:0; }
+  .d6 { background:#F0663B; } .d4 { background:#F5A524; } .d2 { background:#59B87D; }
+  .feedcard .t { font-size:12px; font-weight:650; color:#17222E; }
+  .feedcard .s { font-size:10px; color:#8492A3; margin-top:2px; }
+</style>
+
+<!-- reusable stylized map svg -->
+<script>
+  // no-op: map drawn inline per phone below
+</script>
+
+<div class="cards">
+
+  <!-- OPTION 1: MAP-FIRST, BOTTOM SHEET -->
+  <div class="card" data-choice="map-first-sheet" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:18px 10px; background:#e9eef3;">
+      <div class="phone">
+        <div class="mapbg">
+          <svg width="270" height="540" viewBox="0 0 270 540" xmlns="http://www.w3.org/2000/svg">
+            <rect width="270" height="540" fill="#D9E9F4"/>
+            <path d="M-20 80 Q40 40 90 70 T180 60 Q230 75 290 50 L290 -10 L-20 -10 Z" fill="#EFF3EC"/>
+            <path d="M-20 200 Q30 160 80 190 Q120 215 100 260 Q70 300 20 285 Q-15 270 -20 240 Z" fill="#EFF3EC"/>
+            <path d="M150 150 Q200 130 245 160 Q280 190 260 240 Q230 285 185 265 Q145 245 140 200 Q142 170 150 150 Z" fill="#EFF3EC"/>
+            <path d="M60 360 Q120 330 180 355 Q240 380 290 360 L290 420 Q220 445 150 425 Q90 410 55 395 Z" fill="#EFF3EC"/>
+            <g stroke="#C7D8E6" stroke-width="0.6" opacity=".7">
+              <line x1="0" y1="135" x2="270" y2="135"/><line x1="0" y1="270" x2="270" y2="270"/><line x1="0" y1="405" x2="270" y2="405"/>
+              <line x1="67" y1="0" x2="67" y2="540"/><line x1="135" y1="0" x2="135" y2="540"/><line x1="202" y1="0" x2="202" y2="540"/>
+            </g>
+          </svg>
+          <div class="pulse-ring" style="width:26px;height:26px;top:165px;left:196px;"></div>
+          <div class="pin d6" style="width:26px;height:26px;top:165px;left:196px;font-size:10px;">6.1</div>
+          <div class="pin d4" style="width:20px;height:20px;top:230px;left:90px;font-size:8.5px;">4.6</div>
+          <div class="pin d2" style="width:16px;height:16px;top:95px;left:150px;font-size:7px;">2.8</div>
+        </div>
+        <div class="statusbar"><span>09:41</span><span>▲ ● ▮</span></div>
+        <!-- floating status pill -->
+        <div style="position:absolute; top:36px; left:16px; right:16px; z-index:5; background:#FFFFFFF0; backdrop-filter:blur(8px); border-radius:99px; padding:9px 14px; display:flex; align-items:center; gap:9px; box-shadow:0 3px 14px rgba(20,40,60,.12);">
+          <div style="width:26px;height:26px;border-radius:50%;background:#2FA36B;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;">✓</div>
+          <div>
+            <div style="font-size:12px;font-weight:700;color:#17222E;">All calm near you</div>
+            <div style="font-size:9.5px;color:#8492A3;">Nothing within 500 km · 24 h</div>
+          </div>
+        </div>
+        <!-- draggable sheet -->
+        <div style="position:absolute; bottom:86px; left:0; right:0; z-index:6; background:#FBFDFE; border-radius:22px 22px 0 0; padding:8px 14px 10px; box-shadow:0 -6px 24px rgba(20,40,60,.14);">
+          <div style="width:34px;height:4px;border-radius:2px;background:#D5DEE7;margin:0 auto 8px;"></div>
+          <div style="font-size:10px;letter-spacing:1.2px;color:#8492A3;margin:0 0 7px 2px;">LATEST · <span style="color:#F0663B;font-weight:700;">1 NEW</span></div>
+          <div class="feedcard" style="margin-bottom:7px;"><div class="dot d6">6.1</div><div><div class="t">Mindanao, Philippines</div><div class="s">2 min ago · 10 km deep · 4,102 km away</div></div></div>
+          <div class="feedcard"><div class="dot d4">4.6</div><div><div class="t">Nicobar Islands</div><div class="s">1 h ago · 35 km deep</div></div></div>
+        </div>
+        <div class="adbar">AD · 320×50</div>
+        <div class="navbar"><span><b>⌂</b><br><b>Home</b></span><span>◍<br>Map</span><span>≡<br>History</span><span>∿<br>Insights</span></div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>1 · Map-first + sheet</h3>
+      <p>Whole home IS the live map. Status pill floats on top, feed lives in a draggable bottom sheet (swipe up = full list). Uber/Google-Maps pattern. Map tab merges away — one tab fewer.</p>
+    </div>
+  </div>
+
+  <!-- OPTION 2: MAP HEADER -->
+  <div class="card" data-choice="map-header" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:18px 10px; background:#e9eef3;">
+      <div class="phone" style="background:#F6FAF9;">
+        <div style="position:absolute; top:0; left:0; right:0; height:238px; overflow:hidden;">
+          <svg width="270" height="238" viewBox="0 0 270 238" xmlns="http://www.w3.org/2000/svg">
+            <rect width="270" height="238" fill="#D9E9F4"/>
+            <path d="M-20 50 Q40 15 95 45 T190 35 Q235 50 290 28 L290 -10 L-20 -10 Z" fill="#EFF3EC"/>
+            <path d="M30 120 Q80 95 130 115 Q175 135 160 180 Q130 220 75 205 Q30 190 25 155 Q26 135 30 120 Z" fill="#EFF3EC"/>
+            <path d="M180 140 Q225 125 265 150 Q290 170 285 210 L200 210 Q175 180 180 140 Z" fill="#EFF3EC"/>
+            <g stroke="#C7D8E6" stroke-width="0.6" opacity=".7">
+              <line x1="0" y1="80" x2="270" y2="80"/><line x1="0" y1="160" x2="270" y2="160"/>
+              <line x1="90" y1="0" x2="90" y2="238"/><line x1="180" y1="0" x2="180" y2="238"/>
+            </g>
+          </svg>
+          <div class="pulse-ring" style="width:24px;height:24px;top:96px;left:120px;"></div>
+          <div class="pin d6" style="width:24px;height:24px;top:96px;left:120px;font-size:9px;">6.1</div>
+          <div class="pin d4" style="width:18px;height:18px;top:150px;left:210px;font-size:8px;">4.6</div>
+          <div style="position:absolute; bottom:26px; right:10px; background:#FFFFFFE6; border-radius:8px; font-size:8.5px; padding:4px 8px; color:#44536B; box-shadow:0 2px 8px rgba(20,40,60,.12);">Expand ⤢</div>
+        </div>
+        <div class="statusbar"><span style="color:#3D4C5C">09:41</span><span style="color:#3D4C5C">▲ ● ▮</span></div>
+        <!-- overlapping shield -->
+        <div style="position:absolute; top:212px; left:16px; right:16px; z-index:5; background:linear-gradient(160deg,#DDF3E6,#CBEBd9); border-radius:20px; padding:14px 16px; box-shadow:0 6px 20px rgba(20,40,60,.13); display:flex; gap:11px; align-items:center;">
+          <div style="width:34px;height:34px;border-radius:50%;background:#2FA36B;color:#fff;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0;">✓</div>
+          <div>
+            <div style="font-size:14.5px;font-weight:750;color:#17222E;">All calm near you</div>
+            <div style="font-size:10.5px;color:#3E5A4C;margin-top:2px;">No quakes within 500 km · last 24 h</div>
+          </div>
+        </div>
+        <div style="position:absolute; top:288px; left:16px; right:16px; bottom:90px; overflow:hidden;">
+          <div style="display:flex; gap:7px; margin-bottom:9px;">
+            <span style="font-size:9.5px;padding:5px 10px;border-radius:99px;background:#17222E;color:#fff;">All</span>
+            <span style="font-size:9.5px;padding:5px 10px;border-radius:99px;background:#fff;color:#44536B;box-shadow:0 1px 4px rgba(20,40,60,.08);">M 4.5+</span>
+            <span style="font-size:9.5px;padding:5px 10px;border-radius:99px;background:#fff;color:#44536B;box-shadow:0 1px 4px rgba(20,40,60,.08);">Near me</span>
+          </div>
+          <div class="feedcard" style="margin-bottom:7px;"><div class="dot d6">6.1</div><div><div class="t">Mindanao, Philippines</div><div class="s">2 min ago · felt by 1.2k</div></div></div>
+          <div class="feedcard" style="margin-bottom:7px;"><div class="dot d4">4.6</div><div><div class="t">Nicobar Islands</div><div class="s">1 h ago · 35 km deep</div></div></div>
+          <div class="feedcard"><div class="dot d4">4.2</div><div><div class="t">Kermadec Trench</div><div class="s">3 h ago · 88 km deep</div></div></div>
+        </div>
+        <div class="adbar">AD · 320×50</div>
+        <div class="navbar"><span><b>⌂</b><br><b>Home</b></span><span>◍<br>Map</span><span>≡<br>History</span><span>∿<br>Insights</span></div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>2 · Map header</h3>
+      <p>Top 45% = live map peek (tap to expand full-screen). Green shield overlaps the seam, feed + filter chips below. Airbnb pattern. List stays king, map adds context.</p>
+    </div>
+  </div>
+
+  <!-- OPTION 3: AMBIENT GLASS -->
+  <div class="card" data-choice="ambient-glass" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:18px 10px; background:#e9eef3;">
+      <div class="phone">
+        <div class="mapbg" style="filter:blur(2.5px) saturate(.85); opacity:.85;">
+          <svg width="270" height="540" viewBox="0 0 270 540" xmlns="http://www.w3.org/2000/svg">
+            <rect width="270" height="540" fill="#D9E9F4"/>
+            <path d="M-20 80 Q40 40 90 70 T180 60 Q230 75 290 50 L290 -10 L-20 -10 Z" fill="#EFF3EC"/>
+            <path d="M-20 200 Q30 160 80 190 Q120 215 100 260 Q70 300 20 285 Q-15 270 -20 240 Z" fill="#EFF3EC"/>
+            <path d="M150 150 Q200 130 245 160 Q280 190 260 240 Q230 285 185 265 Q145 245 140 200 Q142 170 150 150 Z" fill="#EFF3EC"/>
+            <path d="M60 360 Q120 330 180 355 Q240 380 290 360 L290 420 Q220 445 150 425 Q90 410 55 395 Z" fill="#EFF3EC"/>
+          </svg>
+          <div class="pin d6" style="width:24px;height:24px;top:170px;left:200px;font-size:9px;">6.1</div>
+          <div class="pin d4" style="width:18px;height:18px;top:235px;left:92px;font-size:8px;">4.6</div>
+        </div>
+        <div class="statusbar"><span>09:41</span><span>▲ ● ▮</span></div>
+        <div style="position:relative; z-index:5; padding:4px 16px 0;">
+          <div style="font-size:11.5px;color:#5C6B7A;margin:2px 2px 8px;">Good morning, Shubham</div>
+          <div style="background:rgba(255,255,255,.78); backdrop-filter:blur(10px); border:1px solid rgba(255,255,255,.9); border-radius:22px; padding:16px; box-shadow:0 4px 18px rgba(20,40,60,.10);">
+            <div style="width:36px;height:36px;border-radius:50%;background:#2FA36B;color:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;margin-bottom:8px;">✓</div>
+            <div style="font-size:17px;font-weight:750;color:#17222E;">All calm near you</div>
+            <div style="font-size:11px;color:#4A5D6E;margin-top:4px;line-height:1.45;">No earthquakes within 500 km in the last 24 hours.</div>
+          </div>
+          <div style="margin-top:10px; background:rgba(255,255,255,.78); backdrop-filter:blur(10px); border:1px solid rgba(255,255,255,.9); border-radius:18px; padding:11px 13px; display:flex; gap:10px; align-items:center; box-shadow:0 3px 14px rgba(20,40,60,.09);">
+            <div class="dot d6">6.1</div><div><div class="t" style="font-size:12px;font-weight:650;color:#17222E;">Mindanao, Philippines</div><div class="s" style="font-size:10px;color:#5C6B7A;">2 min ago · 4,102 km away</div></div>
+          </div>
+          <div style="margin-top:8px; background:rgba(255,255,255,.78); backdrop-filter:blur(10px); border:1px solid rgba(255,255,255,.9); border-radius:18px; padding:11px 13px; display:flex; gap:10px; align-items:center; box-shadow:0 3px 14px rgba(20,40,60,.09);">
+            <div class="dot d4">4.6</div><div><div class="t" style="font-size:12px;font-weight:650;color:#17222E;">Nicobar Islands</div><div class="s" style="font-size:10px;color:#5C6B7A;">1 h ago · 35 km deep</div></div>
+          </div>
+        </div>
+        <div class="adbar">AD · 320×50</div>
+        <div class="navbar"><span><b>⌂</b><br><b>Home</b></span><span>◍<br>Map</span><span>≡<br>History</span><span>∿<br>Insights</span></div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>3 · Ambient glass</h3>
+      <p>Map is atmosphere — softly blurred behind frosted-glass cards, centered on your region. Beautiful and calm, but map isn't interactive here (real map stays on Map tab).</p>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:24px">
+  <p class="subtitle">Trade-off in one line: 1 = map is the app · 2 = list is the app, map assists · 3 = map is decoration. Perf note: 1 & 2 render live MapLibre on home (more battery/first-frame cost), 3 renders it as a cheap static snapshot.</p>
+</div>
