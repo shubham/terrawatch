@@ -23,7 +23,7 @@ Carried out of Plan 1's final whole-branch review (branch `feat/plan-1-foundatio
 - Revision dedup key omits `magType`; `pickMagnitudeHolder` name undersells scope (also picks time/coords/depth).
 - Converge on `kotlin.time.Instant` everywhere (EmscParser still imports the deprecated `kotlinx.datetime` typealias).
 - Drop unused deps: `ktor-client-content-negotiation` + `ktor-serialization-kotlinx-json` in core:network (manual parsing); `sqldelight-webworker-driver` catalog entry stays parked for Plan 3 web storage.
-- CI: `actions/setup-java@v4` → `@v5`.
+- ✅ CI: `actions/setup-java@v4` → `@v5` (94a11cc).
 
 ## Rulings that stand (do not re-litigate)
 

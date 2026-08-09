@@ -22,6 +22,10 @@ Note: corporate TLS-intercepting proxies require the proxy root CA in the JVM tr
 
 **Features:** Live map with magnitude-banded pins + clustering. Live EMSC WebSocket + USGS polling with deduplication. Status pill showing connection state. Feed sheet with recent events. Detail sheet with revision history. Dark mode support. Offline cache. Adaptive desktop two-pane layout. Web wasm placeholder.
 
+## Architecture
+
+Kotlin Multiplatform, 6 modules: `core:model` (domain types) → `core:network` (USGS + EMSC clients) / `core:database` (SQLDelight) → `core:data` (repository, dedupe, alerts) → `core:ui` (Calm Guardian design system) → `composeApp` (Compose Multiplatform screens; Android/desktop/wasm targets — live MapLibre map on Android, fallback panes elsewhere). All logic modules are Compose-free and tested as plain JVM.
+
 ## Live data behind corporate proxies
 
 TerraWatch fetches live earthquake data from public USGS and EMSC APIs. In TLS-intercepting proxy environments (e.g., corporate Zscaler), both desktop and Android debug builds can trust user-installed CA certificates.
