@@ -413,6 +413,20 @@ actual fun QuakeMap(
  * doesn't exist makes Kotlin's overload resolution discard the real composable function candidate
  * entirely and fall through to the (inaccessible) backing class constructor instead, which is
  * exactly the misleading error shape both attempts hit.
+ *
+ * **KNOWN v1 LIMITATION (Fix Round 1, I2, controller-approved doc-only fix — not corrected here):**
+ * a home within `radiusKm` of the ±180° antimeridian (real seismic zones sit exactly here —
+ * Kamchatka, the Aleutians, Fiji/Tonga) renders a CORRUPTED ring: [circlePolygon] normalizes each
+ * vertex's own longitude independently, but never splits the ring itself where it crosses ±180°, so
+ * this composable's GeoJSON `Polygon` ends up with consecutive vertices that jump straight across
+ * the map (e.g. `+179.6` to `-179.6`) instead of taking the short real-world hop across the date
+ * line — the rendered shape looks like it spans the whole world instead of a small local loop.
+ * **Alert correctness is unaffected**: the pill's CALM/ALERT verdict is computed via
+ * [com.yugma.terrawatch.model.haversineKm] directly against the raw center/radius, never by testing
+ * membership in this rendered polygon, so a miscolored ring never implies a wrong verdict. See
+ * [circlePolygon]'s own kdoc for the full explanation and the correct fix (a `MultiPolygon` split,
+ * deferred to the Plan 4 backlog) — repeated here only so anyone reading this composable's own
+ * source doesn't have to go looking for the caveat in a different module.
  */
 @Composable
 private fun HomeRadiusRingLayer(homeLocation: GeoPoint?, radiusKm: Double) {

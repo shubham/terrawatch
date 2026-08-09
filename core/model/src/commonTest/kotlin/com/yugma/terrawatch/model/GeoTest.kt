@@ -99,4 +99,25 @@ class GeoTest {
             circlePolygon(GeoPoint(0.0, 0.0), radiusKm = 10.0, points = 2)
         }
     }
+
+    // Fix Round 1 (I2): KNOWN LIMITATION characterization test — see circlePolygon's own kdoc for
+    // the full explanation. This does NOT assert correct behavior; it pins that today's real
+    // antimeridian discontinuity exists, so a future MultiPolygon-split fix has a red test to turn
+    // green. If this test ever starts FAILING, that almost certainly means circlePolygon was fixed
+    // to split the ring at +-180 - at that point DELETE this test (it no longer characterizes
+    // anything) rather than "fixing" it back to green.
+    @Test fun `KNOWN LIMITATION - ring near the antimeridian spans both lon signs, not a real fix`() {
+        // Centered on the equator at lon 179.5 with a 100km radius: due-east/due-west bearings push
+        // roughly +-0.9 degrees of longitude, which crosses +-180 on one side and stays shy of it on
+        // the other - exactly the "some vertices positive, some negative, no split" shape the kdoc
+        // describes, not a contrived extreme.
+        val ring = circlePolygon(GeoPoint(0.0, 179.5), radiusKm = 100.0, points = 64)
+        val hasPositiveLon = ring.any { it.lon > 170.0 }
+        val hasNegativeLon = ring.any { it.lon < -170.0 }
+        assertTrue(
+            hasPositiveLon && hasNegativeLon,
+            "expected today's KNOWN antimeridian discontinuity (vertices on BOTH sides of +-180) " +
+                "- got lons ${ring.map { it.lon }}",
+        )
+    }
 }

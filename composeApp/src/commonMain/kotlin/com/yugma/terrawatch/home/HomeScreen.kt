@@ -346,7 +346,9 @@ private fun PhoneLayout(
                     // State reads, so this only re-runs when one of them actually changes.
                     // Task 7 (Plan 3), USER REQUIREMENT: radiusKm/minMag are now the
                     // user-settable, store-fed values (HomeViewModel.nearbyRadiusKm/minMag) rather
-                    // than this function's own 500.0/4.5 defaults.
+                    // than pillStatus()'s own default parameters (Fix Round 1, entangled minor:
+                    // radiusKm's default itself now reads AlertRuleStore.DEFAULT_RADIUS_KM, not an
+                    // independent hardcoded 500.0 - see PillStatus.kt).
                     val pill = pillStatus(s.quakes, homeLocation, nowMillis, radiusKm = nearbyRadiusKm, minMag = minMag)
                     Column(
                         modifier = Modifier

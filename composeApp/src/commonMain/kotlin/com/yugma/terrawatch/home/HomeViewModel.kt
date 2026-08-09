@@ -89,7 +89,12 @@ class HomeViewModel(
     val homeLocation: StateFlow<GeoPoint?> = _homeLocation
 
     // Task 7 (Plan 3), USER REQUIREMENT: the pill's radius/minMag are now user-settable (Settings
-    // screen slider -> AlertRuleStore) rather than pillStatus()'s own hardcoded 500.0/4.5 defaults.
+    // screen slider -> AlertRuleStore) - every real pillStatus() call site (HomeScreen) threads that
+    // live value through explicitly, never relying on pillStatus()'s own default parameters. Fix
+    // Round 1 (entangled minor): radiusKm's default itself now points straight at
+    // AlertRuleStore.DEFAULT_RADIUS_KM rather than the independent hardcoded 500.0 it used to be
+    // (see PillStatus.kt) - so even that unreachable-in-production default can no longer drift from
+    // the real one; minMag's default stays a plain hardcoded 4.5.
     // Seeded with the store's own compile-time defaults (not e.g. 0.0) so the very first composition
     // — before either collector below has resolved a real DB read — already renders with the exact
     // same numbers a fresh/never-configured store would produce, rather than a momentarily-wrong

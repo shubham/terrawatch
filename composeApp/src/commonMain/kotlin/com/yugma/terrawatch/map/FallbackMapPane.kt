@@ -127,6 +127,19 @@ internal fun nearestPinWithin(
  * accurate geometry rather than an arbitrary fixed-size decoration, and free: no second ring
  * implementation to keep in sync with the Android one. Drawn BEFORE the pins loop so pins are never
  * obscured by the ring's own fill.
+ *
+ * **KNOWN v1 LIMITATION (Fix Round 1, I2, controller-approved doc-only fix — not corrected here):**
+ * same class of bug as `QuakeMap.android.kt`'s `HomeRadiusRingLayer` (see [circlePolygon]'s own
+ * kdoc for the full explanation) — a home within [radiusKm] of the ±180° antimeridian produces
+ * [circlePolygon] vertices that jump from, e.g., `+179.6` to `-179.6` between consecutive bearing
+ * steps. This `Canvas` `Path`'s `moveTo`/`lineTo` walk connects those vertices in raw projected-x
+ * order exactly like the Android GeoJSON polygon does, so the same real-world-short/
+ * projected-long discontinuity draws a spurious line straight across this pane's whole equirectangular
+ * width instead of a small local loop. **Alert correctness is unaffected** — the pill's CALM/ALERT
+ * verdict never consults this drawn path, only [com.yugma.terrawatch.model.haversineKm] against the
+ * raw center/radius — so this is a rendering-only defect. Fix = a `Path` per antimeridian-split
+ * sub-ring instead of one continuous `Path`; deferred to the Plan 4 backlog alongside the Android
+ * `MultiPolygon` fix.
  */
 @Composable
 fun FallbackMapPane(

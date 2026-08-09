@@ -28,9 +28,15 @@ data class PresetCity(val name: String, val point: GeoPoint)
 /**
  * The ten manual-picker options [CityPickerDialog] offers — literal lat/lon per this task's brief,
  * spanning enough of the globe (India, East/Southeast Asia, Europe/Turkey, the Americas) that most
- * users land reasonably close to at least one without an exact match; the pill's own 500 km alert
- * radius ([com.yugma.terrawatch.data.pillStatus]) is generous enough that "reasonably close" is a
- * meaningful bar here, not a token gesture.
+ * users land reasonably close to at least one without an exact match.
+ *
+ * Fix Round 1 (entangled minor): this kdoc used to cite a fixed "pill's own 500 km alert radius" as
+ * why "reasonably close" was a meaningful bar — stale since Task 7 (Plan 3) made the radius
+ * user-settable ([com.yugma.terrawatch.data.AlertRuleStore], Settings' 50/100/250/500/1000 km
+ * slider, defaulting to 100 km, not a fixed 500). "Reasonably close" is still a real bar across most
+ * of that range (100–1000 km), a much tighter one at the narrowest 50 km step — but this list's job
+ * is a rough global starting point regardless of whatever radius is currently configured, not a
+ * promise tied to any one of its values.
  */
 val PRESET_CITIES: List<PresetCity> = listOf(
     PresetCity("Bengaluru", GeoPoint(12.9716, 77.5946)),

@@ -25,7 +25,16 @@ fun pillStatus(
     quakes: List<Quake>,
     home: GeoPoint?,
     nowMillis: Long,
-    radiusKm: Double = 500.0,
+    // Fix Round 1 (entangled minor): was an independently-hardcoded 500.0, stale the moment Task 7
+    // (Plan 3) shipped 100.0 as this app's real default (AlertRuleStore.DEFAULT_RADIUS_KM). Every
+    // real call site (HomeScreen, both PhoneLayout/TwoPaneLayout) already threads the store's live
+    // value through explicitly - see HomeScreen.kt's own comment at its pillStatus() calls - so this
+    // default is only ever reached by a caller (chiefly tests) that omits the argument entirely.
+    // Pointing straight at the same constant AlertRuleStore itself defines removes the drift risk
+    // outright instead of re-hardcoding a second, independent "100.0" that could silently diverge
+    // from it again later - exactly the class of bug StatusShield's own Task 7 device-caught fix
+    // (see that file's kdoc) already burned this task once.
+    radiusKm: Double = AlertRuleStore.DEFAULT_RADIUS_KM,
     windowMs: Long = 86_400_000,
     minMag: Double = 4.5,
 ): PillStatus {

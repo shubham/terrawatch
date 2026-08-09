@@ -94,6 +94,19 @@ fun StatusShield(
     }
 }
 
+/**
+ * Fix Round 1 (I3): pure-function extraction of [CalmContent]'s own subtitle text — previously
+ * inlined directly into a `Text` composable, which meant this exact "Nothing within N km · 24 h"
+ * shape had no non-device-instrumented regression test of its own. This file's own kdoc above
+ * already tells the story of what happens when that goes untested: the CALM subtitle silently kept
+ * claiming a stale hardcoded "500 km" until a device pass caught it by eye. `internal`, not
+ * `private`, so `core:ui`'s own jvmTest source set can call it directly — same "so a test can pin
+ * it" convention this codebase already uses for `BarChart`'s `barHeightFraction`/`InsightsScreen`'s
+ * `dayCountLabels`.
+ */
+internal fun calmSubtitle(radiusKm: Double): String =
+    "Nothing within ${formatCount(radiusKm.roundToLong())} km · 24 h"
+
 @Composable
 private fun CalmContent(radiusKm: Double) {
     CheckGlyph(tint = TerraColors.Safe, modifier = Modifier.size(GLYPH_SIZE))
@@ -105,7 +118,7 @@ private fun CalmContent(radiusKm: Double) {
             color = MaterialTheme.colorScheme.onSurface,
         )
         Text(
-            text = "Nothing within ${formatCount(radiusKm.roundToLong())} km · 24 h",
+            text = calmSubtitle(radiusKm),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

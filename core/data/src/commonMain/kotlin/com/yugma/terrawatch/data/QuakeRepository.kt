@@ -302,10 +302,27 @@ class QuakeRepository(
         )
     }
 
-    /** [currentRules]'s home-location counterpart — [HomeLocationStore.get] is itself already a
-     * plain synchronous DAO read (see that class's own kdoc), so this needs no [ioDispatcher] hop
-     * of its own beyond whatever the caller (already inside one, at every real call site) provides. */
-    private fun currentHome(): GeoPoint? = homeLocationStore?.get()
+    /**
+     * [currentRules]'s home-location counterpart.
+     *
+     * Fix Round 1 (I1): now `suspend` + [ioDispatcher], matching [currentRules] exactly. The prior
+     * version of this kdoc claimed "[HomeLocationStore.get] needs no [ioDispatcher] hop of its own
+     * beyond whatever the caller (already inside one, at every real call site) provides" — that was
+     * false for [startLive]: its collector runs directly on the `CoroutineScope` `HomeViewModel`
+     * hands it (`viewModelScope`, i.e. `Dispatchers.Main.immediate`), NOT inside a
+     * `withContext(ioDispatcher)` block the way [refreshFeed] wraps its whole body. Kotlin evaluates
+     * call arguments before the call itself, so `ingest(it, rules = currentRules(), home =
+     * currentHome())` ran `currentRules()`'s suspend hop first, returned to the caller's own
+     * context (Main, per `withContext`'s contract), and only THEN called the old plain
+     * [currentHome] — meaning the synchronous [HomeLocationStore.get] DAO read executed directly on
+     * the main thread for every single incoming live event, not just once at startup. Verified: the
+     * two real call sites are [refreshFeed] (already inside its own `withContext(ioDispatcher)`,
+     * so this is a harmless nested hop there — `withContext` short-circuits when the target
+     * dispatcher is already current) and [startLive] (the one this fix actually matters for); no
+     * other call site exists (grepped the whole repo — EVIDENCE INTEGRITY — `currentHome` is
+     * `private`, so these two are structurally the only possible callers).
+     */
+    private suspend fun currentHome(): GeoPoint? = withContext(ioDispatcher) { homeLocationStore?.get() }
 
     suspend fun ingest(
         incoming: Quake,

@@ -40,6 +40,26 @@ fun haversineKm(a: GeoPoint, b: GeoPoint): Double {
  * `360.0.toRadians()` lands extremely close to, but not bit-identical to, `sin`/`cos` of
  * `0.0.toRadians()` — close enough for rendering, not close enough to assert exact equality against
  * in a test without an epsilon).
+ *
+ * **KNOWN v1 LIMITATION (Fix Round 1, I2, controller-approved doc-only fix — not corrected here):**
+ * [destinationPoint] normalizes EACH vertex's own longitude independently into `[-180, 180)`, but
+ * this function never splits the RING as a whole at the antimeridian. A home within [radiusKm] of
+ * the ±180° line (real seismic zones sit exactly here — Kamchatka, the Aleutians, Fiji/Tonga) traces
+ * a ring whose vertices legitimately jump between, e.g., `+179.6` and `-179.6` from one bearing step
+ * to the next — a real, short hop across the date line in the world, but a false, world-spanning
+ * long hop once both renderers connect consecutive vertices in raw longitude order (a GeoJSON
+ * `Polygon` here, a plain `Canvas` `Path` in `FallbackMapPane`). The rendered ring corrupts into a
+ * shape that appears to span the entire map width instead of a small local loop. **Alert
+ * correctness is unaffected** — [com.yugma.terrawatch.data.pillStatus]/`AlertRuleEngine` both
+ * compare distance via [haversineKm] directly (the great-circle distance, computed independently of
+ * this polygon's vertices), never by testing membership in the rendered ring shape — so a home this
+ * close to the antimeridian gets a visually wrong ring but a correctly-evaluated CALM/ALERT verdict.
+ * The correct fix is a GeoJSON `MultiPolygon` split at each antimeridian crossing (detect a
+ * consecutive-vertex longitude delta `> 180°` as the crossing signal, interpolate the exact crossing
+ * latitude, emit two closed sub-rings instead of one) — judged too large to do confidently in this
+ * fix round across both renderers (Android GeoJSON + `FallbackMapPane` Canvas) at once; deferred to
+ * the Plan 4 backlog. [GeoTest]'s "KNOWN LIMITATION" test pins that the discontinuity described here
+ * actually exists today, so that future fix has a red test to turn green (and then delete/replace).
  */
 fun circlePolygon(center: GeoPoint, radiusKm: Double, points: Int = 64): List<GeoPoint> {
     require(points >= 3) { "circlePolygon needs at least 3 points to trace a ring, got $points" }
