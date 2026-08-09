@@ -61,8 +61,16 @@ class QuakeRepository(
 
     /**
      * [windowMs] before "now" is computed once, at call time — the returned Flow re-queries
-     * against that frozen cutoff, it does not slide forward as time passes. Callers wanting a
-     * sliding window re-call this on a timer (Plan 2).
+     * against that frozen cutoff, it does not slide forward as time passes.
+     *
+     * Task 1 (Plan 3): this function itself still does not slide — it deliberately stays a
+     * single frozen-cutoff query per call, so it has exactly one, easily-tested responsibility.
+     * The sliding window is a CALLER concern: [com.yugma.terrawatch.home.HomeViewModel] now
+     * re-subscribes on every poll tick (its `pollTick` `StateFlow`, `flatMapLatest`'d over a call
+     * to this function) rather than collecting one call's Flow forever, so the cutoff effectively
+     * advances once per poll even though any single subscription's cutoff is still frozen for its
+     * own lifetime. This was previously a documented gap (Plan 2 entry conditions: "callers
+     * wanting a sliding window re-call this on a timer") — now actually wired up, not just noted.
      */
     fun recentQuakes(windowMs: Long = 86_400_000): Flow<List<Quake>> =
         dao.recent(clock() - windowMs)

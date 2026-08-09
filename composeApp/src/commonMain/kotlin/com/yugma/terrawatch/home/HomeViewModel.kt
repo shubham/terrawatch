@@ -14,17 +14,27 @@ import com.yugma.terrawatch.model.QuakeStatus
 import com.yugma.terrawatch.model.Source
 import com.yugma.terrawatch.model.magnitudeBand
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.random.Random
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
+
+// Task 1 (Plan 3): the refresh loop's cadence — see HomeViewModel.init's poll loop below. 60s
+// balances "the map's staleness banner threshold is 10 minutes" (HomeScreen.STALE_AFTER_MILLIS)
+// against not hammering the USGS feed; the etag/If-None-Match round-trip (UsgsApi.fetchFeed) means
+// a no-op tick is one small conditional-GET, not a full re-download.
+private const val POLL_INTERVAL_MILLIS = 60_000L
 
 sealed interface HomeUiState {
     data object Loading : HomeUiState
@@ -50,6 +60,11 @@ private data class HomeSnapshot(
     val lastUpdatedMillis: Long?,
 )
 
+// Task 1 (Plan 3): flatMapLatest below (the sliding-window re-subscription) is the only
+// experimental-API surface this class touches — opted in at the class level rather than the
+// function level because it's used inside init{}, which (unlike a named function) cannot itself
+// carry an @OptIn annotation.
+@OptIn(ExperimentalCoroutinesApi::class)
 class HomeViewModel(
     private val repository: QuakeRepository,
     private val homeLocationStore: HomeLocationStore,
@@ -95,12 +110,31 @@ class HomeViewModel(
     // recentQuakes() forever, re-reading that same frozen `status` on every emission — so a
     // failed initial refresh stayed flagged in every future Content, permanently, even once a
     // later live/refresh update proved data was flowing again. Now a mutable StateFlow, combined
-    // into Content below rather than captured once: [init]'s refresh-loop coroutine sets it true
-    // only when refreshFeed() itself fails; a second coroutine (also in init) clears it back to
-    // false the moment there's direct proof a quake actually got written. See that coroutine's own
-    // comment for why "a fresh insertedQuakeIds emission" was picked over the alternative floated
-    // for this fix ("any recentQuakes emission that grows the quake count after the failure").
+    // into Content below rather than captured once.
+    //
+    // Task 1 (Plan 3): [refreshOnce] (shared by the poll loop and [retryNow]) is now the primary
+    // writer — it sets this true on EITHER a throw or a [RefreshStatus.FAILED] result, and false
+    // on ANY successful outcome (UPDATED or NOT_MODIFIED alike; see its own kdoc). The
+    // insertedQuakeIds collector below is kept as a SECOND, independent writer: it is the only
+    // thing that clears this for a quake arriving off the LIVE WebSocket, which never goes
+    // through [refreshOnce] at all. Picked over the alternative floated for the original fix
+    // ("any recentQuakes emission that grows the quake count after the failure") as the simpler
+    // and equally-correct one — a fresh insertedQuakeIds emission is direct, unambiguous proof
+    // ingest() just wrote a genuinely new quake, no "previous count" bookkeeping required.
     private val refreshFailed = MutableStateFlow(false)
+
+    // Task 1 (Plan 3): bumped by every [refreshOnce] attempt (loop tick or [retryNow]) so the
+    // quakes-list collector below re-subscribes to [QuakeRepository.recentQuakes] against a FRESH
+    // cutoff each time, rather than the cutoff that function's own Flow froze once at whatever
+    // moment it was first subscribed (see that function's own kdoc). The tick's numeric value
+    // carries no meaning of its own — only its role as a change-notification for
+    // [kotlinx.coroutines.flow.flatMapLatest] does.
+    private val pollTick = MutableStateFlow(0L)
+
+    // Task 1 (Plan 3): guards [retryNow] against a re-tap while its own [refreshOnce] call is
+    // still in flight — see that function's own kdoc. Purely a private implementation detail of
+    // that one function, same pattern as [selectJob] above.
+    private var retryJob: Job? = null
 
     init {
         // Fix Round 1 (I2): sweeps out any "debug-"-prefixed rows a previous debug-long-press
@@ -114,16 +148,30 @@ class HomeViewModel(
         // below.
         viewModelScope.launch { repository.purgeDebugQuakes() }
 
-        // The refresh loop. Fix Round 2 (review finding): this used to run in the SAME coroutine
-        // as, and immediately before, `repository.recentQuakes().collect { ... }` below — since
-        // refreshFeed() suspends on the network, that delayed the very first read of the
-        // (possibly already-populated) local cache behind a network round-trip that has nothing
-        // to do with it. Splitting the two into independent coroutines means a pre-seeded cache
-        // paints instantly, whether or not — and however long before — this refresh resolves.
+        // The refresh loop. Fix Round 2 (review finding, still true here): this runs in a
+        // SEPARATE coroutine from `repository.recentQuakes().collect { ... }` below — since
+        // refreshFeed() suspends on the network, sharing one coroutine would delay the very first
+        // read of the (possibly already-populated) local cache behind a network round-trip that
+        // has nothing to do with it. A pre-seeded cache paints instantly, whether or not — and
+        // however long before — this refresh resolves.
+        //
+        // Task 1 (Plan 3, the "one-shot fetch" debt this task pays down): what used to be a
+        // single refreshFeed() call is now a poll loop — refreshOnce() again every
+        // [POLL_INTERVAL_MILLIS] for as long as this ViewModel lives. repository.startLive() is
+        // still called exactly once, right after the FIRST attempt settles (unchanged sequencing
+        // from before this task) — calling it once at the top means a refresh throw further down
+        // this same coroutine can never re-invoke it, and since [QuakeRepository.startLive] itself
+        // launches its collector directly on the [viewModelScope] it's handed (a sibling of this
+        // coroutine, not a child), the LIVE WebSocket path is already structurally independent of
+        // whatever happens to the refresh loop afterward — a later throw inside [refreshOnce]
+        // (caught by its own runCatching) can't reach it either way.
         viewModelScope.launch {
-            val status = repository.refreshFeed()
-            if (status == RefreshStatus.FAILED) refreshFailed.value = true
+            refreshOnce()
             repository.startLive(viewModelScope)
+            while (isActive) {
+                delay(POLL_INTERVAL_MILLIS)
+                refreshOnce()
+            }
         }
 
         // Task 9: home location, resolved once at startup. Dispatchers.Default because
@@ -169,8 +217,14 @@ class HomeViewModel(
             // recentQuakes() emission. Both now happen inside this upstream .map{}, pushed off
             // Main via flowOn(Dispatchers.Default); collect{} below only assigns the already-built
             // result to _state.value.
+            //
+            // Task 1 (Plan 3): recentQuakes() itself still returns a single frozen-cutoff Flow
+            // (see its own kdoc) — the sliding window lives here, in re-subscribing via
+            // flatMapLatest every time [pollTick] changes. flatMapLatest (not flatMapMerge/Concat)
+            // matters: it CANCELS the previous tick's Flow before starting the next one, so an
+            // old, now-stale-cutoff subscription never keeps emitting alongside the fresh one.
             combine(
-                repository.recentQuakes()
+                pollTick.flatMapLatest { repository.recentQuakes() }
                     .map { quakes ->
                         HomeSnapshot(
                             quakes = quakes,
@@ -194,6 +248,52 @@ class HomeViewModel(
                 )
             }.collect { content -> _state.value = content }
         }
+    }
+
+    /**
+     * Task 1 (Plan 3): one refresh attempt — the body shared by the poll loop in [init] and
+     * [retryNow], so a manual retry is exactly as honest as a scheduled tick rather than a
+     * hand-rolled duplicate of this logic.
+     *
+     * [QuakeRepository.refreshFeed] can THROW (a DB error — see its own kdoc/the Plan 2 entry
+     * conditions this task closes out) despite its return type being a plain status enum; the
+     * network layer underneath it never throws by contrast (`UsgsApi.fetchFeed` always resolves
+     * to a [RefreshStatus] value, converting network/HTTP failure into [RefreshStatus.FAILED]
+     * itself). [runCatching] here is what makes a throw and a [RefreshStatus.FAILED] result look
+     * identical from the poll loop's point of view — both just mark [refreshFailed] true — so
+     * that same `while` loop in [init] can keep ticking forever no matter which kind of failure
+     * hits it.
+     *
+     * ANY successful outcome clears [refreshFailed], not only [RefreshStatus.UPDATED]: a
+     * [RefreshStatus.NOT_MODIFIED] poll is just as much proof the feed is reachable and healthy
+     * as one that happened to find something new — the old code had no path that ever cleared a
+     * previously-failed flag from a no-op-but-successful poll at all.
+     */
+    private suspend fun refreshOnce() {
+        runCatching { repository.refreshFeed() }
+            .fold(
+                onSuccess = { status -> refreshFailed.value = (status == RefreshStatus.FAILED) },
+                onFailure = { refreshFailed.value = true },
+            )
+        pollTick.value += 1
+    }
+
+    /**
+     * Task 1 (Plan 3): the staleness banner's "Retry" CTA (see HomeScreen's `StalenessBanner`) —
+     * an immediate, user-triggered refresh attempt, independent of the poll loop's own
+     * [POLL_INTERVAL_MILLIS] cadence.
+     *
+     * Coalesced via [retryJob]: a re-tap while the previous call's [refreshOnce] is still
+     * suspended on the network is dropped rather than stacking a second concurrent
+     * [QuakeRepository.refreshFeed] call — the user only ever wants ONE retry in flight, and an
+     * ignored re-tap costs nothing since the first tap is already doing exactly what the second
+     * one asked for. [Job.isActive] is checked (not e.g. a plain Boolean) so the guard clears
+     * itself automatically the moment the in-flight call actually finishes, success or failure,
+     * with no separate reset step to forget.
+     */
+    fun retryNow() {
+        if (retryJob?.isActive == true) return
+        retryJob = viewModelScope.launch { refreshOnce() }
     }
 
     /** Called by HomeScreen when the feed sheet reaches [androidx.compose.material3.SheetValue]

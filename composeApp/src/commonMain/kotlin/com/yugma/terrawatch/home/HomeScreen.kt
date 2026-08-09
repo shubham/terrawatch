@@ -22,6 +22,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberBottomSheetScaffoldState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -278,7 +279,14 @@ private fun PhoneLayout(
                         // "above banner if both — banner moves below pill").
                         if (s.refreshFailed || isStale(s.lastUpdatedMillis, nowMillis)) {
                             Spacer(Modifier.height(8.dp))
-                            StalenessBanner(lastUpdatedMillis = s.lastUpdatedMillis, nowMillis = nowMillis)
+                            StalenessBanner(
+                                lastUpdatedMillis = s.lastUpdatedMillis,
+                                nowMillis = nowMillis,
+                                // Task 1 (Plan 3): Retry only when there's an actual failure to
+                                // retry — staleness alone (a healthy feed that simply hasn't had
+                                // anything new to report in a while) isn't one.
+                                onRetry = if (s.refreshFailed) viewModel::retryNow else null,
+                            )
                         }
                     }
                 }
@@ -358,7 +366,11 @@ private fun TwoPaneLayout(
                     )
                     if (state.refreshFailed || isStale(state.lastUpdatedMillis, nowMillis)) {
                         Spacer(Modifier.height(8.dp))
-                        StalenessBanner(lastUpdatedMillis = state.lastUpdatedMillis, nowMillis = nowMillis)
+                        StalenessBanner(
+                            lastUpdatedMillis = state.lastUpdatedMillis,
+                            nowMillis = nowMillis,
+                            onRetry = if (state.refreshFailed) viewModel::retryNow else null,
+                        )
                     }
                 }
             }
@@ -447,8 +459,25 @@ private fun onPillClick(pill: PillStatus, viewModel: HomeViewModel) {
     }
 }
 
+/**
+ * Task 1 (Plan 3): [onRetry] wires the design spec's "Offline ... + Retry link" affordance
+ * (`docs/superpowers/specs/2026-08-08-terrawatch-design.md` 4.4) — null (the default) keeps this
+ * banner exactly as it was pre-Task-1 (a plain, un-actionable status line) for any future caller
+ * that shows it without a retry story; HomeScreen's own call sites below always pass one when
+ * `refreshFailed` is true. A trailing [TextButton], not a filled [androidx.compose.material3.Button]
+ * — this is a "link" per the spec, not a primary action, and a filled button would be a second
+ * glass-adjacent surface competing with the pill for visual weight. Reads
+ * [MaterialTheme.colorScheme] `primary` for its label (M3's own [TextButton] default content
+ * color) rather than a hardcoded color, so it stays theme-token-honest across light/dark like
+ * every other control in this app.
+ */
 @Composable
-private fun StalenessBanner(lastUpdatedMillis: Long?, nowMillis: Long, modifier: Modifier = Modifier) {
+private fun StalenessBanner(
+    lastUpdatedMillis: Long?,
+    nowMillis: Long,
+    onRetry: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
+) {
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(TerraRadii.pill),
@@ -456,13 +485,24 @@ private fun StalenessBanner(lastUpdatedMillis: Long?, nowMillis: Long, modifier:
         tonalElevation = 4.dp,
         shadowElevation = 2.dp,
     ) {
-        val text = lastUpdatedMillis?.let {
-            "Updated ${formatRelativeTime(it, nowMillis)}"
-        } ?: "Not updated yet"
-        Text(
-            text = text,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-            style = MaterialTheme.typography.labelLarge,
-        )
+        Row(
+            modifier = Modifier.padding(
+                start = 16.dp,
+                top = 8.dp,
+                bottom = 8.dp,
+                end = if (onRetry != null) 4.dp else 16.dp,
+            ),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val text = lastUpdatedMillis?.let {
+                "Updated ${formatRelativeTime(it, nowMillis)}"
+            } ?: "Not updated yet"
+            Text(text = text, style = MaterialTheme.typography.labelLarge)
+            if (onRetry != null) {
+                TextButton(onClick = onRetry) {
+                    Text("Retry")
+                }
+            }
+        }
     }
 }
