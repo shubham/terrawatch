@@ -89,7 +89,7 @@ internal val ONBOARDING_STEPS = listOf(
 )
 
 /**
- * The rule-summary line step 3 renders — plan Task 8's own brief, quoted verbatim: `"M ≥ 4.5
+ * The rule-summary line step 3 renders — the controller's Task 8 dispatch (not the plan file), quoted verbatim: `"M ≥ 4.5
  * within 100 km · M ≥ 6 worldwide — change anytime in Settings"`. Pure and `internal` for the same
  * "TDD what's pure" reason [ONBOARDING_STEPS] is — `OnboardingScreenTest` pins the exact shipped
  * string, including the mid-range/wide-radius/non-default-magnitude shapes.
@@ -99,7 +99,7 @@ internal val ONBOARDING_STEPS = listOf(
  * parameter: `AlertRuleEngine.DEFAULT_RULES` hardcodes that exact threshold too (`id="world"`,
  * `minMag=6.0`), and unlike the near rule it is not user-settable anywhere in this app, so there
  * is no live value to thread through here. Bare `"6"` (not [formatMagnitude]'s `"6.0"`) matches the
- * plan brief's own quoted copy exactly — confirmed by `OnboardingScreenTest`, which would fail if
+ * controller's Task 8 dispatch's quoted copy exactly — confirmed by `OnboardingScreenTest`, which would fail if
  * this were built from `formatMagnitude(6.0)` instead.
  *
  * Call sites pass [AlertRuleStore.DEFAULT_MIN_MAG]/[AlertRuleStore.DEFAULT_RADIUS_KM] — the
