@@ -114,14 +114,19 @@ fun formatDistanceKm(km: Double): String =
  * java.text/String.format (unavailable on wasmJs). Unlike [oneDecimal], always zero-pads the
  * fractional part to two digits (5 -> "05") since a bare single digit would silently read as
  * tenths rather than the intended hundredths (7.5 vs. 7.05).
+ *
+ * Fix Round 1 (review finding): non-negative contract - unlike [oneDecimal], this does NOT accept
+ * arbitrary-signed input. Its sole caller, [formatCoordinates], always passes [value] through
+ * `abs()` first (a coordinate's sign is rendered as a hemisphere letter, never a minus sign), so
+ * the negative-input / negative-zero handling [oneDecimal] needs is unreachable here and has been
+ * dropped rather than kept as dead code. Passing a negative [value] gives a meaningless result.
  */
 private fun twoDecimals(value: Double): String {
     val d = (value * 100).roundToInt()
     val whole = d / 100
-    val frac = abs(d % 100)
+    val frac = d % 100
     val fracStr = if (frac < 10) "0$frac" else "$frac"
-    val formatted = if (value < 0 && whole == 0) "-$whole.$fracStr" else "$whole.$fracStr"
-    return if (formatted == "-0.00") "0.00" else formatted
+    return "$whole.$fracStr"
 }
 
 /**

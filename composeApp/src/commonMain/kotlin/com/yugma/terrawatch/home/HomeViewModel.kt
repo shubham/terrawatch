@@ -14,6 +14,7 @@ import com.yugma.terrawatch.model.QuakeStatus
 import com.yugma.terrawatch.model.Source
 import com.yugma.terrawatch.model.magnitudeBand
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -83,6 +84,11 @@ class HomeViewModel(
     // "dismissed" rather than a separate Boolean visibility flag.
     private val _selectedQuake = MutableStateFlow<Quake?>(null)
     val selectedQuake: StateFlow<Quake?> = _selectedQuake
+
+    // Fix Round 1 (review finding): tracks select()'s own in-flight launch so a second call can
+    // cancel a still-pending first one — see [select]'s body. Purely a private implementation
+    // detail of that one function; nothing else in this class reads or depends on it.
+    private var selectJob: Job? = null
 
     // Fix Round 2 (review finding): this used to be a `val status = repository.refreshFeed()`
     // local, captured ONCE inside the same coroutine that then went on to collect
@@ -206,16 +212,35 @@ class HomeViewModel(
      * doesn't resolve to any stored quake (e.g. it aged out between the tap and this lookup
      * resolving) settles on null, same as no selection at all — there is deliberately no separate
      * "not found" error state for the sheet to render.
+     *
+     * One-shot read; revisions arriving while the sheet is open are not reflected until
+     * dismiss+reopen (accepted v1 tradeoff).
+     *
+     * Fix Round 1 (review finding): cancels any still-in-flight [selectJob] before launching a
+     * new one. Without this, two quick selections (e.g. pin A tapped, then pin B tapped again
+     * before A's [QuakeRepository.byId] read resolves) raced as two independent coroutines with no
+     * ordering guarantee between them — if A's read happened to complete after B's, its stale
+     * result would silently overwrite the correct, more recent selection. Cancelling the prior job
+     * first means only the most recent call to [select] can ever win.
      */
     fun select(id: String) {
-        viewModelScope.launch {
+        selectJob?.cancel()
+        selectJob = viewModelScope.launch {
             _selectedQuake.value = repository.byId(id)
         }
     }
 
     /** Called by DetailSheet's `onDismiss` (both the Dismiss button and the sheet's own
-     * scrim/swipe dismissal funnel through this one callback). */
+     * scrim/swipe dismissal funnel through this one callback).
+     *
+     * Fix Round 1 (adjacent to the [select] race fix above, judgment call - flagging in case it
+     * should have stayed out of scope): also cancels a still-in-flight [selectJob], not just
+     * [select] itself. Without this, a [select] whose repository read is still in flight the
+     * instant the user dismisses would, once it resolved, silently overwrite this null with the
+     * stale quake - resurrecting a sheet the user just closed.
+     */
     fun dismissSelection() {
+        selectJob?.cancel()
         _selectedQuake.value = null
     }
 

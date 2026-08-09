@@ -9,13 +9,20 @@ import kotlin.test.assertEquals
 
 /**
  * [buildShareText] is the one piece of DetailSheet.kt that isn't already covered indirectly by
- * FormatsTest (it just concatenates already-tested formatters) - pinned here against the brief's
- * own literal example string so the exact wording ("M 6.1 — Mindanao, Philippines. Depth 10.0 km.
- * 2 h ago. via TerraWatch") can't silently drift.
+ * FormatsTest (it just concatenates already-tested formatters) - pinned here against the
+ * *documented, shipped* format ("M 6.1 — Mindanao, Philippines. Depth 10.0 km. 2 h ago. via
+ * TerraWatch") so it can't silently drift.
+ *
+ * Fix Round 1 (review finding): this test's name and kdoc used to claim that string was "the
+ * brief's exact wording" - it wasn't. The brief's own dictated example was "M 6.1 — Mindanao,
+ * Philippines. Depth 10 km. via TerraWatch", with no relative-time clause at all; the shipped
+ * format deliberately adds one (see [buildShareText]'s own kdoc for why). Renamed and reworded so
+ * this test documents what the format actually is, instead of misattributing that enrichment to
+ * the brief.
  */
 class DetailSheetTest {
     @Test
-    fun `buildShareText matches the brief's exact wording`() {
+    fun `buildShareText produces the documented format`() {
         val quake = Quake(
             id = "us1234",
             timeMillis = 1_000_000L,

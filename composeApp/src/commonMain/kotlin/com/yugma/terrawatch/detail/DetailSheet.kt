@@ -17,7 +17,9 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -37,6 +39,7 @@ import com.yugma.terrawatch.ui.format.formatRelativeTime
 import com.yugma.terrawatch.ui.format.revisionNote
 import com.yugma.terrawatch.ui.theme.TerraColors
 import com.yugma.terrawatch.ui.theme.TerraRadii
+import kotlinx.coroutines.launch
 
 /**
  * Task 11: the quake detail sheet - opened over the map (per the design spec's §3.3, "dimmed map,
@@ -76,7 +79,17 @@ fun DetailSheet(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss, modifier = modifier) {
+    // Fix Round 1 (review finding): a bare `onClick = onDismiss` on the Dismiss button used to
+    // invoke onDismissRequest directly, skipping M3's own hide animation entirely - the sheet
+    // snapped shut instantly instead of sliding down. Swipe-to-dismiss and scrim-tap never had
+    // this problem: ModalBottomSheet's internal handling for those two gestures already runs
+    // `sheetState.hide()` itself and only calls onDismissRequest once that animation completes.
+    // Driving the same sheetState explicitly from the button - hide() first, onDismiss() chained
+    // via invokeOnCompletion - gives the button-tap path the identical animated close instead of
+    // a third, unanimated one.
+    val sheetState = rememberModalBottomSheetState()
+    val scope = rememberCoroutineScope()
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, modifier = modifier) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -93,7 +106,7 @@ fun DetailSheet(
             Spacer(Modifier.height(16.dp))
             ActionRow(
                 onShare = { onShare(buildShareText(quake, nowMillis)) },
-                onDismiss = onDismiss,
+                onDismiss = { scope.launch { sheetState.hide() }.invokeOnCompletion { onDismiss() } },
             )
         }
     }
@@ -229,8 +242,14 @@ private fun sourceLine(sources: Map<Source, String>): String = when {
 }
 
 /**
- * Task 11 share text - exact wording dictated by the brief: "M 6.1 — Mindanao, Philippines. Depth
- * 10.0 km. 2 h ago. via TerraWatch". Built entirely from formatters already unit-tested elsewhere
+ * Task 11 share text. Fix Round 1 (review finding): this kdoc used to claim the shipped text was
+ * "exact wording dictated by the brief" - it isn't, quite. The brief's own dictated example was
+ * "M 6.1 — Mindanao, Philippines. Depth 10 km. via TerraWatch"; what ships here deliberately
+ * enriches that skeleton with a relative-time clause ("2 h ago.") inserted between the depth and
+ * the "via TerraWatch" sign-off - e.g. "M 6.1 — Mindanao, Philippines. Depth 10.0 km. 2 h ago. via
+ * TerraWatch" - since a share message with no timestamp at all is less useful than one that says
+ * how fresh the quake is. This documents the actual, shipped format, not the brief's bare example.
+ * Built entirely from formatters already unit-tested elsewhere
  * ([formatMagnitude]/[formatDepthKm]/[formatRelativeTime]), so the only residual risk is the
  * concatenation itself - `internal` (not `private`) so a test can pin the exact string.
  */
