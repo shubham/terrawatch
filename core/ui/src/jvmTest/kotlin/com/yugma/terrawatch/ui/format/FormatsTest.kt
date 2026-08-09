@@ -169,4 +169,35 @@ class FormatsTest {
         )
         assertEquals("revised from M 5.9 · 1 min ago", revisionNote(revisions, nowMillis = 2_000_000L))
     }
+
+    // --- formatShortDate (Task 6, Plan 3: extracted out of formatRelativeTime's own past-a-week
+    // fallback, the moment Insights' bar-chart baseline labels needed the identical "MMM d" text
+    // standalone rather than only reachable via a >=7-day-old relative time) ---
+
+    @Test
+    fun `formatShortDate renders UTC month abbreviation and day`() {
+        // Reusing HistoryViewModelTest's own independently-verified epoch literals
+        // (composeApp/src/jvmTest/.../history/HistoryViewModelTest.kt's `sections group loaded
+        // quakes by UTC month` test) rather than re-deriving new ones - both were verified there
+        // two ways outside Kotlin (BSD `date -j -f ... +%s` and Python's datetime.timestamp()).
+        assertEquals("Aug 9", formatShortDate(1_786_233_600_000L)) // 2026-08-09T00:00:00Z
+        assertEquals("Jul 1", formatShortDate(1_782_864_000_000L)) // 2026-07-01T00:00:00Z
+    }
+
+    @Test
+    fun `formatRelativeTime's own past-a-week fallback matches formatShortDate exactly`() {
+        val then = 1_754_179_200_000L // 2025-08-03T00:00:00Z ("Aug 3") - same literal the existing
+        // "falls back to month-day date" test above already pins independently.
+        assertEquals(formatShortDate(then), formatRelativeTime(then, then + 604_800_000L))
+    }
+
+    // --- formatCount (Task 6, Plan 3: Insights' distribution-bar counts and per-day chart total) ---
+
+    @Test
+    fun `formatCount groups thousands the same way formatDistanceKm's own grouping does`() {
+        val cases = listOf(0L to "0", 142L to "142", 1_234L to "1,234", 12_345L to "12,345")
+        for ((input, expected) in cases) {
+            assertEquals(expected, formatCount(input), "formatCount($input)")
+        }
+    }
 }

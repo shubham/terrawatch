@@ -60,11 +60,24 @@ fun formatRelativeTime(thenMillis: Long, nowMillis: Long): String {
         diff < HOUR_MILLIS -> "${diff / MINUTE_MILLIS} min ago"
         diff < DAY_MILLIS -> "${diff / HOUR_MILLIS} h ago"
         diff < WEEK_MILLIS -> "${diff / DAY_MILLIS} d ago"
-        else -> {
-            val date = Instant.fromEpochMilliseconds(thenMillis).toLocalDateTime(TimeZone.UTC)
-            "${MONTH_NAMES[date.month.ordinal]} ${date.day}"
-        }
+        else -> formatShortDate(thenMillis)
     }
+}
+
+/**
+ * e.g. 1723190400000 (2024-08-09T00:00:00Z) -> "Aug 9". UTC, matching every other absolute-date
+ * label in this codebase (History's month headers, [formatRelativeTime]'s own past-a-week
+ * fallback, which now calls this instead of duplicating the same two-line computation).
+ *
+ * Task 6 (Plan 3): pulled out standalone the moment Insights' bar-chart baseline labels
+ * (start/end date of the period) needed this exact "MMM d" text without going through
+ * [formatRelativeTime]'s "how long ago" framing at all - that function's own boundary test still
+ * pins that its >=7-day fallback matches this verbatim (see FormatsTest).
+ */
+@OptIn(ExperimentalTime::class)
+fun formatShortDate(millis: Long): String {
+    val date = Instant.fromEpochMilliseconds(millis).toLocalDateTime(TimeZone.UTC)
+    return "${MONTH_NAMES[date.month.ordinal]} ${date.day}"
 }
 
 /**
@@ -92,8 +105,11 @@ fun revisionNote(revisions: List<MagRevision>, nowMillis: Long): String? {
     return "revised from M ${formatMagnitude(previous.mag)} · ${formatRelativeTime(latest.atMillis, nowMillis)}"
 }
 
-/** Groups the digits of [n]'s absolute value in threes from the right; sign is applied after. */
-private fun groupThousands(n: Int): String {
+/** Groups the digits of [n]'s absolute value in threes from the right; sign is applied after.
+ * `Long`, not `Int` (Task 6, Plan 3 widening - see [formatCount]'s own kdoc for why): every call
+ * site converts explicitly rather than relying on an implicit narrowing/widening Kotlin doesn't do
+ * anyway. */
+private fun groupThousands(n: Long): String {
     val digits = abs(n).toString()
     val grouped = buildString {
         for (i in digits.length - 1 downTo 0) {
@@ -107,7 +123,15 @@ private fun groupThousands(n: Int): String {
 
 /** e.g. 4102.3 -> "4,102 km", NaN -> "0 km". Rounded to the nearest whole km, thousands-grouped. */
 fun formatDistanceKm(km: Double): String =
-    if (km.isNaN()) "0 km" else "${groupThousands(km.roundToInt())} km"
+    if (km.isNaN()) "0 km" else "${groupThousands(km.roundToInt().toLong())} km"
+
+/**
+ * e.g. 1234 -> "1,234". Task 6 (Plan 3): Insights' distribution-bar counts and per-day chart total
+ * - both are plain `COUNT(*)`-derived aggregates (never negative in practice, though
+ * [groupThousands]'s own sign handling covers it defensively anyway) - reusing
+ * [formatDistanceKm]'s digit-grouping instead of a second, independent implementation.
+ */
+fun formatCount(n: Long): String = groupThousands(n)
 
 /**
  * Two-decimal analog of [oneDecimal] - needed for [formatCoordinates]'s precision, still no

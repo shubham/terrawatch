@@ -3,6 +3,7 @@ package com.yugma.terrawatch.database
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import app.cash.turbine.test
 import com.yugma.terrawatch.model.MagRevision
+import com.yugma.terrawatch.model.MagnitudeBand
 import com.yugma.terrawatch.model.Quake
 import com.yugma.terrawatch.model.QuakeStatus
 import com.yugma.terrawatch.model.Source
@@ -166,5 +167,96 @@ class QuakeDaoTest {
     @Test fun `lastFetchedAt null on empty table`() {
         val clockedDao = QuakeDao(db, clock = { 42_000L })
         assertEquals(null, clockedDao.lastFetchedAtMillis())
+    }
+
+    // Task 6 (Plan 3): Insights' three read-only aggregates -----------------------------------
+
+    @Test fun `quakesPerDay groups by day bucket and counts, ordered ascending`() {
+        val day0 = 0L
+        val day1 = 86_400_000L
+        dao.upsertAll(listOf(
+            quake(id = "a", updated = 1).copy(timeMillis = day0 + 1_000),
+            quake(id = "b", updated = 1).copy(timeMillis = day0 + 2_000),
+            quake(id = "c", updated = 1).copy(timeMillis = day1 + 500),
+        ))
+        assertEquals(listOf(DayCount(0L, 2L), DayCount(1L, 1L)), dao.quakesPerDay(sinceMillis = 0L))
+    }
+
+    @Test fun `quakesPerDay excludes rows before sinceMillis`() {
+        dao.upsertAll(listOf(
+            quake(id = "old", updated = 1).copy(timeMillis = 500),
+            quake(id = "new", updated = 1).copy(timeMillis = 100_000_000),
+        ))
+        assertEquals(listOf(DayCount(100_000_000L / 86_400_000L, 1L)), dao.quakesPerDay(sinceMillis = 1_000_000))
+    }
+
+    @Test fun `quakesPerDay on an empty db returns no buckets at all, not zeros`() {
+        assertEquals(emptyList(), dao.quakesPerDay(sinceMillis = 0L))
+    }
+
+    @Test fun `day bucket boundary — one ms before the next day still buckets to the earlier day`() {
+        dao.upsertAll(listOf(
+            quake(id = "just-before", updated = 1).copy(timeMillis = 86_400_000L - 1),
+            quake(id = "exactly-at", updated = 1).copy(timeMillis = 86_400_000L),
+        ))
+        val byBucket = dao.quakesPerDay(sinceMillis = 0L).associate { it.dayBucket to it.n }
+        assertEquals(1L, byBucket[0L])
+        assertEquals(1L, byBucket[1L])
+    }
+
+    @Test fun `bandDistribution buckets by the magnitudeBand edges — AT 4point5 is STRONG, AT 6point0 is MAJOR`() {
+        // Edges independently cross-checked against model/MagnitudeBand.kt's own magnitudeBand()
+        // before writing this test (EVIDENCE INTEGRITY) — mag < 3.0 LOW, < 4.5 MODERATE, < 6.0
+        // STRONG, else MAJOR; null -> UNKNOWN. The two boundary values (4.5, 6.0) are asserted
+        // landing in the HIGHER band, matching that function's own `<` (not `<=`) comparisons.
+        dao.upsertAll(listOf(
+            quake(id = "low", updated = 1, mag = 2.9),
+            quake(id = "mod", updated = 1, mag = 4.4),
+            quake(id = "edge-4-5", updated = 1, mag = 4.5),
+            quake(id = "strong", updated = 1, mag = 5.9),
+            quake(id = "edge-6-0", updated = 1, mag = 6.0),
+            quake(id = "major", updated = 1, mag = 9.0),
+            quake(id = "unknown", updated = 1, mag = null),
+        ).map { it.copy(timeMillis = 1_000) })
+        val bands = dao.bandDistribution(sinceMillis = 0L).associate { it.band to it.n }
+        assertEquals(1L, bands[MagnitudeBand.LOW])
+        assertEquals(1L, bands[MagnitudeBand.MODERATE])
+        assertEquals(2L, bands[MagnitudeBand.STRONG], "4.5 (edge) + 5.9 (strong)")
+        assertEquals(2L, bands[MagnitudeBand.MAJOR], "6.0 (edge) + 9.0 (major)")
+        assertEquals(1L, bands[MagnitudeBand.UNKNOWN])
+    }
+
+    @Test fun `bandDistribution excludes rows before sinceMillis`() {
+        dao.upsertAll(listOf(
+            quake(id = "old", updated = 1, mag = 9.0).copy(timeMillis = 500),
+            quake(id = "new", updated = 1, mag = 2.0).copy(timeMillis = 100_000_000),
+        ))
+        val bands = dao.bandDistribution(sinceMillis = 1_000_000)
+        assertEquals(listOf(BandCount(MagnitudeBand.LOW, 1L)), bands)
+    }
+
+    @Test fun `bandDistribution on an empty db returns no bands at all, not zeros`() {
+        assertEquals(emptyList(), dao.bandDistribution(sinceMillis = 0L))
+    }
+
+    @Test fun `strongest returns the highest-magnitude quake in window, ignoring null-mag rows`() {
+        dao.upsertAll(listOf(
+            quake(id = "a", updated = 1, mag = 5.0).copy(timeMillis = 1_000),
+            quake(id = "b", updated = 1, mag = 7.2).copy(timeMillis = 2_000),
+            quake(id = "null-mag", updated = 1, mag = null).copy(timeMillis = 3_000),
+        ))
+        assertEquals("b", dao.strongest(sinceMillis = 0L)?.id)
+    }
+
+    @Test fun `strongest excludes quakes before sinceMillis`() {
+        dao.upsertAll(listOf(
+            quake(id = "old-big", updated = 1, mag = 9.0).copy(timeMillis = 500),
+            quake(id = "new-small", updated = 1, mag = 4.0).copy(timeMillis = 100_000_000),
+        ))
+        assertEquals("new-small", dao.strongest(sinceMillis = 1_000_000)?.id)
+    }
+
+    @Test fun `strongest on an empty db returns null`() {
+        assertEquals(null, dao.strongest(sinceMillis = 0L))
     }
 }

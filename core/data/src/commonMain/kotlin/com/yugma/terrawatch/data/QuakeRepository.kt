@@ -1,5 +1,7 @@
 package com.yugma.terrawatch.data
 
+import com.yugma.terrawatch.database.BandCount
+import com.yugma.terrawatch.database.DayCount
 import com.yugma.terrawatch.database.QuakeDao
 import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.model.Quake
@@ -185,6 +187,22 @@ class QuakeRepository(
     suspend fun setHistoryCursor(filterKey: String, cursorMillis: Long) {
         withContext(ioDispatcher) { dao.metaPut("history_cursor_$filterKey", cursorMillis.toString()) }
     }
+
+    /**
+     * Task 6 (Plan 3): Insights' three read-only aggregates — thin suspend + [ioDispatcher]
+     * pass-throughs over [QuakeDao], same shape as [pageBefore]/[byId] above. `InsightsViewModel`
+     * (composeApp) is constructor-limited to this repository alone, never [QuakeDao] directly —
+     * same "the repository is the one seam a screen ViewModel needs" discipline [HistoryPager]'s
+     * own kdoc documents for [pageBefore]/[historyCursor].
+     */
+    suspend fun quakesPerDay(sinceMillis: Long): List<DayCount> =
+        withContext(ioDispatcher) { dao.quakesPerDay(sinceMillis) }
+
+    suspend fun bandDistribution(sinceMillis: Long): List<BandCount> =
+        withContext(ioDispatcher) { dao.bandDistribution(sinceMillis) }
+
+    suspend fun strongest(sinceMillis: Long): Quake? =
+        withContext(ioDispatcher) { dao.strongest(sinceMillis) }
 
     suspend fun ingest(
         incoming: Quake,

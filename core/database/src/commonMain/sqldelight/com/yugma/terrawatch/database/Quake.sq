@@ -58,3 +58,20 @@ INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?);
 
 lastFetchedAt:
 SELECT MAX(fetchedAtMillis) FROM quake;
+
+-- Task 6 (Plan 3): Insights' three aggregates. All three share the same `WHERE timeMillis >=
+-- :sinceMillis` window-clip — the caller (QuakeDao) always passes the period's own start-of-day
+-- millis, never a raw "now minus N millis" cutoff, so results align exactly on calendar-day
+-- boundaries (see QuakeDao.quakesPerDay's own kdoc).
+quakesPerDay:
+SELECT (timeMillis / 86400000) AS dayBucket, COUNT(*) AS n FROM quake WHERE timeMillis >= :sinceMillis GROUP BY dayBucket ORDER BY dayBucket;
+
+-- Band edges match model/MagnitudeBand.kt's magnitudeBand() exactly (< 3.0 / < 4.5 / < 6.0) —
+-- single source of truth for the edges is that Kotlin function; this CASE is the SQL-side mirror
+-- of it, not an independent redefinition (QuakeDaoTest pins the two boundary values, 4.5 and 6.0,
+-- directly against this query so the two can't silently drift apart).
+bandDistribution:
+SELECT CASE WHEN mag IS NULL THEN 'UNKNOWN' WHEN mag < 3.0 THEN 'LOW' WHEN mag < 4.5 THEN 'MODERATE' WHEN mag < 6.0 THEN 'STRONG' ELSE 'MAJOR' END AS band, COUNT(*) AS n FROM quake WHERE timeMillis >= :sinceMillis GROUP BY band;
+
+strongest:
+SELECT * FROM quake WHERE timeMillis >= :sinceMillis AND mag IS NOT NULL ORDER BY mag DESC LIMIT 1;

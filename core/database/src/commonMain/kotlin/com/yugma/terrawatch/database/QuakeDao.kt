@@ -3,6 +3,7 @@ package com.yugma.terrawatch.database
 import app.cash.sqldelight.coroutines.asFlow
 import app.cash.sqldelight.coroutines.mapToList
 import com.yugma.terrawatch.model.MagRevision
+import com.yugma.terrawatch.model.MagnitudeBand
 import com.yugma.terrawatch.model.Quake as DomainQuake
 import com.yugma.terrawatch.model.QuakeStatus
 import com.yugma.terrawatch.model.Source
@@ -17,6 +18,23 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 private data class RevisionJson(val mag: Double, val magType: String?, val atMillis: Long, val source: String)
+
+/** One [QuakeDao.quakesPerDay] row — `dayBucket` is `timeMillis / 86_400_000` (UTC epoch-day
+ * index, matching the SQL projection verbatim), `n` the count of quakes whose `timeMillis` falls
+ * in that bucket. Never carries a zero-count bucket itself (SQL `GROUP BY` only ever returns
+ * buckets that actually have at least one row) — `com.yugma.terrawatch.insights.fillDayGaps`
+ * (composeApp) is what turns this sparse list into a dense, gap-filled one for the chart. */
+data class DayCount(val dayBucket: Long, val n: Long)
+
+/** One [QuakeDao.bandDistribution] row. [band] is mapped defensively from the SQL query's raw
+ * string column via [bandFromLabel] — an unrecognized label (should never happen: the CASE
+ * expression's own branches are the only five strings [MagnitudeBand] has) degrades to
+ * [MagnitudeBand.UNKNOWN] rather than throwing, same "never crash on a data-shape surprise"
+ * posture [DedupeEngine]/[QuakeRepository] take elsewhere in this codebase. */
+data class BandCount(val band: MagnitudeBand, val n: Long)
+
+private fun bandFromLabel(label: String?): MagnitudeBand =
+    MagnitudeBand.entries.firstOrNull { it.name == label } ?: MagnitudeBand.UNKNOWN
 
 class QuakeDao(private val db: TerraWatchDb, private val clock: () -> Long = { 0L }) {
     private val json = Json
@@ -56,6 +74,37 @@ class QuakeDao(private val db: TerraWatchDb, private val clock: () -> Long = { 0
     fun countAll(): Long = db.quakeQueries.countAll().executeAsOne()
 
     fun lastFetchedAtMillis(): Long? = db.quakeQueries.lastFetchedAt().executeAsOneOrNull()?.MAX
+
+    /**
+     * Task 6 (Plan 3): Insights' "quakes per day" bar chart source — one [DayCount] per calendar
+     * day (UTC epoch-day bucket) that has at least one quake with `timeMillis >= [sinceMillis]`,
+     * ascending by bucket. Sparse by construction (a zero-quake day contributes no row at all,
+     * per SQL `GROUP BY` semantics) — see [DayCount]'s own kdoc for who fills the gaps.
+     */
+    fun quakesPerDay(sinceMillis: Long): List<DayCount> =
+        db.quakeQueries.quakesPerDay(sinceMillis).executeAsList().map { DayCount(it.dayBucket, it.n) }
+
+    /**
+     * Task 6 (Plan 3): Insights' "by magnitude" distribution — one [BandCount] per [MagnitudeBand]
+     * that has at least one quake with `timeMillis >= [sinceMillis]` (also sparse, same reasoning
+     * as [quakesPerDay] — a band with zero matches in-window contributes no row).
+     */
+    fun bandDistribution(sinceMillis: Long): List<BandCount> =
+        db.quakeQueries.bandDistribution(sinceMillis).executeAsList().map { BandCount(bandFromLabel(it.band), it.n) }
+
+    /**
+     * Task 6 (Plan 3): Insights' "strongest this period" card — the single highest-magnitude quake
+     * with `timeMillis >= [sinceMillis]`, or null when the window has no quake with a known
+     * magnitude (empty window entirely, or every row in it has `mag IS NULL`).
+     *
+     * Maps via [Strongest.toDomain], NOT [Quake.toDomain] — SQLDelight generates a distinct
+     * `Strongest` row class (not the table's own `Quake` row type) for this query, because the
+     * `AND mag IS NOT NULL` predicate lets it narrow `mag`'s column type to non-null `Double`
+     * (vs. `Quake.mag: Double?`); the two mapping extensions below share [rowToDomain] rather
+     * than duplicating the field-by-field construction twice.
+     */
+    fun strongest(sinceMillis: Long): DomainQuake? =
+        db.quakeQueries.strongest(sinceMillis).executeAsOneOrNull()?.toDomain()
 
     fun delete(id: String) = db.quakeQueries.delete(id)
 
@@ -117,7 +166,18 @@ class QuakeDao(private val db: TerraWatchDb, private val clock: () -> Long = { 0
         fetchedAtMillis = clock(),
     )
 
-    private fun Quake.toDomain() = DomainQuake(
+    /**
+     * The one real mapping from a generated SQLDelight row's raw columns to [DomainQuake] — both
+     * [Quake.toDomain] (the table's own row shape) and [Strongest.toDomain] (Task 6, Plan 3 — a
+     * query-specific narrowed shape, see [strongest]'s own kdoc) delegate here instead of each
+     * repeating this field-by-field construction independently, which would risk the two silently
+     * drifting apart on some future field addition.
+     */
+    private fun rowToDomain(
+        id: String, timeMillis: Long, lat: Double, lon: Double, depthKm: Double?,
+        mag: Double?, magType: String?, place: String, tsunami: Long, felt: Long?,
+        status: String, sourcesJson: String, revisionsJson: String, updatedAtMillis: Long,
+    ) = DomainQuake(
         id = id, timeMillis = timeMillis, lat = lat, lon = lon, depthKm = depthKm,
         mag = mag, magType = magType, place = place, tsunami = tsunami == 1L,
         felt = felt?.toInt(), status = QuakeStatus.valueOf(status),
@@ -127,5 +187,15 @@ class QuakeDao(private val db: TerraWatchDb, private val clock: () -> Long = { 0
         revisions = json.decodeFromString(ListSerializer(RevisionJson.serializer()), revisionsJson)
             .map { MagRevision(it.mag, it.magType, it.atMillis, Source.valueOf(it.source)) },
         updatedAtMillis = updatedAtMillis,
+    )
+
+    private fun Quake.toDomain() = rowToDomain(
+        id, timeMillis, lat, lon, depthKm, mag, magType, place, tsunami, felt,
+        status, sourcesJson, revisionsJson, updatedAtMillis,
+    )
+
+    private fun Strongest.toDomain() = rowToDomain(
+        id, timeMillis, lat, lon, depthKm, mag, magType, place, tsunami, felt,
+        status, sourcesJson, revisionsJson, updatedAtMillis,
     )
 }

@@ -8,6 +8,7 @@ import com.yugma.terrawatch.database.QuakeDao
 import com.yugma.terrawatch.history.HistoryViewModel
 import com.yugma.terrawatch.home.HomeViewModel
 import com.yugma.terrawatch.home.QuakeSelectionViewModel
+import com.yugma.terrawatch.insights.InsightsViewModel
 import com.yugma.terrawatch.location.LocationProvider
 import com.yugma.terrawatch.location.LocationRequester
 import com.yugma.terrawatch.network.EmscLiveSource
@@ -80,4 +81,9 @@ fun appModule(http: HttpClient, dao: QuakeDao, locationProvider: LocationProvide
     // QuakeSelectionViewModel are), since nothing else in this graph needs to share it; Compose
     // Navigation scopes that call to the "history" route's own NavBackStackEntry automatically.
     viewModel { HistoryViewModel(get(), get()) }
+    // Task 6 (Plan 3): Insights' own tab-scoped ViewModel — same "resolved via the screen's own
+    // defaulted koinViewModel() param" shape as HistoryViewModel just above. `clock` mirrors
+    // HistoryPager's own injected seam two lines up (real wall-clock at the platform boundary,
+    // fully substitutable in tests).
+    viewModel { InsightsViewModel(get(), clock = { Clock.System.now().toEpochMilliseconds() }) }
 }

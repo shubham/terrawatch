@@ -36,6 +36,7 @@ import com.yugma.terrawatch.home.HomeViewModel
 import com.yugma.terrawatch.home.LayoutMode
 import com.yugma.terrawatch.home.QuakeSelectionViewModel
 import com.yugma.terrawatch.home.layoutMode
+import com.yugma.terrawatch.insights.InsightsScreen
 import org.koin.compose.koinInject
 
 /**
@@ -217,11 +218,10 @@ private fun AppNavHost(
                 onSettingsClick = { navController.navigate(Routes.SETTINGS) },
             )
         }
-        // Insights/Settings: placeholder screens THIS task -- Tasks 6/7 replace these two
-        // composable() bodies with their own new InsightsScreen/SettingsScreen (own files, own
-        // ViewModels). The four-states rule (Loading/Content/Empty/Error) explicitly does NOT
-        // apply to these placeholders -- there's no state to be in yet, just a name and which task
-        // owns filling it in.
+        // Settings: placeholder screen THIS task -- Task 7 replaces this composable() body with
+        // its own new SettingsScreen (own file, own ViewModel). The four-states rule
+        // (Loading/Content/Empty/Error) explicitly does NOT apply to this placeholder -- there's
+        // no state to be in yet, just a name and which task owns filling it in.
         //
         // Task 5 (Plan 3): History's own real HistoryViewModel is resolved INSIDE HistoryScreen's
         // own defaulted `= koinViewModel()` parameter (same shape HomeScreen's own
@@ -233,7 +233,10 @@ private fun AppNavHost(
         // be the SAME Activity-scoped instance Home shares, never a second nav-back-stack-entry-
         // scoped one (see HistoryScreen's own kdoc).
         composable(Routes.HISTORY) { HistoryScreen(selectionViewModel = selectionViewModel) }
-        composable(Routes.INSIGHTS) { PlaceholderScreen("Insights — Task 6") }
+        // Task 6 (Plan 3): same shape as HISTORY above -- InsightsViewModel resolves via
+        // InsightsScreen's own defaulted `= koinViewModel()` param, selectionViewModel threaded
+        // through explicitly so a STRONGEST-card tap opens the same shared detail sheet.
+        composable(Routes.INSIGHTS) { InsightsScreen(selectionViewModel = selectionViewModel) }
         composable(Routes.SETTINGS) { PlaceholderScreen("Settings — Task 7") }
         composable(Routes.ONBOARDING) {
             OnboardingPlaceholder(
