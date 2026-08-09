@@ -4,10 +4,10 @@ Carried out of Plan 1's final whole-branch review (branch `feat/plan-1-foundatio
 
 ## Must fix early in Plan 2
 
-1. **Dispatch ingest off the main thread** — `QuakeDao` is blocking; `FeedViewModel.init` currently runs `refreshFeed()` (~300-400 sequential SQLite transactions on a cold `all_day` ingest) and every WebSocket event write on `Dispatchers.Main`. Fix before building the real Home screen: `withContext(Dispatchers.Default)` around ingest paths or suspend-ify the DAO. (Plan 1's throwaway slice tolerated dropped frames; a map-first Home will not.)
-2. **Serialize `ingest()`** — the window-query → reconcile → write sequence is not atomic across coroutines; only the final write is transactional. Becomes first-class the moment the 60s poll timer runs beside the WS collector. One-line fix: `Mutex.withLock` in `ingest()`. Must land with or before the poll loop.
-3. **ViewModel lifecycle** — `FeedViewModel` is obtained via bare `koin.get()` outside any `ViewModelStore`; rotation re-creates it and leaks the previous WS collector. Plan 2 replaces the screen: wire `viewmodel-compose` (or koin-compose) properly. Also: `MainActivity` constructs `QuakeDao` + `HttpClient` before the Koin re-start guard — move construction inside it.
-4. **`fetchedAtMillis` is a lie** — it's written as `updatedAtMillis` (upstream stamp), not local clock. No Plan 1 reader exists. Any staleness logic ("updated 23 min ago" chip) must first wire a real clock into `QuakeDao.toRow()`.
+1. ✅ **Dispatch ingest off the main thread** (1de321c) — `QuakeDao` is blocking; `FeedViewModel.init` currently runs `refreshFeed()` (~300-400 sequential SQLite transactions on a cold `all_day` ingest) and every WebSocket event write on `Dispatchers.Main`. Fix before building the real Home screen: `withContext(Dispatchers.Default)` around ingest paths or suspend-ify the DAO. (Plan 1's throwaway slice tolerated dropped frames; a map-first Home will not.)
+2. ✅ **Serialize `ingest()`** (1de321c) — the window-query → reconcile → write sequence is not atomic across coroutines; only the final write is transactional. Becomes first-class the moment the 60s poll timer runs beside the WS collector. One-line fix: `Mutex.withLock` in `ingest()`. Must land with or before the poll loop.
+3. ✅ **ViewModel lifecycle** (81db63e) — `FeedViewModel` is obtained via bare `koin.get()` outside any `ViewModelStore`; rotation re-creates it and leaks the previous WS collector. Plan 2 replaces the screen: wire `viewmodel-compose` (or koin-compose) properly. Also: `MainActivity` constructs `QuakeDao` + `HttpClient` before the Koin re-start guard — move construction inside it.
+4. ✅ **`fetchedAtMillis` is a lie** (a40e87e) — it's written as `updatedAtMillis` (upstream stamp), not local clock. No Plan 1 reader exists. Any staleness logic ("updated 23 min ago" chip) must first wire a real clock into `QuakeDao.toRow()`.
 
 ## Fix when touching the area
 

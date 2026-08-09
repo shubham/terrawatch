@@ -10,9 +10,17 @@ Data: USGS realtime feeds + FDSN archive, EMSC WebSocket live stream. Free APIs,
 - Web: `./gradlew :composeApp:wasmJsBrowserDevelopmentRun`
 
 ## Test
-`./gradlew :core:model:jvmTest :core:network:jvmTest :core:database:jvmTest :core:data:jvmTest :composeApp:jvmTest`
+`./gradlew :core:model:jvmTest :core:network:jvmTest :core:database:jvmTest :core:data:jvmTest :core:ui:jvmTest :composeApp:jvmTest`
 
 Note: corporate TLS-intercepting proxies require the proxy root CA in the JVM truststore for live-data runs; tests use recorded fixtures and MockEngine — no network needed.
+
+## Screenshots
+
+| Map · Pins | Sheet · Expanded | Detail · Real Quake |
+|---|---|---|
+| ![Cold launch: live map with magnitude-banded pins and clustering](docs/qa/plan-2-device-matrix/cold-launch-map-pins.png) | ![Feed sheet expanded showing recent quakes with status pill](docs/qa/plan-2-device-matrix/sheet-expanded.png) | ![Detail sheet for real USGS quake with revision honesty](docs/qa/plan-2-device-matrix/detail-sheet-real-quake.png) |
+
+**Features:** Live map with magnitude-banded pins + clustering. Live EMSC WebSocket + USGS polling with deduplication. Status pill showing connection state. Feed sheet with recent events. Detail sheet with revision history. Dark mode support. Offline cache. Adaptive desktop two-pane layout. Web wasm placeholder.
 
 ## Live data behind corporate proxies
 
