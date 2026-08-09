@@ -133,6 +133,36 @@ class QuakeSelectionViewModelTest {
         }
     }
 
+    // Task 4 (Plan 3) -- Task 3 ledger minor ("select() never clears handle key on null lookup --
+    // dedupe-deleted id sticks and re-fails every restore"): select() used to write the handle key
+    // BEFORE the repository lookup resolved and never revisited it once that lookup came back
+    // null, so an id that no longer resolves (aged out, or dedupe-superseded since whatever tap
+    // produced it) stuck in the handle forever -- every future process-death relaunch's init{}
+    // restore (below) would re-attempt that exact same doomed select() call again, permanently.
+    // Asserted directly against the handle (not just selectedQuake, which the pre-fix code already
+    // got right) for the same reason `select writes the id...` above does: a bug that left
+    // selectedQuake correct while leaving the handle stale would still pass every other test here.
+    //
+    // Red (pre-fix): the final assertNull(handle...) fails -- handle still holds "does-not-exist".
+    @Test fun `select clears the handle key when a later id does not resolve`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val repository = freshRepository()
+        repository.ingest(freshQuake("us1234"))
+        val handle = SavedStateHandle()
+        val vm = createVm(repository, handle)
+        vm.selectedQuake.test {
+            assertEquals(null, awaitItem())
+            vm.select("us1234")
+            assertEquals("us1234", awaitItem()?.id)
+            assertEquals("us1234", handle.get<String>("selected_id"))
+
+            vm.select("does-not-exist")
+            assertEquals(null, awaitItem())
+            assertNull(handle.get<String>("selected_id"))
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
     // The task's headline new behavior: a SavedStateHandle carrying a previously-selected id (the
     // shape Android hands back after process death + a system-initiated relaunch restores the
     // same handle) must re-populate selectedQuake from the repository during init, with no

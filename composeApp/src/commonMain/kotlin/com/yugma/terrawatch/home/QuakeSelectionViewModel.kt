@@ -104,12 +104,26 @@ class QuakeSelectionViewModel(
      * BEFORE launching the repository read — a plain synchronous write, so it lands even if the
      * process dies mid-flight on the [QuakeRepository.byId] suspension that follows, which is
      * exactly the case this key exists to survive.
+     *
+     * Task 4 (Plan 3) — Task 3 ledger minor ("select() never clears handle key on null lookup —
+     * dedupe-deleted id sticks and re-fails every restore"): the write above happens before the
+     * lookup resolves (deliberately — see the paragraph above), so if [id] turns out not to
+     * resolve to anything (aged out, or superseded by a later dedupe merge under a different id
+     * since whatever tap produced this call), the handle is left holding a dead id afterward
+     * unless something walks it back. Without this, [init]'s restore-on-relaunch would keep
+     * re-running this exact same doomed [select] call on every future process death, forever,
+     * for a selection that can never come back — graceful (no crash — see [init]'s own kdoc: an
+     * unresolved id already settles on null same as no selection) but permanently, silently
+     * wrong. Clearing the key on a null result converges to the exact same "nothing persisted"
+     * state [dismissSelection] already produces for a live dismiss.
      */
     fun select(id: String) {
         selectJob?.cancel()
         savedStateHandle[SELECTED_ID_KEY] = id
         selectJob = viewModelScope.launch {
-            _selectedQuake.value = repository.byId(id)
+            val quake = repository.byId(id)
+            _selectedQuake.value = quake
+            if (quake == null) savedStateHandle.remove<String>(SELECTED_ID_KEY)
         }
     }
 

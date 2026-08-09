@@ -1,5 +1,6 @@
 package com.yugma.terrawatch.home
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -36,6 +38,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.yugma.terrawatch.data.PillStatus
@@ -94,6 +102,18 @@ private const val SHEET_PEEK_FRACTION = 0.3f
 // stops seeing something flagged "new."
 private const val NEW_QUAKE_HIGHLIGHT_EXPIRY_MILLIS = 2_500L
 
+// Task 4 (Plan 3), device-verified fix (not a design guess): the settings gear chip
+// (SettingsGearChip below) floats at Alignment.TopEnd with the SAME windowInsetsPadding(
+// statusBars) + 16dp margin the pill/banner column below also starts from — device screenshot
+// task4-onboarding-then-home.png (pre-fix capture, see task-4-report.md) showed the chip
+// rendering directly on top of the pill's own right edge, because the pill's `fillMaxWidth()`
+// modifier claims the FULL row the chip also occupies. This reserves exactly the chip's own
+// footprint (16dp outer margin + 2*10dp inner padding + 24dp glyph = 60dp, +12dp breathing room)
+// on the pill's end side ONLY -- not the banner below it, which by the time it renders is already
+// below the chip's vertical extent and never collided with it. Both PhoneLayout's and
+// TwoPaneLayout's own StatusShield call sites apply this.
+private val GEAR_CHIP_CLEARANCE = 72.dp
+
 // Task 12: the desktop/tablet two-pane right panel's fixed width — see layoutMode()'s own kdoc for
 // the paired 900dp breakpoint this is designed against (panel + a still-usable map pane needs the
 // headroom that breakpoint leaves).
@@ -143,10 +163,19 @@ private val TWO_PANE_RIGHT_PANEL_WIDTH = 360.dp
  * avoids `startKoin {}` entirely) and which Task 4's "selection VM shared at nav-graph scope"
  * plan explicitly needs too (the NavHost will pass its own nav-graph-scoped instance in here
  * instead of letting this default fire).
+ *
+ * Task 4 (Plan 3): [onSettingsClick] backs the gear chip floating top-right of the whole screen
+ * (both layouts) — a defaulted no-op, not a required param, so `HomeFlowTest`/`ComponentsTest`
+ * keep compiling unchanged against their existing 2-arg call sites. `AppNav`'s real call site
+ * overrides it to `navController.navigate(Routes.SETTINGS)`.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(viewModel: HomeViewModel, selectionViewModel: QuakeSelectionViewModel = koinViewModel()) {
+fun HomeScreen(
+    viewModel: HomeViewModel,
+    selectionViewModel: QuakeSelectionViewModel = koinViewModel(),
+    onSettingsClick: () -> Unit = {},
+) {
     val state by viewModel.state.collectAsState()
     val homeLocation by viewModel.homeLocation.collectAsState()
     val newSinceExpand by viewModel.newSinceExpand.collectAsState()
@@ -196,6 +225,20 @@ fun HomeScreen(viewModel: HomeViewModel, selectionViewModel: QuakeSelectionViewM
                 onAskLocation = { showLocationAsk = true },
             )
         }
+        // Task 4 (Plan 3): the settings entry point — a glass chip floating top-right, above
+        // whichever layout is active (same "always on top, regardless of PHONE/TWO_PANE" shape as
+        // the detail sheet/location-ask overlays below). Device-verified fix: this sits at the
+        // exact same vertical band as the pill below (both start at windowInsetsPadding(statusBars)
+        // + 16dp), so PhoneLayout/TwoPaneLayout's own StatusShield call sites reserve
+        // GEAR_CHIP_CLEARANCE on their end side — see that constant's own kdoc for the device
+        // screenshot that caught the un-reserved overlap.
+        SettingsGearChip(
+            onClick = onSettingsClick,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .windowInsetsPadding(WindowInsets.statusBars)
+                .padding(16.dp),
+        )
         // Task 11: the quake detail sheet — a second, independent, on-demand ModalBottomSheet
         // layered above everything else in this BoxWithConstraints (whichever of PhoneLayout's
         // BottomSheetScaffold or TwoPaneLayout's Row is active), matching the mockup's "detail
@@ -308,7 +351,7 @@ private fun PhoneLayout(
                             status = pill,
                             nowMillis = nowMillis,
                             onClick = { onPillClick(pill, selectionViewModel, onAskLocation) },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().padding(end = GEAR_CHIP_CLEARANCE),
                         )
                         // Banner moves below the pill when both are showing (Task 9 brief:
                         // "above banner if both — banner moves below pill").
@@ -399,7 +442,7 @@ private fun TwoPaneLayout(
                         status = pill,
                         nowMillis = nowMillis,
                         onClick = { onPillClick(pill, selectionViewModel, onAskLocation) },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().padding(end = GEAR_CHIP_CLEARANCE),
                     )
                     if (state.refreshFailed || isStale(state.lastUpdatedMillis, nowMillis)) {
                         Spacer(Modifier.height(8.dp))
@@ -548,6 +591,68 @@ private fun StalenessBanner(
                     Text("Retry")
                 }
             }
+        }
+    }
+}
+
+/**
+ * Task 4 (Plan 3): the gear chip that opens Settings (`AppNav`'s `Routes.SETTINGS`) — same glass
+ * treatment (translucent [Surface] + tonal/shadow elevation) as [StatusShield]/[StalenessBanner]
+ * above, per the glass allow-list. `contentDescription` is set explicitly rather than left for
+ * Task 10's broader a11y sweep to backfill: an entirely unlabeled tappable icon is an easy-to-avoid
+ * gap this task would otherwise be introducing fresh, not a pre-existing one Task 10 is already
+ * scheduled to fix.
+ */
+@Composable
+private fun SettingsGearChip(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier.semantics { contentDescription = "Settings" },
+        shape = RoundedCornerShape(TerraRadii.pill),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
+        tonalElevation = 4.dp,
+        shadowElevation = 2.dp,
+    ) {
+        SettingsGlyph(
+            tint = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(10.dp).size(24.dp),
+        )
+    }
+}
+
+/**
+ * A "sliders/equalizer" settings glyph (three horizontal tracks, each with one offset knob) drawn
+ * on [Canvas] — same "no icon-library dependency in this project" reasoning as `nav/NavIcons.kt`'s
+ * tab icons and core:ui's `StatusShield` glyphs. Picked over a literal gear/cog silhouette: a
+ * recognizable gear needs teeth around its rim, which is a much fussier path to hand-draw reliably
+ * at 24dp than three lines + three circles, and the sliders/equalizer glyph is just as widely
+ * recognized for "Settings" in production apps.
+ */
+@Composable
+private fun SettingsGlyph(tint: Color, modifier: Modifier = Modifier) {
+    // Read here, not inside the Canvas draw lambda below: DrawScope is not a @Composable context,
+    // so MaterialTheme.colorScheme can't be read from inside it directly.
+    val knobFill = MaterialTheme.colorScheme.surface
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val trackWidth = w * 0.09f
+        val knobRadius = w * 0.15f
+        val rows = listOf(size.height * 0.24f to w * 0.32f, size.height * 0.5f to w * 0.65f, size.height * 0.76f to w * 0.44f)
+        rows.forEach { (y, knobX) ->
+            drawLine(
+                color = tint,
+                start = Offset(w * 0.12f, y),
+                end = Offset(w * 0.88f, y),
+                strokeWidth = trackWidth,
+                cap = StrokeCap.Round,
+            )
+            drawCircle(color = knobFill, radius = knobRadius, center = Offset(knobX, y))
+            drawCircle(
+                color = tint,
+                radius = knobRadius,
+                center = Offset(knobX, y),
+                style = Stroke(width = w * 0.05f),
+            )
         }
     }
 }

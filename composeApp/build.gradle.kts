@@ -32,6 +32,10 @@ kotlin {
             implementation(libs.koin.compose.viewmodel)
             implementation(libs.androidx.lifecycle.viewmodel)
             implementation(libs.kotlinx.coroutines.core)
+            // Task 4 (Plan 3): nav/AppNav.kt's NavHost + bottom NavigationBar/NavigationRail
+            // tab-switching. See libs.versions.toml's navigationCompose entry for the version
+            // choice (2.9.2, latest stable) and the wasmJs-target verification.
+            implementation(libs.navigation.compose)
             // AppModule.kt references HttpClient directly (engine-agnostic type) in commonMain,
             // which compiles for wasmJs too — core:network only exposes ktor-client-core as
             // `implementation`, so it doesn't leak through projects.core.network transitively.

@@ -1,6 +1,7 @@
 package com.yugma.terrawatch.di
 
 import com.yugma.terrawatch.data.HomeLocationStore
+import com.yugma.terrawatch.data.OnboardingStore
 import com.yugma.terrawatch.data.QuakeRepository
 import com.yugma.terrawatch.database.QuakeDao
 import com.yugma.terrawatch.home.HomeViewModel
@@ -30,6 +31,11 @@ fun appModule(http: HttpClient, dao: QuakeDao, locationProvider: LocationProvide
     single { dao }
     single { QuakeRepository(get(), get(), get(), clock = { Clock.System.now().toEpochMilliseconds() }) }
     single { HomeLocationStore(get()) }
+    // Task 4 (Plan 3): resolved via koinInject<OnboardingStore>() at AppNav's composition root
+    // (same non-ViewModel "plain single, plain koinInject()" shape LocationAskDialog.kt already
+    // uses for HomeLocationStore/LocationRequester) rather than through any ViewModel constructor
+    // — nothing else in this graph needs it.
+    single { OnboardingStore(get()) }
     single { locationProvider }
     // Task 2 (Plan 3): unlike locationProvider above (built at each platform's entry point and
     // handed in, since android's actual needs a Context the shared expect signature can't carry),
