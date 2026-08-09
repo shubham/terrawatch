@@ -82,6 +82,12 @@ TDD aggregates against seeded in-memory db (exact counts, band edges 4.5/6.0, em
 
 **Files:** New `composeApp/.../settings/SettingsViewModel.kt` + `SettingsScreen.kt`; alert-rule editor writes meta ("rule_minmag","rule_radiuskm" — AlertRuleEngine consumers read via a TDD'd `AlertRuleStore` in core:data mirroring HomeLocationStore pattern; DEFAULT_RULES used when unset); saved place row (shows current home, tap → CityPicker/location flow from Task 2); theme selector (System/Light/Dusk → meta "theme"; App() reads via a `ThemeStore` flow → TerraTheme(darkTheme=resolved)); About section (version, data sources "USGS · EMSC", "© OpenStreetMap contributors" attribution line, licenses note).
 
+**USER REQUIREMENT (2026-08-09, binding):** the "nearby" radius is user-settable and DEFAULTS TO 100 km (was hardcoded 500 km). Concretely:
+- `AlertRuleStore` exposes `nearbyRadiusKm: Flow<Double>` (meta "rule_radiuskm", default **100.0**) + `setNearbyRadius(km)`; slider in Settings: 50–1000 km, steps at 50/100/250/500/1000, live label "Nearby means within N km".
+- `pillStatus` call sites consume the stored radius (parameter already exists — wire the flow through HomeViewModel; TDD: radius change flips pill CALM⇄ALERT for a quake at 150 km).
+- **Map home-radius ring:** when home is set, draw a subtle ring (Safe-green, 1.5dp stroke, ~25% alpha fill) of the configured radius around home — android: maplibre circle/fill layer sized in meters (radius km × 1000; check the spike's API for a meters-radius circle — CircleLayer radius is px: use a GeoJSON polygon circle [64-point ring generated from haversine offsets — pure fn, TDD] instead); FallbackMapPane: Canvas circle via projection. Ring updates live when the slider changes (device proof: slider 100→500 → ring visibly grows, screenshot pair).
+- AlertRule "near" default radius likewise 100.0 via the store (DEFAULT_RULES stays as compile-time fallback but store-fed rules override — one source of truth: the store).
+
 Settings reached via gear icon on Home (top-right, glass chip) + nav route. TDD stores round-trips + rule fallback to defaults. Device: change rule → verify meta via debug query; theme flip live screenshot ×3 (system/light/dusk); about renders.
 
 ### Task 8: Onboarding (first-run)
