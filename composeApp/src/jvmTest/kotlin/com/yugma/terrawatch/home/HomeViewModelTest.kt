@@ -231,6 +231,36 @@ class HomeViewModelTest {
         }
     }
 
+    // Task 12 review, Fix 1: HomeScreen.kt's TwoPaneLayout now calls markSheetExpanded() from a
+    // `LaunchedEffect(state)` that re-fires on every single content update for as long as the
+    // two-pane panel is composed — not a one-shot call. That composition-level fix is only safe if
+    // markSheetExpanded() reliably zeroes the counter every time it's invoked, no matter how many
+    // prior increment/reset cycles came before it; this proves a SECOND arrival+reset cycle behaves
+    // identically to the first; the existing test above only ever proved one.
+    //
+    // "new2" uses a timeMillis an hour after "new1"'s (well outside DedupeEngine's 90s/100km
+    // window — same lat/lon as "new1" otherwise) so it lands as a genuinely distinct insert rather
+    // than being merged into "new1" as a revision, which would never fire insertedQuakeIds at all
+    // and hang this test's second awaitItem() forever (caught exactly that way on the first attempt
+    // at this test, via a real TurbineTimeoutCancellationException — not a hypothetical concern).
+    @Test fun `markSheetExpanded keeps the counter at zero across repeated arrivals`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val repository = fakeRepositoryAlwaysFailing()
+        val vm = HomeViewModel(repository, emptyHomeLocationStore(), LocationProvider())
+        vm.newSinceExpand.test {
+            assertEquals(0, awaitItem())
+            repository.ingest(freshQuake("new1"))
+            assertEquals(1, awaitItem())
+            vm.markSheetExpanded()
+            assertEquals(0, awaitItem())
+            repository.ingest(freshQuake("new2", timeMillis = 1_950_000 + 3_600_000))
+            assertEquals(1, awaitItem())
+            vm.markSheetExpanded()
+            assertEquals(0, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
     // Task 9: homeLocation. Seeds the store via HomeLocationStore.set() (the same dao-backed path
     // HomeViewModel itself reads through), then asserts the ViewModel's own flow eventually
     // reflects it — proving the init{} load actually reads from the injected store rather than,
@@ -389,12 +419,16 @@ private fun fakeRepositorySeededWithOneQuake(gate: CompletableDeferred<Unit>): Q
     )
 }
 
-private fun freshQuake(id: String) = Quake(
-    id = id, timeMillis = 1_950_000, lat = 1.0, lon = 2.0, depthKm = 5.0,
+// Task 12 review Fix 1's test (below) needs a SECOND quake DedupeEngine won't merge into the
+// first: its window is 90s / 100km (DedupeEngine.kt), so [timeMillis] is now a parameter — every
+// pre-existing call site keeps the original hardcoded 1_950_000 via the default, only the new test
+// passes a value far outside that window.
+private fun freshQuake(id: String, timeMillis: Long = 1_950_000) = Quake(
+    id = id, timeMillis = timeMillis, lat = 1.0, lon = 2.0, depthKm = 5.0,
     mag = 4.0, magType = "mw", place = "Fresh", tsunami = false, felt = null,
     status = QuakeStatus.AUTOMATIC, sources = mapOf(Source.USGS to id),
-    revisions = listOf(MagRevision(4.0, "mw", 1_950_000, Source.USGS)),
-    updatedAtMillis = 1_950_000,
+    revisions = listOf(MagRevision(4.0, "mw", timeMillis, Source.USGS)),
+    updatedAtMillis = timeMillis,
 )
 
 private val ONE_FEATURE_GEOJSON = """

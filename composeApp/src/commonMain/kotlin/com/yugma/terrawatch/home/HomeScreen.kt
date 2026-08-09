@@ -174,6 +174,11 @@ fun HomeScreen(viewModel: HomeViewModel) {
         // here rather than threaded through from FeedList's per-row closure — same
         // haversineKm(home, quakePoint) call FeedList already makes per row, just for the one
         // selected quake.
+        //
+        // Task 12 review, controller decision (Finding 3): TWO_PANE reuses this same modal sheet
+        // rather than the brief's literal "detail replaces list in panel" — modal reuse wins on
+        // consistency + zero new surface for a target the plan doesn't judge; in-panel
+        // master-detail is deferred to a Plan 3 desktop pass. See task-12-report.md's Fix Round 1.
         selectedQuake?.let { quake ->
             DetailSheet(
                 quake = quake,
@@ -287,10 +292,23 @@ private fun PhoneLayout(
  * other half (see `FallbackMapPane.kt`'s kdoc for the maplibre-compose constraint that makes jvm/
  * wasmJs's [QuakeMap] actual a static pane rather than a live tile map there). The map/fallback
  * fills whatever width remains after a fixed [TWO_PANE_RIGHT_PANEL_WIDTH] right panel, which holds
- * the status pill and the full quake list stacked vertically, both always fully visible — there is
- * no phone-style peek/expand sheet here, so this panel reuses [FeedList] directly (not [FeedSheet],
- * which adds the peek-only "N NEW" header — see that composable's own Task 12 kdoc note) and
- * renders [StatusShield] itself rather than floating it over the map.
+ * the status pill, a compact live/offline row, and the full quake list stacked vertically, all
+ * always fully visible — there is no phone-style peek/expand sheet here, so this panel reuses
+ * [FeedList] directly (not [FeedSheet], which adds the peek-only "N NEW" header — see that
+ * composable's own Task 12 kdoc note) and renders [StatusShield] itself rather than floating it
+ * over the map.
+ *
+ * Task 12 review, Fix 1 (Important — "`newSinceExpand` leaks across layout flip"): this panel's
+ * list has no peek/expanded state, so nothing here ever called [HomeViewModel.markSheetExpanded]
+ * the way [PhoneLayout]'s scaffold-driven `LaunchedEffect` does — but `HomeViewModel`'s
+ * `newSinceExpand` counter itself is layout-agnostic and keeps incrementing regardless, so it would
+ * silently accumulate for the entire time a user stayed on this panel. Left alone, flipping back to
+ * [PhoneLayout] later would show a stale, inflated "N NEW" chip counting arrivals the user had
+ * fully visible the whole time. The `LaunchedEffect(state)` below re-clears the counter on every
+ * single content update for as long as this composable stays on screen, keeping it pinned at zero
+ * — the simplest shape that stays correct across an arbitrary number of arrivals, not just the
+ * first one (a one-shot `LaunchedEffect(Unit)` would only clear whatever had accumulated before
+ * this panel first composed, then let it drift right back up).
  */
 @Composable
 private fun TwoPaneLayout(
@@ -301,6 +319,10 @@ private fun TwoPaneLayout(
     viewModel: HomeViewModel,
 ) {
     val content = state as? HomeUiState.Content
+    // Fix 1 (see kdoc above): re-fires on every `state` emission, i.e. every genuinely new arrival
+    // (HomeViewModel.insertedQuakeIds is exactly what both bumps newSinceExpand AND changes the
+    // quakes/pins lists `state` carries), so the counter never has a chance to accumulate visibly.
+    LaunchedEffect(state) { viewModel.markSheetExpanded() }
     Row(Modifier.fillMaxSize()) {
         Box(Modifier.weight(1f).fillMaxHeight()) {
             QuakeMap(
@@ -340,6 +362,18 @@ private fun TwoPaneLayout(
                     }
                 }
             }
+            // Task 12 review, Fix 2 (Important — "desktop panel has no LIVE/OFFLINE signal"): this
+            // panel had no connection-state indicator at all before this fix, unlike the phone
+            // sheet's header. Reuses FeedSheetHeader's own LiveDot+label pairing (extracted as
+            // LiveStatusRow) rather than duplicating it — no "N NEW" chip here, see LiveStatusRow's
+            // own kdoc for why. Shown unconditionally (not gated on `is Content` like the pill
+            // above): defaults to content?.isLive ?: false, so it honestly reads "OFFLINE" during
+            // Loading rather than disappearing — the same always-rendered convention FeedSheet's
+            // header already uses on the phone side.
+            LiveStatusRow(
+                isLive = content?.isLive ?: false,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
             FeedList(
                 quakes = content?.quakes.orEmpty(),
                 nowMillis = nowMillis,

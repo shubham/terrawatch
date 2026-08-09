@@ -44,10 +44,10 @@ import com.yugma.terrawatch.ui.theme.TerraRadii
  * gives it — peeking (30% of screen height) or fully expanded (this same content, just with more
  * of the list visible below the fold).
  *
- * Task 12: the header (LIVE/OFFLINE dot + "N NEW" chip) is this phone-only sheet's own chrome —
- * the desktop/tablet two-pane right panel (`HomeScreen.kt`'s `TwoPaneLayout`) has no peek/expanded
- * state for a "seen it yet" chip to track, so it renders the status pill instead and reuses only
- * [FeedList] below, not this whole composable.
+ * Task 12: the "N NEW" chip half of this header is phone-only sheet chrome — the desktop/tablet
+ * two-pane right panel (`HomeScreen.kt`'s `TwoPaneLayout`) has no peek/expanded state for a "seen it
+ * yet" count to track, so it doesn't reuse this whole composable. It does reuse the other half,
+ * [LiveStatusRow] (Fix 2, below), plus [FeedList] — see both composables' own kdocs.
  */
 @Composable
 fun FeedSheet(
@@ -114,13 +114,7 @@ private fun FeedSheetHeader(isLive: Boolean, newCount: Int, modifier: Modifier =
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        LiveDot(isLive)
-        Text(
-            text = if (isLive) "LIVE" else "OFFLINE",
-            style = if (isLive) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelSmall,
-            fontWeight = if (isLive) FontWeight.Bold else FontWeight.Normal,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        LiveStatusRow(isLive)
         if (newCount > 0) {
             Surface(shape = RoundedCornerShape(TerraRadii.pill), color = TerraColors.InfoBlue) {
                 Text(
@@ -132,6 +126,33 @@ private fun FeedSheetHeader(isLive: Boolean, newCount: Int, modifier: Modifier =
                 )
             }
         }
+    }
+}
+
+/**
+ * Task 12 Fix 2 (review finding — reviewer's Important 2, "desktop panel has no LIVE/OFFLINE
+ * signal"): the [LiveDot] + "LIVE"/"OFFLINE" label pairing, extracted out of [FeedSheetHeader] so
+ * `HomeScreen.kt`'s desktop/tablet two-pane right panel can show the exact same honest connection
+ * signal the phone sheet's header always has — the panel shipped with none at all in the original
+ * Task 12 cut. Deliberately excludes the "N NEW" chip [FeedSheetHeader] still adds on its own:
+ * `TwoPaneLayout` keeps that counter pinned at zero (see its own Fix 1 note) precisely because an
+ * always-visible list has no "unseen since last look" concept, so a chip that could only ever read
+ * "0 NEW" would be dead UI, not a smaller version of the phone one.
+ */
+@Composable
+fun LiveStatusRow(isLive: Boolean, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        LiveDot(isLive)
+        Text(
+            text = if (isLive) "LIVE" else "OFFLINE",
+            style = if (isLive) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelSmall,
+            fontWeight = if (isLive) FontWeight.Bold else FontWeight.Normal,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
