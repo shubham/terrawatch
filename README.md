@@ -20,7 +20,7 @@ Note: corporate TLS-intercepting proxies require the proxy root CA in the JVM tr
 |---|---|---|
 | ![Cold launch: live map with magnitude-banded pins and clustering](docs/qa/plan-2-device-matrix/cold-launch-map-pins.png) | ![Feed sheet expanded showing recent quakes with status pill](docs/qa/plan-2-device-matrix/sheet-expanded.png) | ![Detail sheet for real USGS quake with revision honesty](docs/qa/plan-2-device-matrix/detail-sheet-real-quake.png) |
 
-**Features:** Live map with magnitude-banded pins + clustering. Live EMSC WebSocket + USGS polling with deduplication. Status pill showing connection state. Feed sheet with recent events. Detail sheet with revision history. Dark mode support. Offline cache. Adaptive desktop two-pane layout. Web wasm placeholder.
+**Features:** Live map with magnitude-banded pins + clustering. USGS fetch on launch + live EMSC WebSocket stream with cross-agency dedupe. Safety status pill · LIVE connection indicator in the feed sheet. Feed sheet with recent events. Detail sheet with revision history. Dark mode support. Offline cache. Adaptive desktop two-pane layout. Web wasm placeholder.
 
 ## Architecture
 

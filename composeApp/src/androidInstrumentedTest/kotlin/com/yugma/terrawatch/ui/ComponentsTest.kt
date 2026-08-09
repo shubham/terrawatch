@@ -22,6 +22,7 @@ import com.yugma.terrawatch.ui.components.BadgeSize
 import com.yugma.terrawatch.ui.components.MagnitudeBadge
 import com.yugma.terrawatch.ui.components.QuakeCard
 import com.yugma.terrawatch.ui.components.StatusShield
+import com.yugma.terrawatch.ui.components.TsunamiBanner
 import com.yugma.terrawatch.ui.theme.TerraColors
 import com.yugma.terrawatch.ui.theme.TerraTheme
 import kotlin.math.abs
@@ -32,9 +33,10 @@ import org.junit.Test
  * Task 13: instrumented component tests, on-device. These use [createComposeRule] with direct
  * composable content only — no [com.yugma.terrawatch.MainActivity], no Koin, no DI wiring — pinning
  * the same behaviors [ComponentsTest] class name promises per the plan brief: MagnitudeBadge's
- * number+band-color pairing, QuakeCard's formatted fields, StatusShield's three faces, DetailSheet's
- * full render (revision badge + tsunami banner + share action), and FeedList rendering one card per
- * quake. `captureToImage()` (used for the one color assertion) needs a real, hardware-rendered
+ * number+band-color pairing, QuakeCard's formatted fields, StatusShield's three faces,
+ * TsunamiBanner's advisory face, DetailSheet's full render (revision badge + tsunami banner +
+ * share action), and FeedList rendering one card per quake. `captureToImage()` (used for the one
+ * color assertion) needs a real, hardware-rendered
  * window — the reason this whole class is an `androidInstrumentedTest`, not a Robolectric/jvmTest
  * double: a color assertion using ONLY semantics (no pixel read) can't tell "the badge is the wrong
  * color" from "the badge is missing entirely", the two failure modes this test exists to
@@ -165,6 +167,23 @@ class ComponentsTest {
         }
         // Exact string grepped from StatusShield.kt AskLocationContent().
         composeTestRule.onNodeWithText("Where are you?").assertExists()
+    }
+
+    // TsunamiBanner's advisory face -------------------------------------------------------------
+
+    @Test
+    fun tsunamiBanner_advisoryState_showsWarningText() {
+        // The red/advisory face (tsunami=true) had zero render coverage anywhere before this test:
+        // detailSheet_rendersRevisionBadgeTsunamiBannerAndShareAction below only ever exercises the
+        // calm face (tsunami=false), and HomeViewModel.injectDebugQuake — the one hand-triggerable
+        // path to a live DetailSheet on device — hardcodes tsunami = false too. Exact string grepped
+        // from TsunamiBanner.kt, not paraphrased.
+        composeTestRule.setContent {
+            TerraTheme {
+                TsunamiBanner(tsunami = true)
+            }
+        }
+        composeTestRule.onNodeWithText("Tsunami advisory issued").assertExists()
     }
 
     // DetailSheet full render ------------------------------------------------------------------
