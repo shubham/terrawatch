@@ -93,18 +93,6 @@ class HomeViewModel(
     private val _newSinceExpand = MutableStateFlow(0)
     val newSinceExpand: StateFlow<Int> = _newSinceExpand
 
-    // Task 11: the detail sheet's data source. Holds a full Quake (not just an id) so DetailSheet
-    // itself stays a dumb presentational composable with no lookup of its own — see [select].
-    // Null means "no sheet showing," doing double duty as both "nothing selected yet" and
-    // "dismissed" rather than a separate Boolean visibility flag.
-    private val _selectedQuake = MutableStateFlow<Quake?>(null)
-    val selectedQuake: StateFlow<Quake?> = _selectedQuake
-
-    // Fix Round 1 (review finding): tracks select()'s own in-flight launch so a second call can
-    // cancel a still-pending first one — see [select]'s body. Purely a private implementation
-    // detail of that one function; nothing else in this class reads or depends on it.
-    private var selectJob: Job? = null
-
     // Fix Round 2 (review finding): this used to be a `val status = repository.refreshFeed()`
     // local, captured ONCE inside the same coroutine that then went on to collect
     // recentQuakes() forever, re-reading that same frozen `status` on every emission — so a
@@ -129,10 +117,12 @@ class HomeViewModel(
     // result lands; the [insertedQuakeIds] collector below bumps it on every live-clear, so a
     // [refreshOnce] attempt that was already in flight when a genuinely new quake proved the feed
     // healthy again has its now-stale write silently discarded instead of stomping back over that
-    // more-recent truth. Plain Main-confined `var` (like [selectJob]/[retryJob] above) — both the
-    // writer (refreshOnce, via the poll loop/retryNow, always viewModelScope-launched with no
-    // dispatcher override) and the other writer (the insertedQuakeIds collector below, same
-    // constraint) only ever run on Main, so there's no concurrent-mutation hazard to guard against.
+    // more-recent truth. Plain Main-confined `var` (like [retryJob] below, or the former
+    // `selectJob` this class carried before Task 3 (Plan 3) moved it to QuakeSelectionViewModel)
+    // — both the writer (refreshOnce, via the poll loop/retryNow, always viewModelScope-launched
+    // with no dispatcher override) and the other writer (the insertedQuakeIds collector below,
+    // same constraint) only ever run on Main, so there's no concurrent-mutation hazard to guard
+    // against.
     private var refreshGeneration = 0L
 
     // Task 1 (Plan 3): bumped by every [refreshOnce] attempt (loop tick or [retryNow]) so the
@@ -145,7 +135,9 @@ class HomeViewModel(
 
     // Task 1 (Plan 3): guards [retryNow] against a re-tap while its own [refreshOnce] call is
     // still in flight — see that function's own kdoc. Purely a private implementation detail of
-    // that one function, same pattern as [selectJob] above.
+    // that one function, same "cancel a still-in-flight Job before/instead of starting another"
+    // pattern QuakeSelectionViewModel's own `selectJob` uses (Task 3, Plan 3 — split out of this
+    // class, see that class's kdoc) for the exact same reason.
     private var retryJob: Job? = null
 
     init {
@@ -311,6 +303,17 @@ class HomeViewModel(
      * back over a [refreshFailed] the user already watched clear — without this fence, whichever of
      * the two happened to write last always won, regardless of which one was actually more recent
      * in wall-clock terms.
+     *
+     * Plan 3 Task 2 review ruling (documented here per that review, no behavior change): the same
+     * fence also means a [retryNow] tap issued WHILE an older poll tick is still in flight makes
+     * that older tick's eventual result irrelevant the instant the retry starts — [gen] advances
+     * again, so the poll's write is fenced out too, exactly like a live-clear fences out a stale
+     * FAILED above. In other words, **the latest-STARTED attempt's result governs [refreshFailed]
+     * — a user retry supersedes an in-flight poll's verdict**, not just the reverse. Raised as an
+     * open question during that review and accepted as intended semantics, not a bug: it is
+     * self-healing (the poll loop's own next tick will re-assert FAILED if the retry's optimism
+     * was wrong) and consistent with the same "newest subscription wins" spirit
+     * [pollTick]'s own `flatMapLatest` already applies elsewhere in this class.
      */
     private suspend fun refreshOnce() {
         val gen = ++refreshGeneration
@@ -346,48 +349,6 @@ class HomeViewModel(
      * `.Expanded` — the user has now seen the list, so the "N NEW" chip resets. */
     fun markSheetExpanded() {
         _newSinceExpand.value = 0
-    }
-
-    /**
-     * Task 11: opens the detail sheet for [id] — called from a map pin tap, a [
-     * com.yugma.terrawatch.ui.components.QuakeCard] tap, or the status pill's alert face. Reads
-     * through [QuakeRepository.byId] (the DAO, not [state]'s already-collected `quakes` list) so
-     * this also works for a quake that isn't in the current 24h window a pin/card tap couldn't
-     * otherwise have come from anyway, but mainly so this stays the one obvious source of truth —
-     * no second "find it in the in-memory list" path to keep in sync with the first. An [id] that
-     * doesn't resolve to any stored quake (e.g. it aged out between the tap and this lookup
-     * resolving) settles on null, same as no selection at all — there is deliberately no separate
-     * "not found" error state for the sheet to render.
-     *
-     * One-shot read; revisions arriving while the sheet is open are not reflected until
-     * dismiss+reopen (accepted v1 tradeoff).
-     *
-     * Fix Round 1 (review finding): cancels any still-in-flight [selectJob] before launching a
-     * new one. Without this, two quick selections (e.g. pin A tapped, then pin B tapped again
-     * before A's [QuakeRepository.byId] read resolves) raced as two independent coroutines with no
-     * ordering guarantee between them — if A's read happened to complete after B's, its stale
-     * result would silently overwrite the correct, more recent selection. Cancelling the prior job
-     * first means only the most recent call to [select] can ever win.
-     */
-    fun select(id: String) {
-        selectJob?.cancel()
-        selectJob = viewModelScope.launch {
-            _selectedQuake.value = repository.byId(id)
-        }
-    }
-
-    /** Called by DetailSheet's `onDismiss` (both the Dismiss button and the sheet's own
-     * scrim/swipe dismissal funnel through this one callback).
-     *
-     * Fix Round 1 (adjacent to the [select] race fix above, judgment call - flagging in case it
-     * should have stayed out of scope): also cancels a still-in-flight [selectJob], not just
-     * [select] itself. Without this, a [select] whose repository read is still in flight the
-     * instant the user dismisses would, once it resolved, silently overwrite this null with the
-     * stale quake - resurrecting a sheet the user just closed.
-     */
-    fun dismissSelection() {
-        selectJob?.cancel()
-        _selectedQuake.value = null
     }
 
     /**

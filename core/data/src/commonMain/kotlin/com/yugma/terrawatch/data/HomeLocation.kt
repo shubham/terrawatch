@@ -19,17 +19,29 @@ import kotlinx.coroutines.flow.SharedFlow
  * gap this task closes.
  */
 class HomeLocationStore(private val dao: QuakeDao) {
-    // extraBufferCapacity = 4, not the default 0: [set] is a plain synchronous function (called from
+    // Task 3 (Plan 3) carry-in — the Task 2 ledger minor: this used to be replay = 0, with a kdoc
+    // claiming extraBufferCapacity alone meant a racing collector's set() "is not silently lost."
+    // That claim was only half true: extraBufferCapacity governs BACKPRESSURE for a collector that
+    // is already subscribed (or mid-subscribe) when set() fires — a collector that subscribes
+    // strictly AFTER set() has already returned got nothing at all under replay = 0, and had no
+    // way to learn the current point short of a fresh set() happening to fire again later.
+    // replay = 1 is what actually covers that genuinely-late-subscriber case (see
+    // HomeLocationTest's "a subscriber that joins after set still receives the latest point" —
+    // red under replay = 0, green here): a NEW collector immediately receives whatever point the
+    // most recent [set] call published, exactly like [HomeViewModel.homeLocation]'s own
+    // init-block kdoc already assumes when it says "re-applying the startup value here too is
+    // harmless" — that assumption is only actually sound with a real replay cache backing it.
+    //
+    // extraBufferCapacity = 4 (unchanged): [set] is a plain synchronous function (called from
     // Compose click handlers, Dispatchers.Default ViewModel init blocks, and an Activity's
     // lifecycleScope alike), so it publishes via [MutableSharedFlow.tryEmit] rather than the
-    // suspending emit() — tryEmit on a zero-capacity SharedFlow drops the value outright whenever no
-    // collector is suspended and ready for it right at that instant. A small buffer means a set()
-    // that happens to race a collector's own subscribe-in-progress (e.g. HomeViewModel's init,
-    // still on its way from get()/current() to subscribing here) is not silently lost. 4 (not 1)
+    // suspending emit() — tryEmit on a zero-EXTRA-capacity SharedFlow can still drop a value if an
+    // already-subscribed-but-momentarily-busy collector isn't ready to receive it right at that
+    // instant (replay's 1 slot alone doesn't cover a burst of several sets in a row). 4 (not 1)
     // just mirrors this codebase's other event SharedFlows (QuakeRepository.insertedQuakeIds/
     // alertEvents use 16 for a much higher-volume stream) — a manual location change is rare enough
     // that even capacity 1 would suffice in practice, but the extra headroom costs nothing.
-    private val _updates = MutableSharedFlow<GeoPoint>(extraBufferCapacity = 4)
+    private val _updates = MutableSharedFlow<GeoPoint>(replay = 1, extraBufferCapacity = 4)
     val updates: SharedFlow<GeoPoint> = _updates
 
     fun get(): GeoPoint? {

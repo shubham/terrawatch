@@ -3,6 +3,8 @@ package com.yugma.terrawatch.ui
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
+import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.test.platform.app.InstrumentationRegistry
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
@@ -12,6 +14,7 @@ import com.yugma.terrawatch.database.QuakeDao
 import com.yugma.terrawatch.database.TerraWatchDb
 import com.yugma.terrawatch.home.HomeScreen
 import com.yugma.terrawatch.home.HomeViewModel
+import com.yugma.terrawatch.home.QuakeSelectionViewModel
 import com.yugma.terrawatch.location.LocationProvider
 import com.yugma.terrawatch.network.EmscLiveSource
 import com.yugma.terrawatch.network.UsgsApi
@@ -44,7 +47,11 @@ import org.junit.Test
  * the same "fake repository, real ViewModel, no framework in the loop" shape
  * `HomeViewModelTest`'s jvmTest suite already uses — so this wires that same graph on-device
  * instead, with a real (in-memory) `AndroidSqliteDriver` standing in for the JVM suite's
- * `JdbcSqliteDriver`, and composes `HomeScreen(viewModel)` directly with no Activity/Koin involved.
+ * `JdbcSqliteDriver`, and composes `HomeScreen(viewModel, selectionViewModel)` directly with no
+ * Activity/Koin involved. Task 3 (Plan 3): `selectionViewModel` (`QuakeSelectionViewModel`, split
+ * out of `HomeViewModel` — see that class's own kdoc) is passed explicitly for exactly the same
+ * reason `viewModel` is — its default is `koinViewModel()`, which this class's whole
+ * no-`startKoin{}` design can't rely on.
  *
  * This DOES compose the real `QuakeMap` (Task 8's Android `actual`, backed by maplibre-compose) as
  * part of `HomeScreen` — there is no way to test "does HomeScreen reach Content" without also
@@ -59,7 +66,11 @@ class HomeFlowTest {
     val composeTestRule = createComposeRule()
 
     private val createdDrivers = mutableListOf<AndroidSqliteDriver>()
-    private val createdViewModels = mutableListOf<HomeViewModel>()
+
+    // Task 3 (Plan 3): typed as the common ViewModel base (not HomeViewModel specifically) so this
+    // one list/teardown loop covers both HomeViewModel and the new QuakeSelectionViewModel — both
+    // expose the same `viewModelScope` extension property tearDown() below relies on.
+    private val createdViewModels = mutableListOf<ViewModel>()
 
     @After
     fun tearDown() {
@@ -76,8 +87,10 @@ class HomeFlowTest {
 
     @Test
     fun homeScreen_movesFromLoadingToContentWithTheSeededQuake() {
-        val vm = buildViewModel(fakeRepositoryWithOneQuake())
-        composeTestRule.setContent { TerraTheme { HomeScreen(vm) } }
+        val repository = fakeRepositoryWithOneQuake()
+        val vm = buildViewModel(repository)
+        val selectionVm = buildSelectionViewModel(repository)
+        composeTestRule.setContent { TerraTheme { HomeScreen(vm, selectionVm) } }
 
         composeTestRule.waitUntil(timeoutMillis = 10_000) {
             composeTestRule.onAllNodesWithText("10km SE of Testville", substring = true)
@@ -88,8 +101,10 @@ class HomeFlowTest {
 
     @Test
     fun homeScreen_showsTheOfflineBannerWhenTheInitialRefreshFails() {
-        val vm = buildViewModel(fakeRepositoryAlwaysFailing())
-        composeTestRule.setContent { TerraTheme { HomeScreen(vm) } }
+        val repository = fakeRepositoryAlwaysFailing()
+        val vm = buildViewModel(repository)
+        val selectionVm = buildSelectionViewModel(repository)
+        composeTestRule.setContent { TerraTheme { HomeScreen(vm, selectionVm) } }
 
         // HomeScreen's StalenessBanner (HomeScreen.kt) renders "Not updated yet" whenever
         // lastUpdatedMillis is null — true here since fakeRepositoryAlwaysFailing() never
@@ -108,6 +123,16 @@ class HomeFlowTest {
         return HomeViewModel(repository, homeLocationStore, LocationProvider(context))
             .also { createdViewModels += it }
     }
+
+    // Task 3 (Plan 3): HomeScreen's `selectionViewModel` parameter defaults to `koinViewModel()`
+    // (see that composable's own kdoc) — passed explicitly here instead, same "real object graph,
+    // no framework in the loop" philosophy this whole file already applies to HomeViewModel, and
+    // for the identical reason: this class deliberately avoids `startKoin {}` (see this file's own
+    // top-level kdoc). A fresh, empty SavedStateHandle is correct for both tests here — neither
+    // exercises restore-from-process-death, which is proven separately by
+    // QuakeSelectionViewModelTest's jvmTest suite instead.
+    private fun buildSelectionViewModel(repository: QuakeRepository): QuakeSelectionViewModel =
+        QuakeSelectionViewModel(repository, SavedStateHandle()).also { createdViewModels += it }
 
     // name = null -> in-memory (app.cash.sqldelight's AndroidSqliteDriver contract, same as
     // SQLiteOpenHelper's own) — isolated from the app's own "terrawatch.db" file that this same

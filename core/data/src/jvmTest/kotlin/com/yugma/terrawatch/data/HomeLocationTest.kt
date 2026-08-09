@@ -70,4 +70,23 @@ class HomeLocationTest {
             cancelAndIgnoreRemainingEvents()
         }
     }
+
+    // Task 3 (Plan 3) carry-in — the Task 2 ledger minor: [HomeLocationStore.updates]'s old kdoc
+    // claimed extraBufferCapacity alone meant a racing collector "is not silently lost", but that
+    // claim only actually held for a collector that was ALREADY subscribed (or mid-subscribe) when
+    // set() fired — extraBufferCapacity governs backpressure for an already-subscribed-but-slow
+    // collector, not replay for one that subscribes strictly AFTER the emission. A genuinely late
+    // subscriber (this test: set() completes fully before .test{} ever subscribes) got nothing at
+    // all under the old replay = 0 config and would have to wait for a NEXT set() call that might
+    // never come. replay = 1 is what actually closes that gap.
+    //
+    // Red (pre-fix): times out waiting for awaitItem() — replay = 0 has nothing to hand a
+    // subscriber that joins after the only set() call already completed.
+    @Test fun `a subscriber that joins after set still receives the latest point`() = runTest {
+        store.set(GeoPoint(11.0, 22.0))
+        store.updates.test {
+            assertEquals(GeoPoint(11.0, 22.0), awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
 }

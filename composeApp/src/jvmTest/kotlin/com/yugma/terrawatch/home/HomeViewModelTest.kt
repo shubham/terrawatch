@@ -711,74 +711,9 @@ class HomeViewModelTest {
         }
     }
 
-    // Task 11: selection wiring for the detail sheet. fakeRepositoryWithOneQuake()'s seeded feed
-    // (see ONE_FEATURE_GEOJSON below) always lands as id "us1234" once refreshFeed() resolves —
-    // select() reads through the repository's real (DAO-backed) byId(), not some in-memory copy of
-    // the emitted list, so this only becomes non-null once that quake has actually been persisted.
-    @Test fun `select populates selectedQuake from the repository when the quake exists`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
-        val vm = createVm(fakeRepositoryWithOneQuake())
-        // Wait for the seeded quake to actually land before selecting it — otherwise select("us1234")
-        // could race the still-in-flight refreshFeed() ingest and legitimately find nothing yet.
-        vm.state.test {
-            var s = awaitItem()
-            while (s is HomeUiState.Loading || (s is HomeUiState.Content && s.quakes.isEmpty())) {
-                s = awaitItem()
-            }
-            cancelAndIgnoreRemainingEvents()
-        }
-        vm.selectedQuake.test {
-            assertEquals(null, awaitItem())
-            vm.select("us1234")
-            val selected = awaitItem()
-            assertEquals("us1234", selected?.id)
-            cancelAndIgnoreRemainingEvents()
-        }
-    }
-
-    // Not-found proven as an active transition (a prior selection reverting to null on a second,
-    // unknown-id select()) rather than "was already null and I did nothing" — the latter would
-    // pass even if select() never actually re-assigned selectedQuake at all, since StateFlow never
-    // re-emits an already-equal value; this way the null is provably select()'s own doing.
-    @Test fun `select sets selectedQuake to null when the id is not found`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
-        val vm = createVm(fakeRepositoryWithOneQuake())
-        vm.state.test {
-            var s = awaitItem()
-            while (s is HomeUiState.Loading || (s is HomeUiState.Content && s.quakes.isEmpty())) {
-                s = awaitItem()
-            }
-            cancelAndIgnoreRemainingEvents()
-        }
-        vm.selectedQuake.test {
-            assertEquals(null, awaitItem())
-            vm.select("us1234")
-            assertEquals("us1234", awaitItem()?.id)
-            vm.select("does-not-exist")
-            assertEquals(null, awaitItem())
-            cancelAndIgnoreRemainingEvents()
-        }
-    }
-
-    @Test fun `dismissSelection clears selectedQuake back to null`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
-        val vm = createVm(fakeRepositoryWithOneQuake())
-        vm.state.test {
-            var s = awaitItem()
-            while (s is HomeUiState.Loading || (s is HomeUiState.Content && s.quakes.isEmpty())) {
-                s = awaitItem()
-            }
-            cancelAndIgnoreRemainingEvents()
-        }
-        vm.selectedQuake.test {
-            assertEquals(null, awaitItem())
-            vm.select("us1234")
-            assertEquals("us1234", awaitItem()?.id)
-            vm.dismissSelection()
-            assertEquals(null, awaitItem())
-            cancelAndIgnoreRemainingEvents()
-        }
-    }
+    // Task 11's selection wiring tests (`select`/`dismissSelection`/`selectedQuake`) MIGRATED to
+    // QuakeSelectionViewModelTest.kt as of Task 3 (Plan 3) — see QuakeSelectionViewModel's own
+    // kdoc for why that state no longer lives on this class at all.
 }
 
 // A fresh, empty in-memory-backed HomeLocationStore — used by every test above that needs

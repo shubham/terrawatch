@@ -18,6 +18,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.websocket.WebSockets
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlin.time.Clock
 import org.koin.core.context.GlobalContext
@@ -58,11 +59,19 @@ class MainActivity : ComponentActivity() {
     // write lands, no restart needed (see that ViewModel's own kdoc). A denial writes nothing and
     // logs nothing — there is no fix to store, and per this task's device verification, nothing
     // about a denial belongs in logcat either.
+    //
+    // Task 3 (Plan 3) carry-in — the Task 2 ledger minor: launched on [Dispatchers.Default], not
+    // bare [lifecycleScope.launch] (which would run on Main). [LocationProvider.current] reads a
+    // system location service and [HomeLocationStore.set] is a synchronous SQLDelight DAO write —
+    // same "neither belongs on Main" reasoning `HomeViewModel.init`'s own one-shot home-location
+    // resolution already applies to this exact pair of calls (see that class's kdoc). This callback
+    // was the one remaining call site still doing both on Main; now consistent with the rest of the
+    // codebase.
     private val requestLocationPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         if (granted) {
-            lifecycleScope.launch {
+            lifecycleScope.launch(Dispatchers.Default) {
                 locationProvider.current()?.let { homeLocationStore.set(it) }
             }
         }

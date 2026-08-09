@@ -52,6 +52,7 @@ import com.yugma.terrawatch.ui.theme.TerraRadii
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.collectLatest
+import org.koin.compose.viewmodel.koinViewModel
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
@@ -129,16 +130,31 @@ private val TWO_PANE_RIGHT_PANEL_WIDTH = 360.dp
  * no peek/expand sheet) at or above it. [DetailSheet] is a THIRD, independent layer on top of
  * whichever of the two is active — its own on-demand [ModalBottomSheet][androidx.compose.material3.ModalBottomSheet]
  * is unaffected by which layout is showing underneath it.
+ *
+ * Task 3 (Plan 3): [selectionViewModel] used to be [HomeViewModel]'s own `selectedQuake`/`select`/
+ * `dismissSelection` — split into [QuakeSelectionViewModel] because HomeViewModel was serving
+ * map+pill+sheet+detail+two-pane at once (`plan-3-entry-conditions.md` #3). Defaulted to
+ * `koinViewModel()` rather than resolved as a body-local `val` (contrast [viewModel], which this
+ * function's one real caller — `App()` — already resolves via `koinViewModel<HomeViewModel>()`
+ * before calling here): a default parameter expression is *also* just a `koinViewModel()` call
+ * "alongside" [viewModel] as asked, but additionally keeps this whole composable callable without
+ * a running Koin instance by passing an explicit override — which
+ * `androidInstrumentedTest/HomeFlowTest.kt` does deliberately (see that file's own kdoc for why it
+ * avoids `startKoin {}` entirely) and which Task 4's "selection VM shared at nav-graph scope"
+ * plan explicitly needs too (the NavHost will pass its own nav-graph-scoped instance in here
+ * instead of letting this default fire).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(viewModel: HomeViewModel) {
+fun HomeScreen(viewModel: HomeViewModel, selectionViewModel: QuakeSelectionViewModel = koinViewModel()) {
     val state by viewModel.state.collectAsState()
     val homeLocation by viewModel.homeLocation.collectAsState()
     val newSinceExpand by viewModel.newSinceExpand.collectAsState()
     // Task 11: drives the detail sheet below — non-null shows it, null (the initial value, and
-    // whatever HomeViewModel.dismissSelection()/an unresolved select() settles back to) hides it.
-    val selectedQuake by viewModel.selectedQuake.collectAsState()
+    // whatever QuakeSelectionViewModel.dismissSelection()/an unresolved select() settles back to)
+    // hides it. Task 3 (Plan 3): moved from `viewModel` to `selectionViewModel` — see this
+    // function's own kdoc.
+    val selectedQuake by selectionViewModel.selectedQuake.collectAsState()
     // Fix Round 2 (review finding): feeds both isStale() and the banner's formatRelativeTime()
     // call below, so the staleness verdict and the displayed age both actually advance every 30s
     // instead of freezing at whatever they were when `state` last changed — see
@@ -164,6 +180,7 @@ fun HomeScreen(viewModel: HomeViewModel) {
                 nowMillis = nowMillis,
                 newQuakeId = newQuakeId,
                 viewModel = viewModel,
+                selectionViewModel = selectionViewModel,
                 onAskLocation = { showLocationAsk = true },
             )
         } else {
@@ -175,6 +192,7 @@ fun HomeScreen(viewModel: HomeViewModel) {
                 newQuakeId = newQuakeId,
                 maxHeight = maxHeight,
                 viewModel = viewModel,
+                selectionViewModel = selectionViewModel,
                 onAskLocation = { showLocationAsk = true },
             )
         }
@@ -196,7 +214,7 @@ fun HomeScreen(viewModel: HomeViewModel) {
                 distanceKm = homeLocation?.let { home -> haversineKm(home, GeoPoint(quake.lat, quake.lon)) },
                 nowMillis = nowMillis,
                 onShare = { text -> shareQuakeText(text) },
-                onDismiss = { viewModel.dismissSelection() },
+                onDismiss = { selectionViewModel.dismissSelection() },
             )
         }
         // Task 2 (Plan 3): a THIRD independent overlay layer, same "stacks on top of whichever
@@ -225,6 +243,7 @@ private fun PhoneLayout(
     newQuakeId: String?,
     maxHeight: Dp,
     viewModel: HomeViewModel,
+    selectionViewModel: QuakeSelectionViewModel,
     onAskLocation: () -> Unit,
 ) {
     val content = state as? HomeUiState.Content
@@ -250,7 +269,7 @@ private fun PhoneLayout(
                 distanceKm = { quake ->
                     homeLocation?.let { haversineKm(it, GeoPoint(quake.lat, quake.lon)) }
                 },
-                onQuakeClick = { id -> viewModel.select(id) },
+                onQuakeClick = { id -> selectionViewModel.select(id) },
             )
         },
     ) {
@@ -263,7 +282,7 @@ private fun PhoneLayout(
             QuakeMap(
                 pins = content?.pins.orEmpty(),
                 newQuakeId = newQuakeId,
-                onPinTap = { id -> viewModel.select(id) },
+                onPinTap = { id -> selectionViewModel.select(id) },
                 modifier = Modifier.fillMaxSize(),
                 onDebugLongPress = { lat, lon -> viewModel.injectDebugQuake(lat, lon) },
             )
@@ -288,7 +307,7 @@ private fun PhoneLayout(
                         StatusShield(
                             status = pill,
                             nowMillis = nowMillis,
-                            onClick = { onPillClick(pill, viewModel, onAskLocation) },
+                            onClick = { onPillClick(pill, selectionViewModel, onAskLocation) },
                             modifier = Modifier.fillMaxWidth(),
                         )
                         // Banner moves below the pill when both are showing (Task 9 brief:
@@ -341,6 +360,7 @@ private fun TwoPaneLayout(
     nowMillis: Long,
     newQuakeId: String?,
     viewModel: HomeViewModel,
+    selectionViewModel: QuakeSelectionViewModel,
     onAskLocation: () -> Unit,
 ) {
     val content = state as? HomeUiState.Content
@@ -353,7 +373,7 @@ private fun TwoPaneLayout(
             QuakeMap(
                 pins = content?.pins.orEmpty(),
                 newQuakeId = newQuakeId,
-                onPinTap = { id -> viewModel.select(id) },
+                onPinTap = { id -> selectionViewModel.select(id) },
                 modifier = Modifier.fillMaxSize(),
                 onDebugLongPress = { lat, lon -> viewModel.injectDebugQuake(lat, lon) },
             )
@@ -378,7 +398,7 @@ private fun TwoPaneLayout(
                     StatusShield(
                         status = pill,
                         nowMillis = nowMillis,
-                        onClick = { onPillClick(pill, viewModel, onAskLocation) },
+                        onClick = { onPillClick(pill, selectionViewModel, onAskLocation) },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     if (state.refreshFailed || isStale(state.lastUpdatedMillis, nowMillis)) {
@@ -409,7 +429,7 @@ private fun TwoPaneLayout(
                 distanceKm = { quake ->
                     homeLocation?.let { haversineKm(it, GeoPoint(quake.lat, quake.lon)) }
                 },
-                onQuakeClick = { id -> viewModel.select(id) },
+                onQuakeClick = { id -> selectionViewModel.select(id) },
                 modifier = Modifier.fillMaxWidth().weight(1f),
             )
         }
@@ -472,11 +492,14 @@ private fun isStale(lastUpdatedMillis: Long?, nowMillis: Long): Boolean =
  * [onAskLocation] opens [com.yugma.terrawatch.location.LocationAskDialog] (wired from HomeScreen's
  * own `showLocationAsk` state, since a plain function like this one can't itself hold Compose
  * state or show a dialog).
+ *
+ * Task 3 (Plan 3): takes [QuakeSelectionViewModel] instead of [HomeViewModel] now — the ALERT
+ * branch's `select` call is the only reason this function ever needed a ViewModel reference at all.
  */
-private fun onPillClick(pill: PillStatus, viewModel: HomeViewModel, onAskLocation: () -> Unit) {
+private fun onPillClick(pill: PillStatus, selectionViewModel: QuakeSelectionViewModel, onAskLocation: () -> Unit) {
     when (pill.kind) {
         PillStatus.Kind.ASK_LOCATION -> onAskLocation()
-        PillStatus.Kind.ALERT -> pill.quake?.let { viewModel.select(it.id) }
+        PillStatus.Kind.ALERT -> pill.quake?.let { selectionViewModel.select(it.id) }
         PillStatus.Kind.CALM -> {} // Nothing to show.
     }
 }

@@ -51,9 +51,11 @@ import kotlinx.coroutines.launch
  * "detail expands over the map, feed sheet unaffected" treatment.
  *
  * Deliberately dumb about *how* it got its data: [quake]/[distanceKm]/[nowMillis] are all plain
- * values the caller (`HomeScreen`) already has in hand (from `HomeViewModel.selectedQuake` /
- * `homeLocation` / the screen's own now-ticker) - this composable does no lookups of its own, so it
- * stays trivially previewable/testable in isolation and carries no platform-specific code.
+ * values the caller (`HomeScreen`) already has in hand (from
+ * `com.yugma.terrawatch.home.QuakeSelectionViewModel.selectedQuake` [Task 3, Plan 3 — split out of
+ * `HomeViewModel`] / `homeLocation` / the screen's own now-ticker) - this composable does no
+ * lookups of its own, so it stays trivially previewable/testable in isolation and carries no
+ * platform-specific code.
  *
  * [onShare] receives the fully-built share string (not just a "share was tapped" signal) because
  * building that string needs exactly the inputs this composable already has ([quake] +

@@ -4,6 +4,7 @@ import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.data.QuakeRepository
 import com.yugma.terrawatch.database.QuakeDao
 import com.yugma.terrawatch.home.HomeViewModel
+import com.yugma.terrawatch.home.QuakeSelectionViewModel
 import com.yugma.terrawatch.location.LocationProvider
 import com.yugma.terrawatch.location.LocationRequester
 import com.yugma.terrawatch.network.EmscLiveSource
@@ -49,4 +50,16 @@ fun appModule(http: HttpClient, dao: QuakeDao, locationProvider: LocationProvide
     // init{}) that this repository never needed twice. Both deleted outright, not just
     // unregistered — see task-10-report.md's Fix Round 1 for the removal record.
     viewModel { HomeViewModel(get(), get(), get()) }
+    // Task 3 (Plan 3): QuakeSelectionViewModel's second constructor param is
+    // androidx.lifecycle.SavedStateHandle, which has no `single {}`/`factory {}` registration
+    // anywhere in this module — and needs none. Koin's own ViewModel factory
+    // (KoinViewModelFactory.create, koin-core-viewmodel) wraps the platform CreationExtras in an
+    // AndroidParametersHolder before resolving this definition; that ParametersHolder subclass's
+    // getOrNull(SavedStateHandle::class) unconditionally answers
+    // SavedStateHandleSupport.createSavedStateHandle(extras) instead of falling through to the
+    // scope's bean graph, so plain get() resolves it exactly like any other constructor param —
+    // verified against koin-core-viewmodel 4.1.0's actual bytecode (not just assumed) plus Koin's
+    // own current docs ("Add SavedStateHandle to your ViewModel constructor - Koin injects it
+    // automatically"). See QuakeSelectionViewModel's own kdoc for the fuller citation.
+    viewModel { QuakeSelectionViewModel(get(), get()) }
 }
