@@ -12,6 +12,16 @@ turbine = "1.2.1"
 androidxActivity = "1.10.1"
 androidxLifecycle = "2.9.1"
 maplibreCompose = "0.14.0"
+# Task 13: androidTest-only. androidx.test:runner latest stable per Maven Central/Google (checked
+# 2026-08-09) is 1.7.0 (Jul 2025) — bumped from the brief's placeholder 1.6.2 per its own "bump to
+# current stable" instruction. ui-test-manifest deliberately NOT pinned to compose multiplatform's
+# own composeMultiplatform version (1.9.0) — it's a plain androidx.compose.ui artifact (the
+# instrumented-test placeholder-activity manifest fragment has no multiplatform equivalent) and its
+# own version line moves independently; 1.8.3 is the brief's own figure and is what this project's
+# compose.uiTest accessor resolves alongside without a conflict (verified via a real
+# androidDebugAndroidTestCompileClasspath resolution — see task-13-report.md).
+androidxTestRunner = "1.7.0"
+androidxComposeUiTestManifest = "1.8.3"
 
 [libraries]
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
@@ -38,6 +48,8 @@ turbine = { module = "app.cash.turbine:turbine", version.ref = "turbine" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidxActivity" }
 androidx-lifecycle-viewmodel = { module = "org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "androidxLifecycle" }
 maplibre-compose = { module = "org.maplibre.compose:maplibre-compose", version.ref = "maplibreCompose" }
+androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidxTestRunner" }
+androidx-compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest", version.ref = "androidxComposeUiTestManifest" }
 
 [plugins]
 kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }

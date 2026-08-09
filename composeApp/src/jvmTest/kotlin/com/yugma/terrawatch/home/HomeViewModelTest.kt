@@ -2,6 +2,7 @@ package com.yugma.terrawatch.home
 
 // Same jvmTest-not-commonTest rationale as FeedViewModelTest: fakeRepositoryWithOneQuake() builds a
 // real QuakeRepository over app.cash.sqldelight's JDBC in-memory driver, a JVM-only artifact.
+import androidx.lifecycle.viewModelScope
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import app.cash.turbine.test
 import com.yugma.terrawatch.data.HomeLocationStore
@@ -25,6 +26,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -43,11 +45,50 @@ import kotlin.test.assertTrue
 private const val FETCH_CLOCK_MILLIS = 5_000_000L
 
 class HomeViewModelTest {
-    // Same Dispatchers.Main reset/Unconfined rationale as FeedViewModelTest: HomeViewModel.init
-    // unconditionally calls repository.startLive(viewModelScope), which retries forever with
-    // delay() on a MockEngine that has no WebSockets plugin installed.
+    // Task 13 flake fix (carried in from Task 12 review: "~8% jvmTest flake — HomeViewModelTest
+    // leaks viewModelScope collectors, Dispatchers.resetMain race"). Root cause: every HomeViewModel
+    // built below launches several viewModelScope coroutines in init{} (the refresh loop, the
+    // cache-driven collector, repository.startLive()'s forever-retrying delay() loop, ...) — none of
+    // that is a child of this test's runTest{} coroutine, so cancelAndIgnoreRemainingEvents()/runTest
+    // completing never cancels it. The old tearDown only called Dispatchers.resetMain(), which
+    // swaps out the global Main dispatcher out from under those still-running coroutines without
+    // stopping them; a leaked coroutine that then tries to hop back onto Dispatchers.Main (e.g. the
+    // next delay() in startLive()'s retry loop) can hit a torn-down/mismatched Main dispatcher from
+    // a DIFFERENT test's setMain() call, an inherently racy cross-test interaction — that race is the
+    // ~8% flake.
+    //
+    // Fix: every HomeViewModel this suite builds now goes through [createVm], which tracks the
+    // instance so tearDown can cancel each one's viewModelScope — stopping every coroutine it ever
+    // launched, including the forever-retrying ones, instead of leaking it into later tests.
+    //
+    // ORDER MATTERS, and got it wrong on the first attempt (caught by actually running this 10x, not
+    // by inspection — see task-13-report.md): cancelling BEFORE Dispatchers.resetMain() intermittently
+    // threw `CompletionHandlerException` / `UnsupportedOperationException: Function
+    // UnconfinedTestCoroutineDispatcher.dispatch can only be used by the yield function`, and in one
+    // observed run left a Gradle test worker spinning at 100% CPU. Cause: HomeViewModel's state
+    // collector does `combine(repository.recentQuakes().map{...}.flowOn(Dispatchers.Default), ...)`
+    // inside a `viewModelScope.launch { ... }` — i.e. a Main.immediate-scoped parent with a
+    // Default-dispatched child. Cancelling while `Dispatchers.Main` is still THIS test's
+    // `UnconfinedTestDispatcher` forces that child's cancellation-completion to hop back onto Main
+    // from a Default-pool thread; `UnconfinedTestDispatcher.dispatch()` deliberately throws unless
+    // called through its own `yield()`-driven path, which a genuine cross-thread dispatch is not.
+    // Calling `Dispatchers.resetMain()` FIRST sidesteps this: by the time `cancel()`'s cascading
+    // completions try to dispatch onto `Dispatchers.Main`, Main has already reverted to the real
+    // dispatcher `kotlinx-coroutines-swing` registers (composeApp's jvmMain depends on
+    // `libs.coroutines.swing` for the desktop target; jvmTest inherits it) — an ordinary
+    // `SwingDispatcher` that accepts posts from any thread, no reentrancy assertion to trip.
+    private val createdViewModels = mutableListOf<HomeViewModel>()
+
+    private fun createVm(
+        repository: QuakeRepository,
+        homeLocationStore: HomeLocationStore = emptyHomeLocationStore(),
+        locationProvider: LocationProvider = LocationProvider(),
+    ): HomeViewModel = HomeViewModel(repository, homeLocationStore, locationProvider).also { createdViewModels += it }
+
     @AfterTest fun tearDown() {
         Dispatchers.resetMain()
+        createdViewModels.forEach { it.viewModelScope.cancel() }
+        createdViewModels.clear()
     }
 
     // Fix Round 2 (review finding): HomeViewModel's cache-driven collection now starts before
@@ -59,7 +100,7 @@ class HomeViewModelTest {
     // specific transient shape, so these tests assert on the settled state, not an interim one.
     @Test fun `loads feed into content state`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
-        val vm = HomeViewModel(fakeRepositoryWithOneQuake(), emptyHomeLocationStore(), LocationProvider())
+        val vm = createVm(fakeRepositoryWithOneQuake())
         vm.state.test {
             var s = awaitItem()
             while (s is HomeUiState.Loading || (s is HomeUiState.Content && s.quakes.isEmpty())) {
@@ -73,7 +114,7 @@ class HomeViewModelTest {
 
     @Test fun `refreshFailed is true when the initial refresh fails`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
-        val vm = HomeViewModel(fakeRepositoryAlwaysFailing(), emptyHomeLocationStore(), LocationProvider())
+        val vm = createVm(fakeRepositoryAlwaysFailing())
         vm.state.test {
             var s = awaitItem()
             while (s is HomeUiState.Loading || (s is HomeUiState.Content && !s.refreshFailed)) {
@@ -90,7 +131,7 @@ class HomeViewModelTest {
 
     @Test fun `pins carry the id, magnitude and band of their quake`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
-        val vm = HomeViewModel(fakeRepositoryWithOneQuake(), emptyHomeLocationStore(), LocationProvider())
+        val vm = createVm(fakeRepositoryWithOneQuake())
         vm.state.test {
             var s = awaitItem()
             while (s is HomeUiState.Loading || (s is HomeUiState.Content && s.pins.isEmpty())) {
@@ -118,7 +159,7 @@ class HomeViewModelTest {
     // be live.
     @Test fun `isLive is false when the repository's WebSocket never actually connects`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
-        val vm = HomeViewModel(fakeRepositoryWithOneQuake(), emptyHomeLocationStore(), LocationProvider())
+        val vm = createVm(fakeRepositoryWithOneQuake())
         vm.state.test {
             var s = awaitItem()
             while (s is HomeUiState.Loading || (s is HomeUiState.Content && s.quakes.isEmpty())) {
@@ -132,7 +173,7 @@ class HomeViewModelTest {
 
     @Test fun `lastUpdatedMillis is populated from the repository's fetch clock`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
-        val vm = HomeViewModel(fakeRepositoryWithOneQuake(), emptyHomeLocationStore(), LocationProvider())
+        val vm = createVm(fakeRepositoryWithOneQuake())
         vm.state.test {
             var s = awaitItem()
             while (s is HomeUiState.Loading || (s is HomeUiState.Content && s.lastUpdatedMillis == null)) {
@@ -152,7 +193,7 @@ class HomeViewModelTest {
     @Test fun `refreshFailed clears once a new quake proves data is flowing again`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val repository = fakeRepositoryAlwaysFailing()
-        val vm = HomeViewModel(repository, emptyHomeLocationStore(), LocationProvider())
+        val vm = createVm(repository)
         vm.state.test {
             var s = awaitItem()
             while (s is HomeUiState.Loading || (s is HomeUiState.Content && !s.refreshFailed)) {
@@ -189,7 +230,7 @@ class HomeViewModelTest {
     @Test fun `cached pins render immediately, before the pending network refresh resolves`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val gate = CompletableDeferred<Unit>()
-        val vm = HomeViewModel(fakeRepositorySeededWithOneQuake(gate), emptyHomeLocationStore(), LocationProvider())
+        val vm = createVm(fakeRepositorySeededWithOneQuake(gate))
         vm.state.test {
             var s = awaitItem()
             while (s is HomeUiState.Loading) s = awaitItem()
@@ -208,7 +249,7 @@ class HomeViewModelTest {
     @Test fun `newSinceExpand increments once per newly inserted quake`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val repository = fakeRepositoryAlwaysFailing()
-        val vm = HomeViewModel(repository, emptyHomeLocationStore(), LocationProvider())
+        val vm = createVm(repository)
         vm.newSinceExpand.test {
             assertEquals(0, awaitItem())
             repository.ingest(freshQuake("new1"))
@@ -220,7 +261,7 @@ class HomeViewModelTest {
     @Test fun `markSheetExpanded resets newSinceExpand to zero`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val repository = fakeRepositoryAlwaysFailing()
-        val vm = HomeViewModel(repository, emptyHomeLocationStore(), LocationProvider())
+        val vm = createVm(repository)
         vm.newSinceExpand.test {
             assertEquals(0, awaitItem())
             repository.ingest(freshQuake("new1"))
@@ -246,7 +287,7 @@ class HomeViewModelTest {
     @Test fun `markSheetExpanded keeps the counter at zero across repeated arrivals`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val repository = fakeRepositoryAlwaysFailing()
-        val vm = HomeViewModel(repository, emptyHomeLocationStore(), LocationProvider())
+        val vm = createVm(repository)
         vm.newSinceExpand.test {
             assertEquals(0, awaitItem())
             repository.ingest(freshQuake("new1"))
@@ -268,7 +309,7 @@ class HomeViewModelTest {
     @Test fun `homeLocation loads the previously stored point`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val store = emptyHomeLocationStore().apply { set(GeoPoint(12.34, 56.78)) }
-        val vm = HomeViewModel(fakeRepositoryAlwaysFailing(), store, LocationProvider())
+        val vm = createVm(fakeRepositoryAlwaysFailing(), store)
         vm.homeLocation.test {
             var v = awaitItem()
             while (v == null) v = awaitItem()
@@ -283,7 +324,7 @@ class HomeViewModelTest {
     // the emitted list, so this only becomes non-null once that quake has actually been persisted.
     @Test fun `select populates selectedQuake from the repository when the quake exists`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
-        val vm = HomeViewModel(fakeRepositoryWithOneQuake(), emptyHomeLocationStore(), LocationProvider())
+        val vm = createVm(fakeRepositoryWithOneQuake())
         // Wait for the seeded quake to actually land before selecting it — otherwise select("us1234")
         // could race the still-in-flight refreshFeed() ingest and legitimately find nothing yet.
         vm.state.test {
@@ -308,7 +349,7 @@ class HomeViewModelTest {
     // re-emits an already-equal value; this way the null is provably select()'s own doing.
     @Test fun `select sets selectedQuake to null when the id is not found`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
-        val vm = HomeViewModel(fakeRepositoryWithOneQuake(), emptyHomeLocationStore(), LocationProvider())
+        val vm = createVm(fakeRepositoryWithOneQuake())
         vm.state.test {
             var s = awaitItem()
             while (s is HomeUiState.Loading || (s is HomeUiState.Content && s.quakes.isEmpty())) {
@@ -328,7 +369,7 @@ class HomeViewModelTest {
 
     @Test fun `dismissSelection clears selectedQuake back to null`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
-        val vm = HomeViewModel(fakeRepositoryWithOneQuake(), emptyHomeLocationStore(), LocationProvider())
+        val vm = createVm(fakeRepositoryWithOneQuake())
         vm.state.test {
             var s = awaitItem()
             while (s is HomeUiState.Loading || (s is HomeUiState.Content && s.quakes.isEmpty())) {
