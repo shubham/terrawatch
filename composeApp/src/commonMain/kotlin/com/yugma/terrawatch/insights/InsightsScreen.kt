@@ -130,7 +130,7 @@ private fun InsightsContent(
             CardEyebrow(text = "QUAKES PER DAY", trailing = "${formatCount(content.dayCounts.sum())} total")
             BarChart(
                 values = content.dayCounts,
-                labels = dayCountLabels(content.dayCounts.size, nowMillis),
+                labels = dayCountLabels(content.dayCounts.size, content.nowBucketAtCompute),
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
             )
         }
@@ -195,18 +195,31 @@ private fun CardEyebrow(text: String, trailing: String? = null, modifier: Modifi
     }
 }
 
-/** The bar chart's start/end baseline dates - derived independently from [bucketCount]/[nowMillis]
- * rather than threaded through [InsightsUiState.Content] (whose own shape is pinned by the plan
- * brief to exactly `dayCounts`/`bands`/`strongest`/`periodLabel`), but guaranteed to land on the
- * SAME bucket range [InsightsViewModel.computeContent] used to build [dayCounts] in the first
- * place: both this function and that one derive `sinceBucket` as `nowBucket - (bucketCount - 1)`
- * from the identical `nowMillis`/[DAY_MILLIS] - the one shared constant - so the labels can never
- * drift a day off from the bars they caption. */
-private fun dayCountLabels(bucketCount: Int, nowMillis: Long): Pair<String, String> {
+/**
+ * The bar chart's start/end baseline dates.
+ *
+ * Fix round (review I1 - this function's own PRIOR version had a real, since-fixed bug, documented
+ * here rather than erased): it used to take a live `nowMillis` (this screen's own 30s-ticking
+ * clock) and independently re-derive "today's bucket" from it at RENDER time, on the claim that
+ * this would always land on the same bucket `InsightsViewModel.computeContent` used at COMPUTE
+ * time since both divided by the same [DAY_MILLIS]. That claim was false whenever a UTC midnight
+ * passes between a recompute and a later render with no recompute in between - genuinely possible
+ * here, since [InsightsViewModel] deliberately does NOT recompute on a timer, only on a period flip
+ * or a `recentQuakes` invalidation tick (see that class's own kdoc) - the live ticker would then
+ * report a bucket one day ahead of whatever [content][InsightsUiState.Content] actually contains,
+ * silently mislabeling the chart's end date.
+ *
+ * Fixed by taking [nowBucketAtCompute] - [InsightsUiState.Content.nowBucketAtCompute], the EXACT
+ * bucket `computeContent` used to build `dayCounts` - directly, rather than re-deriving anything
+ * from a clock of its own. The TRUE guarantee, now: these labels can never drift from the bars
+ * they caption, because there is no second derivation left to disagree with the first - both
+ * ultimately read the same stored `Long`. `internal`, not `private` (mirrors `DetailSheet.
+ * buildShareText`'s "so a test can pin it" convention) - see `InsightsScreenTest`.
+ */
+internal fun dayCountLabels(bucketCount: Int, nowBucketAtCompute: Long): Pair<String, String> {
     if (bucketCount <= 0) return "" to ""
-    val nowBucket = nowMillis / DAY_MILLIS
-    val sinceBucket = nowBucket - (bucketCount - 1)
-    return formatShortDate(sinceBucket * DAY_MILLIS) to formatShortDate(nowBucket * DAY_MILLIS)
+    val sinceBucket = nowBucketAtCompute - (bucketCount - 1)
+    return formatShortDate(sinceBucket * DAY_MILLIS) to formatShortDate(nowBucketAtCompute * DAY_MILLIS)
 }
 
 /** Loading placeholder - three [SkeletonCard]s, one per card region. Per the brief's own "same

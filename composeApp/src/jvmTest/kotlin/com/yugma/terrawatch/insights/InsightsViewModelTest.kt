@@ -90,6 +90,10 @@ class InsightsViewModelTest {
             assertEquals(1L, content.dayCounts.last(), "the last bucket is always 'today', by construction")
             assertEquals("a", content.strongest?.id)
             assertEquals(InsightsPeriod.SEVEN_DAYS.label, content.periodLabel)
+            // Fix round (review I1): pins that Content actually carries the frozen "now" bucket it
+            // was built with - InsightsScreen's dayCountLabels() depends on this being correct
+            // (see that function's own kdoc for the drift bug this field exists to close).
+            assertEquals(now / DAY_MILLIS, content.nowBucketAtCompute)
             cancelAndIgnoreRemainingEvents()
         }
     }

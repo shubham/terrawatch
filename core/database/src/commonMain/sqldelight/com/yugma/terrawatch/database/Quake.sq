@@ -86,5 +86,8 @@ SELECT (timeMillis / 86400000) AS dayBucket, COUNT(*) AS n FROM quake WHERE time
 bandDistribution:
 SELECT CASE WHEN mag IS NULL THEN 'UNKNOWN' WHEN mag < 3.0 THEN 'LOW' WHEN mag < 4.5 THEN 'MODERATE' WHEN mag < 6.0 THEN 'STRONG' ELSE 'MAJOR' END AS band, COUNT(*) AS n FROM quake WHERE timeMillis >= :sinceMillis GROUP BY band;
 
+-- Fix round (review Entangled Minor): `ORDER BY mag DESC` alone leaves a tied-magnitude winner
+-- unspecified (SQLite gives no ordering guarantee among rows with equal `mag`); `timeMillis DESC`
+-- as a secondary key makes it deterministic -- the more recent of a tied pair wins.
 strongest:
-SELECT * FROM quake WHERE timeMillis >= :sinceMillis AND mag IS NOT NULL ORDER BY mag DESC LIMIT 1;
+SELECT * FROM quake WHERE timeMillis >= :sinceMillis AND mag IS NOT NULL ORDER BY mag DESC, timeMillis DESC LIMIT 1;

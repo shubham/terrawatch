@@ -9,6 +9,7 @@ import com.yugma.terrawatch.model.MagnitudeBand
 import com.yugma.terrawatch.model.Quake
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 
@@ -39,6 +40,17 @@ sealed interface InsightsUiState {
         val bands: List<Pair<MagnitudeBand, Long>>,
         val strongest: Quake?,
         val periodLabel: String,
+        // Fix round (review I1): the UTC epoch-day bucket `computeContent` used as "today" when it
+        // built `dayCounts` - NOT re-derivable from a live clock at render time. `InsightsScreen`
+        // used to do exactly that (re-read its own live-ticking `nowMillis` to compute a baseline
+        // label's end date), which drifts a day off from this value the instant a UTC midnight
+        // passes between a recompute and a later render with no recompute in between - a real bug,
+        // not a hypothetical one, since this class deliberately does NOT recompute on a timer (only
+        // on a period flip or a `recentQuakes` invalidation tick). `InsightsScreen.dayCountLabels`
+        // now derives its baseline dates from THIS value alone, never from its own ticker. Widens
+        // `Content` beyond the plan brief's originally-pinned 4-field shape
+        // (dayCounts/bands/strongest/periodLabel) - a controller-approved fix-round addition.
+        val nowBucketAtCompute: Long,
     ) : InsightsUiState
 
     /** The current period's window has zero quakes at all (`bands.sumOf { it.second } == 0L`,
@@ -142,8 +154,17 @@ class InsightsViewModel(
         // the first (subscribe-time "current state") emission - only genuine subsequent changes
         // should trigger a recompute here; the very first load is already covered by the collector
         // above (backed by `_period`'s own initial value).
+        //
+        // Fix round (review I2): `.conflate()` - SQLDelight's own table-changed notification is
+        // table-level, not row-level (see `recentQuakes`'s own kdoc chain), so a single batched
+        // ingest of N quakes (a typical poll tick landing several new events at once) fires N
+        // separate "quake table changed" notifications, one per `replaceAndDelete` transaction
+        // commit - without this, that is N redundant recomputes queued back-to-back for data this
+        // collector only ever reduces to "something changed, recompute once." `.conflate()` keeps
+        // only the latest pending signal once a `publish()` call is already in flight, collapsing
+        // an N-row batch down to (at most) one recompute after the busy period ends, instead of N.
         viewModelScope.launch {
-            repository.recentQuakes().drop(1).collect {
+            repository.recentQuakes().drop(1).conflate().collect {
                 val gen = ++computeGeneration
                 publish(_period.value, gen)
             }
@@ -185,6 +206,7 @@ class InsightsViewModel(
                 bands = bands,
                 strongest = repository.strongest(sinceMillis),
                 periodLabel = period.label,
+                nowBucketAtCompute = nowBucket,
             )
         }
     }

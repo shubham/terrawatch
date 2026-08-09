@@ -289,4 +289,18 @@ class QuakeDaoTest {
     @Test fun `strongest on an empty db returns null`() {
         assertEquals(null, dao.strongest(sinceMillis = 0L))
     }
+
+    // Fix round (review Entangled Minor): `ORDER BY mag DESC LIMIT 1` alone leaves a tied-magnitude
+    // winner UNSPECIFIED - SQLite gives no guarantee which of several equal-`mag` rows a bare
+    // `ORDER BY mag DESC` returns first, so the "strongest" card could silently show a different
+    // quake across otherwise-identical queries (e.g. after a VACUUM, or on a different SQLite
+    // build). `timeMillis DESC` as a secondary sort key makes the winner deterministic: the MORE
+    // RECENT of a tied pair, matching "strongest, and if tied, most newsworthy right now."
+    @Test fun `strongest breaks an exact magnitude tie by preferring the more recent quake`() {
+        dao.upsertAll(listOf(
+            quake(id = "older", updated = 1, mag = 7.0).copy(timeMillis = 1_000),
+            quake(id = "newer", updated = 1, mag = 7.0).copy(timeMillis = 2_000),
+        ))
+        assertEquals("newer", dao.strongest(sinceMillis = 0L)?.id)
+    }
 }
