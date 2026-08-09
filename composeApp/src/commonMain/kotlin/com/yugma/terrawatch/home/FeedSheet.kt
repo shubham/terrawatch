@@ -44,10 +44,10 @@ import com.yugma.terrawatch.ui.theme.TerraRadii
  * gives it — peeking (30% of screen height) or fully expanded (this same content, just with more
  * of the list visible below the fold).
  *
- * [quakes] is already time-descending (see [HomeViewModel]'s `recentQuakes()`/DAO query) — no
- * re-sort here. [distanceKm] is a per-quake lookup rather than a pre-computed list because the
- * distance depends on the home location, which can resolve (or change) independently of the
- * quake list itself.
+ * Task 12: the header (LIVE/OFFLINE dot + "N NEW" chip) is this phone-only sheet's own chrome —
+ * the desktop/tablet two-pane right panel (`HomeScreen.kt`'s `TwoPaneLayout`) has no peek/expanded
+ * state for a "seen it yet" chip to track, so it renders the status pill instead and reuses only
+ * [FeedList] below, not this whole composable.
  */
 @Composable
 fun FeedSheet(
@@ -65,19 +65,44 @@ fun FeedSheet(
             newCount = newCount,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         )
-        LazyColumn(
-            modifier = Modifier.fillMaxWidth().weight(1f),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            items(quakes, key = { it.id }) { quake ->
-                QuakeCard(
-                    quake = quake,
-                    distanceKm = distanceKm(quake),
-                    nowMillis = nowMillis,
-                    onClick = { onQuakeClick(quake.id) },
-                )
-            }
+        FeedList(
+            quakes = quakes,
+            nowMillis = nowMillis,
+            distanceKm = distanceKm,
+            onQuakeClick = onQuakeClick,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+/**
+ * Task 12: the plain scrollable list of [QuakeCard]s, extracted out of [FeedSheet] so
+ * `HomeScreen.kt`'s desktop/tablet two-pane right panel can reuse the exact same list rendering
+ * without [FeedSheet]'s phone-only sheet header. [quakes] is already time-descending (see
+ * [HomeViewModel]'s `recentQuakes()`/DAO query) — no re-sort here. [distanceKm] is a per-quake
+ * lookup rather than a pre-computed list because the distance depends on the home location, which
+ * can resolve (or change) independently of the quake list itself.
+ */
+@Composable
+fun FeedList(
+    quakes: List<Quake>,
+    nowMillis: Long,
+    distanceKm: (Quake) -> Double?,
+    onQuakeClick: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    LazyColumn(
+        modifier = modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(quakes, key = { it.id }) { quake ->
+            QuakeCard(
+                quake = quake,
+                distanceKm = distanceKm(quake),
+                nowMillis = nowMillis,
+                onClick = { onQuakeClick(quake.id) },
+            )
         }
     }
 }

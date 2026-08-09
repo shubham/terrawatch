@@ -33,9 +33,12 @@ data class QuakePin(
  * - `QuakeMap.android.kt` — the real maplibre-compose render: one `GeoJsonSource` + `CircleLayer`
  *   pair per [MagnitudeBand] present in [pins], radius/color/stroke driven by the band, tap
  *   hit-testing via the layer's own `onClick`.
- * - `QuakeMap.jvm.kt` / `QuakeMap.wasmJs.kt` — a static placeholder pane (Task 6 decision: no live
- *   map off-Android in Plan 2) with a `pins.size` count overlay, until Task 12's real
- *   `FallbackMapPane` lands.
+ * - `QuakeMap.jvm.kt` / `QuakeMap.wasmJs.kt` — Task 12: both now delegate straight to
+ *   [FallbackMapPane] (see its own kdoc for the maplibre-compose JDK-25/no-wasmJs-artifact spike
+ *   decision) — a real equirectangular pin render, not the earlier `pins.size`-count hotfix
+ *   placeholder. Android stays the only *live*, tile-backed map in Plan 2 (and the only judged
+ *   target, per the spike decision); jvm/wasmJs get real pins on a static backdrop instead of a
+ *   live tile map.
  *
  * @param pins every quake currently in view, already reduced to pin-drawing essentials.
  * @param newQuakeId the most recently-inserted quake's id, if any — accepted by every actual as of

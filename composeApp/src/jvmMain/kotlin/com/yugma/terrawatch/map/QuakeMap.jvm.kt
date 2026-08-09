@@ -1,26 +1,15 @@
 package com.yugma.terrawatch.map
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 
-// HOTFIX (Task 6 follow-up), signature grown in Task 8: still a temporary placeholder — Task 12
-// replaces this with the real FallbackMapPane. Desktop's maplibre-compose render genuinely worked
-// in the spike (Metal backend, see docs/superpowers/plans/plan-2-spike-maplibre.md), but the
-// library's desktop artifact requires a JDK 25 runtime this project's Gradle toolchain can't itself
-// launch on, and depending on it from anywhere shared with jvmMain broke :composeApp:jvmTest
-// (JDK25-only class files vs jvmToolchain(17)). Android-only live map for now per the spike
-// decision. [newQuakeId] and [onPinTap] are accepted (matching the expect signature) but unused —
-// there is nothing tappable to wire them to on this placeholder.
-// 0xFFD9E9F4 mirrors core:ui's TerraColors.Water, hardcoded rather than depending on core:ui here
-// — this is a hotfix placeholder, not a feature; core:ui's magnitudeColor has nothing to color yet.
-// [onDebugLongPress] (Task 10) is accepted to keep this actual's signature aligned with the expect
-// declaration but is unused — there is no gesture surface worth wiring on a static placeholder.
+// Task 12: replaces the earlier bare Water-color/pin-count hotfix placeholder with the real
+// FallbackMapPane — see that file's own kdoc for the maplibre-compose spike decision (no JDK 25+
+// runtime available to this project's toolchain) this exists to work around. [newQuakeId] and
+// [onDebugLongPress] are still accepted, matching the shared `expect` signature every actual must
+// satisfy, but neither is forwarded into FallbackMapPane: there is no pin-drop animation off
+// Android (per the spike decision, FallbackMapPane's own kdoc) and no gesture surface worth a
+// debug-inject long-press on a pane with no camera to center on.
 @Composable
 actual fun QuakeMap(
     pins: List<QuakePin>,
@@ -29,7 +18,5 @@ actual fun QuakeMap(
     modifier: Modifier,
     onDebugLongPress: (lat: Double, lon: Double) -> Unit,
 ) {
-  Box(modifier.fillMaxSize().background(Color(0xFFD9E9F4))) {
-    Text("${pins.size} quakes — map on Android", modifier = Modifier.align(Alignment.Center))
-  }
+  FallbackMapPane(pins = pins, onPinTap = onPinTap, modifier = modifier)
 }

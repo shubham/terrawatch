@@ -3,13 +3,16 @@ package com.yugma.terrawatch.home
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.BottomSheetScaffold
@@ -31,6 +34,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.yugma.terrawatch.data.PillStatus
 import com.yugma.terrawatch.data.pillStatus
@@ -86,6 +90,11 @@ private const val SHEET_PEEK_FRACTION = 0.3f
 // stops seeing something flagged "new."
 private const val NEW_QUAKE_HIGHLIGHT_EXPIRY_MILLIS = 2_500L
 
+// Task 12: the desktop/tablet two-pane right panel's fixed width — see layoutMode()'s own kdoc for
+// the paired 900dp breakpoint this is designed against (panel + a still-usable map pane needs the
+// headroom that breakpoint leaves).
+private val TWO_PANE_RIGHT_PANEL_WIDTH = 360.dp
+
 /**
  * The app's centerpiece: a full-bleed [QuakeMap] fed from [viewModel], with a translucent
  * ("glass", per the Calm Guardian spec's floating-overlay rule) status pill + staleness/offline
@@ -100,16 +109,23 @@ private const val NEW_QUAKE_HIGHLIGHT_EXPIRY_MILLIS = 2_500L
  * recreates maplibre-compose's underlying AndroidView/GL surface, which silently re-inits to a
  * blank white surface (no crash, no log — exactly the unexplained blank-render device symptom from
  * the original device-verify pass, root-caused by inspection rather than by more on-device
- * poking). `QuakeMap` is now called from exactly ONE call site, unconditionally, for the entire
- * lifetime of this composable; only its `pins` argument changes across recompositions as [state]
- * changes, which is the incremental-update path `rememberGeoJsonSource`'s `setData` is built for
- * (see QuakeMap.android.kt's own fix note). The `when` below only picks the *overlay* chrome
- * (spinner vs. pill+banner), never the map itself.
+ * poking). `QuakeMap` is now called from exactly ONE call site per layout branch, unconditionally,
+ * for the entire lifetime of that branch's composition; only its `pins` argument changes across
+ * recompositions as [state] changes, which is the incremental-update path `rememberGeoJsonSource`'s
+ * `setData` is built for (see QuakeMap.android.kt's own fix note).
  *
- * Task 9 wraps the whole thing in a [BottomSheetScaffold] rather than pushing the map/pill/banner
- * content up above a persistent sheet: `content` here still gets the full screen (the sheet floats
+ * Task 9 wraps the phone layout in a [BottomSheetScaffold] rather than pushing the map/pill/banner
+ * content up above a persistent sheet: `content` there still gets the full screen (the sheet floats
  * on top, peeking from the bottom) — deliberately, so the map stays edge-to-edge under the peeking
  * sheet exactly like the approved mockup (map-home-layout.html, option 1).
+ *
+ * Task 12 (spike decision — see `docs/superpowers/plans/2026-08-08-terrawatch-plan-2-ui-shell.md`'s
+ * Task 12 section): this single [BoxWithConstraints] now measures itself once and routes to one of
+ * two whole-screen chrome arrangements via [layoutMode] — [PhoneLayout] (unchanged from Task 9/10/11
+ * behavior) below 900dp, [TwoPaneLayout] (map + a fixed-width list/pill panel, both always visible,
+ * no peek/expand sheet) at or above it. [DetailSheet] is a THIRD, independent layer on top of
+ * whichever of the two is active — its own on-demand [ModalBottomSheet][androidx.compose.material3.ModalBottomSheet]
+ * is unaffected by which layout is showing underneath it.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -127,104 +143,36 @@ fun HomeScreen(viewModel: HomeViewModel) {
     // pillStatus() below — the pill's own age math (e.g. the ALERT face's relative-time text)
     // needs to keep advancing for exactly the same reason.
     val nowMillis by rememberNowMillisTicker()
-    val content = state as? HomeUiState.Content
     // Task 10: the pin-drop animation's trigger — see rememberExpiringNewQuakeId's own kdoc for
     // why this needs its own expiry rather than passing viewModel.newQuakeIds straight through.
     val newQuakeId by rememberExpiringNewQuakeId(viewModel.newQuakeIds)
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val scaffoldState = rememberBottomSheetScaffoldState()
-        // Task 9: the sheet's "N NEW" chip clears the moment the user actually drags the sheet
-        // open — SheetValue.Expanded is M3's own name for "fully open" (as opposed to peeking).
-        LaunchedEffect(scaffoldState) {
-            snapshotFlow { scaffoldState.bottomSheetState.currentValue }
-                .collect { value -> if (value == SheetValue.Expanded) viewModel.markSheetExpanded() }
-        }
-        BottomSheetScaffold(
-            modifier = Modifier.fillMaxSize(),
-            scaffoldState = scaffoldState,
-            sheetPeekHeight = maxHeight * SHEET_PEEK_FRACTION,
-            sheetShape = RoundedCornerShape(topStart = TerraRadii.sheet, topEnd = TerraRadii.sheet),
-            sheetContainerColor = MaterialTheme.colorScheme.surface,
-            sheetContent = {
-                FeedSheet(
-                    quakes = content?.quakes.orEmpty(),
-                    isLive = content?.isLive ?: false,
-                    newCount = newSinceExpand,
-                    nowMillis = nowMillis,
-                    distanceKm = { quake ->
-                        homeLocation?.let { haversineKm(it, GeoPoint(quake.lat, quake.lon)) }
-                    },
-                    onQuakeClick = { id -> viewModel.select(id) },
-                )
-            },
-        ) {
-            // Mounted once, for good, regardless of state — see the kdoc above. Empty pins
-            // pre-Content is fine: MapLibre's own tile/style fetch still overlaps the initial DB
-            // read/network refresh instead of waiting behind the spinner. The PaddingValues this
-            // lambda receives (M3's own convention for "leave room for the peeking sheet") is
-            // deliberately unused — the map is meant to run full-bleed under the sheet.
-            Box(Modifier.fillMaxSize()) {
-                QuakeMap(
-                    pins = content?.pins.orEmpty(),
-                    newQuakeId = newQuakeId,
-                    onPinTap = { id -> viewModel.select(id) },
-                    modifier = Modifier.fillMaxSize(),
-                    onDebugLongPress = { lat, lon -> viewModel.injectDebugQuake(lat, lon) },
-                )
-                when (val s = state) {
-                    HomeUiState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
-                    }
-                    is HomeUiState.Content -> {
-                        // Cheap, pure call — recomputed every recomposition rather than
-                        // `remember`-ed (see the Task 9 brief: "keep it a pure call in
-                        // composition, cheap"); quakes/home/nowMillis are all already Compose
-                        // State reads, so this only re-runs when one of them actually changes.
-                        val pill = pillStatus(s.quakes, homeLocation, nowMillis)
-                        Column(
-                            modifier = Modifier
-                                .align(Alignment.TopCenter)
-                                .fillMaxWidth()
-                                .windowInsetsPadding(WindowInsets.statusBars)
-                                .padding(horizontal = 16.dp, vertical = 16.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            StatusShield(
-                                status = pill,
-                                nowMillis = nowMillis,
-                                onClick = {
-                                    // Task 9 scope: every variant was a no-op tap for now — see the
-                                    // brief's explicit "this task: no-op with TODO" call for
-                                    // ASK_LOCATION. Task 11 closes out the ALERT TODO: the pill
-                                    // already carries the nearest significant quake, so opening its
-                                    // detail sheet reuses the exact same select() path as a pin/card
-                                    // tap rather than a bespoke third one.
-                                    when (pill.kind) {
-                                        PillStatus.Kind.ASK_LOCATION -> {} // TODO(Plan 3 settings): re-ask permission / open settings.
-                                        PillStatus.Kind.ALERT -> pill.quake?.let { viewModel.select(it.id) }
-                                        PillStatus.Kind.CALM -> {} // Nothing to show.
-                                    }
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                            // Banner moves below the pill when both are showing (Task 9 brief:
-                            // "above banner if both — banner moves below pill").
-                            if (s.refreshFailed || isStale(s.lastUpdatedMillis, nowMillis)) {
-                                Spacer(Modifier.height(8.dp))
-                                StalenessBanner(lastUpdatedMillis = s.lastUpdatedMillis, nowMillis = nowMillis)
-                            }
-                        }
-                    }
-                }
-            }
+        if (layoutMode(maxWidth.value.toInt()) == LayoutMode.TWO_PANE) {
+            TwoPaneLayout(
+                state = state,
+                homeLocation = homeLocation,
+                nowMillis = nowMillis,
+                newQuakeId = newQuakeId,
+                viewModel = viewModel,
+            )
+        } else {
+            PhoneLayout(
+                state = state,
+                homeLocation = homeLocation,
+                newSinceExpand = newSinceExpand,
+                nowMillis = nowMillis,
+                newQuakeId = newQuakeId,
+                maxHeight = maxHeight,
+                viewModel = viewModel,
+            )
         }
         // Task 11: the quake detail sheet — a second, independent, on-demand ModalBottomSheet
-        // layered above everything else in this BoxWithConstraints (the map, the pill/banner
-        // column, and the persistent feed-sheet BottomSheetScaffold above), matching the mockup's
-        // "detail expands over the map, feed sheet unaffected" treatment. distanceKm is computed
-        // fresh here rather than threaded through from FeedSheet's per-row closure — same
-        // haversineKm(home, quakePoint) call FeedSheet already makes per row, just for the one
+        // layered above everything else in this BoxWithConstraints (whichever of PhoneLayout's
+        // BottomSheetScaffold or TwoPaneLayout's Row is active), matching the mockup's "detail
+        // expands over the map, feed sheet unaffected" treatment. distanceKm is computed fresh
+        // here rather than threaded through from FeedList's per-row closure — same
+        // haversineKm(home, quakePoint) call FeedList already makes per row, just for the one
         // selected quake.
         selectedQuake?.let { quake ->
             DetailSheet(
@@ -233,6 +181,173 @@ fun HomeScreen(viewModel: HomeViewModel) {
                 nowMillis = nowMillis,
                 onShare = { text -> shareQuakeText(text) },
                 onDismiss = { viewModel.dismissSelection() },
+            )
+        }
+    }
+}
+
+/**
+ * Phone layout ([LayoutMode.PHONE], < 900dp) — the Task 9/10/11 design, unchanged in behavior by
+ * Task 12: full-bleed map with a draggable [FeedSheet] anchored to the bottom and the status pill/
+ * staleness banner floating over the map's top edge. Extracted out of [HomeScreen] only so that
+ * function can route between this and [TwoPaneLayout] on a single `BoxWithConstraints`
+ * measurement — [maxHeight] is passed in because `BoxWithConstraintsScope.maxHeight` is only
+ * available inside that scope, not inside a separately-declared composable.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PhoneLayout(
+    state: HomeUiState,
+    homeLocation: GeoPoint?,
+    newSinceExpand: Int,
+    nowMillis: Long,
+    newQuakeId: String?,
+    maxHeight: Dp,
+    viewModel: HomeViewModel,
+) {
+    val content = state as? HomeUiState.Content
+    val scaffoldState = rememberBottomSheetScaffoldState()
+    // Task 9: the sheet's "N NEW" chip clears the moment the user actually drags the sheet
+    // open — SheetValue.Expanded is M3's own name for "fully open" (as opposed to peeking).
+    LaunchedEffect(scaffoldState) {
+        snapshotFlow { scaffoldState.bottomSheetState.currentValue }
+            .collect { value -> if (value == SheetValue.Expanded) viewModel.markSheetExpanded() }
+    }
+    BottomSheetScaffold(
+        modifier = Modifier.fillMaxSize(),
+        scaffoldState = scaffoldState,
+        sheetPeekHeight = maxHeight * SHEET_PEEK_FRACTION,
+        sheetShape = RoundedCornerShape(topStart = TerraRadii.sheet, topEnd = TerraRadii.sheet),
+        sheetContainerColor = MaterialTheme.colorScheme.surface,
+        sheetContent = {
+            FeedSheet(
+                quakes = content?.quakes.orEmpty(),
+                isLive = content?.isLive ?: false,
+                newCount = newSinceExpand,
+                nowMillis = nowMillis,
+                distanceKm = { quake ->
+                    homeLocation?.let { haversineKm(it, GeoPoint(quake.lat, quake.lon)) }
+                },
+                onQuakeClick = { id -> viewModel.select(id) },
+            )
+        },
+    ) {
+        // Mounted once, for good, regardless of state — see HomeScreen's kdoc. Empty pins
+        // pre-Content is fine: MapLibre's own tile/style fetch still overlaps the initial DB
+        // read/network refresh instead of waiting behind the spinner. The PaddingValues this
+        // lambda receives (M3's own convention for "leave room for the peeking sheet") is
+        // deliberately unused — the map is meant to run full-bleed under the sheet.
+        Box(Modifier.fillMaxSize()) {
+            QuakeMap(
+                pins = content?.pins.orEmpty(),
+                newQuakeId = newQuakeId,
+                onPinTap = { id -> viewModel.select(id) },
+                modifier = Modifier.fillMaxSize(),
+                onDebugLongPress = { lat, lon -> viewModel.injectDebugQuake(lat, lon) },
+            )
+            when (val s = state) {
+                HomeUiState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+                is HomeUiState.Content -> {
+                    // Cheap, pure call — recomputed every recomposition rather than
+                    // `remember`-ed (see the Task 9 brief: "keep it a pure call in
+                    // composition, cheap"); quakes/home/nowMillis are all already Compose
+                    // State reads, so this only re-runs when one of them actually changes.
+                    val pill = pillStatus(s.quakes, homeLocation, nowMillis)
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .fillMaxWidth()
+                            .windowInsetsPadding(WindowInsets.statusBars)
+                            .padding(horizontal = 16.dp, vertical = 16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        StatusShield(
+                            status = pill,
+                            nowMillis = nowMillis,
+                            onClick = { onPillClick(pill, viewModel) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        // Banner moves below the pill when both are showing (Task 9 brief:
+                        // "above banner if both — banner moves below pill").
+                        if (s.refreshFailed || isStale(s.lastUpdatedMillis, nowMillis)) {
+                            Spacer(Modifier.height(8.dp))
+                            StalenessBanner(lastUpdatedMillis = s.lastUpdatedMillis, nowMillis = nowMillis)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Desktop/tablet two-pane layout ([LayoutMode.TWO_PANE], >= 900dp) — the Task 12 spike decision's
+ * other half (see `FallbackMapPane.kt`'s kdoc for the maplibre-compose constraint that makes jvm/
+ * wasmJs's [QuakeMap] actual a static pane rather than a live tile map there). The map/fallback
+ * fills whatever width remains after a fixed [TWO_PANE_RIGHT_PANEL_WIDTH] right panel, which holds
+ * the status pill and the full quake list stacked vertically, both always fully visible — there is
+ * no phone-style peek/expand sheet here, so this panel reuses [FeedList] directly (not [FeedSheet],
+ * which adds the peek-only "N NEW" header — see that composable's own Task 12 kdoc note) and
+ * renders [StatusShield] itself rather than floating it over the map.
+ */
+@Composable
+private fun TwoPaneLayout(
+    state: HomeUiState,
+    homeLocation: GeoPoint?,
+    nowMillis: Long,
+    newQuakeId: String?,
+    viewModel: HomeViewModel,
+) {
+    val content = state as? HomeUiState.Content
+    Row(Modifier.fillMaxSize()) {
+        Box(Modifier.weight(1f).fillMaxHeight()) {
+            QuakeMap(
+                pins = content?.pins.orEmpty(),
+                newQuakeId = newQuakeId,
+                onPinTap = { id -> viewModel.select(id) },
+                modifier = Modifier.fillMaxSize(),
+                onDebugLongPress = { lat, lon -> viewModel.injectDebugQuake(lat, lon) },
+            )
+            if (state is HomeUiState.Loading) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            }
+        }
+        Column(
+            modifier = Modifier
+                .width(TWO_PANE_RIGHT_PANEL_WIDTH)
+                .fillMaxHeight()
+                .windowInsetsPadding(WindowInsets.statusBars),
+        ) {
+            // Same "only render once there's real Content" rule PhoneLayout's pill uses — an
+            // empty/Loading pill would have to either lie ("all calm") or invent a fourth,
+            // not-yet-loaded PillStatus.Kind, neither of which this task's brief asked for.
+            if (state is HomeUiState.Content) {
+                val pill = pillStatus(state.quakes, homeLocation, nowMillis)
+                Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                    StatusShield(
+                        status = pill,
+                        nowMillis = nowMillis,
+                        onClick = { onPillClick(pill, viewModel) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (state.refreshFailed || isStale(state.lastUpdatedMillis, nowMillis)) {
+                        Spacer(Modifier.height(8.dp))
+                        StalenessBanner(lastUpdatedMillis = state.lastUpdatedMillis, nowMillis = nowMillis)
+                    }
+                }
+            }
+            FeedList(
+                quakes = content?.quakes.orEmpty(),
+                nowMillis = nowMillis,
+                distanceKm = { quake ->
+                    homeLocation?.let { haversineKm(it, GeoPoint(quake.lat, quake.lon)) }
+                },
+                onQuakeClick = { id -> viewModel.select(id) },
+                modifier = Modifier.fillMaxWidth().weight(1f),
             )
         }
     }
@@ -283,6 +398,20 @@ private fun currentTimeMillis(): Long = Clock.System.now().toEpochMilliseconds()
 
 private fun isStale(lastUpdatedMillis: Long?, nowMillis: Long): Boolean =
     lastUpdatedMillis != null && nowMillis - lastUpdatedMillis > STALE_AFTER_MILLIS
+
+/**
+ * Task 12: the pill's three-way tap behavior, shared between [PhoneLayout] and [TwoPaneLayout] now
+ * that both host their own [StatusShield] call site — extracted so the two layouts' `onClick`
+ * lambdas can't quietly drift out of sync with each other the way two independent copies of this
+ * `when` could.
+ */
+private fun onPillClick(pill: PillStatus, viewModel: HomeViewModel) {
+    when (pill.kind) {
+        PillStatus.Kind.ASK_LOCATION -> {} // TODO(Plan 3 settings): re-ask permission / open settings.
+        PillStatus.Kind.ALERT -> pill.quake?.let { viewModel.select(it.id) }
+        PillStatus.Kind.CALM -> {} // Nothing to show.
+    }
+}
 
 @Composable
 private fun StalenessBanner(lastUpdatedMillis: Long?, nowMillis: Long, modifier: Modifier = Modifier) {
