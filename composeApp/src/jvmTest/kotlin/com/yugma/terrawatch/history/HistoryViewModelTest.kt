@@ -308,6 +308,102 @@ class HistoryViewModelTest {
             cancelAndIgnoreRemainingEvents()
         }
     }
+
+    // ---- Fix round 1 (review Critical): loadedCount was a session-local fetch tally used as the
+    // display query's LIMIT — never re-derived from actual cache/cursor state. Two reproducible
+    // breaks pinned here (a restart-while-offline combination of the reviewer's (b)+(c), and (a)
+    // directly): both confirmed RED against the pre-fix code before the fix landed (see
+    // task-5-report.md's Fix round 1 section for the actual red output), GREEN after.
+
+    @Test fun `a second ViewModel instance over the SAME dao shows cached rows even when its own fetch fails`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val dao = freshDao()
+
+        // VM #1: a normal session that pages two batches deep (3 quakes total) and persists its
+        // cursor to `dao`'s meta table as it goes (HistoryPager.setCursor, unchanged behavior).
+        var callCount1 = 0
+        val engine1 = MockEngine {
+            callCount1++
+            if (callCount1 == 1) geojson(featureCollection(featureJson("a", 9_000_000), featureJson("b", 8_000_000)))
+            else geojson(featureCollection(featureJson("c", 7_000_000)))
+        }
+        val vm1 = createVm(engine1, dao = dao)
+        vm1.state.test {
+            var s = awaitItem()
+            while (s is HistoryUiState.LoadingFirst) s = awaitItem()
+            vm1.loadMore()
+            var s2 = awaitItem()
+            while (s2 is HistoryUiState.Content && s2.totalQuakes() < 3) s2 = awaitItem()
+            assertEquals(3, (s2 as HistoryUiState.Content).totalQuakes())
+            cancelAndIgnoreRemainingEvents()
+        }
+
+        // VM #2: a FRESH HistoryViewModel + FRESH HistoryPager (own empty in-memory cursor map,
+        // exactly like a real process restart) over the SAME `dao` -- i.e. the same on-disk cache
+        // VM #1 just populated. Its own network is fully down (every request fails), simulating
+        // "restarted the app while offline" -- the reviewer's case (c), the most severe of the three.
+        val failingEngine = MockEngine { respond("boom", HttpStatusCode.InternalServerError) }
+        val vm2 = createVm(failingEngine, dao = dao)
+        vm2.state.test {
+            var s = awaitItem()
+            while (s is HistoryUiState.LoadingFirst) s = awaitItem()
+            // Pre-fix: loadedCount starts at 0 on this brand-new instance and is never seeded from
+            // the persisted cursor/cache, so visibleItems() queries `LIMIT 0` -> always empty ->
+            // this lands on Error (or Empty), hiding a fully-cached 3-row archive. Post-fix: the
+            // display window is derived from the pager's own (persisted, correctly-resumed) cursor,
+            // independent of whether THIS instance's own fetch attempt succeeded.
+            val content = assertIs<HistoryUiState.Content>(s, "expected cached rows to still show; got $s")
+            assertEquals(3, content.totalQuakes())
+            assertTrue(content.loadMoreFailed)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `revisiting a filter within the same session shows its previously-cached depth, not a reset`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        // Filter A ("All") pages 2 batches deep (3 quakes). Filter B ("M6+") pages 1 batch (1 quake,
+        // deliberately dated BEFORE filter A's own cursor so it can never accidentally satisfy A's
+        // own range once we flip back). Flipping back to A must show A's own full depth again, not
+        // whatever B happened to leave behind, and not a reset to a single fresh page.
+        var callCount = 0
+        val engine = MockEngine { req ->
+            callCount++
+            when {
+                req.url.parameters["minmagnitude"] == "6.0" ->
+                    geojson(featureCollection(featureJson("strong", 6_000_000, mag = 6.5)))
+                callCount == 1 -> geojson(featureCollection(featureJson("a", 9_000_000), featureJson("b", 8_000_000)))
+                callCount == 2 -> geojson(featureCollection(featureJson("c", 7_000_000)))
+                // 3rd call for filter A (the revisit): nothing further back -- End, cursor unchanged.
+                else -> geojson(featureCollection())
+            }
+        }
+        val vm = createVm(engine)
+        vm.state.test {
+            var s = awaitItem()
+            while (s is HistoryUiState.LoadingFirst) s = awaitItem()
+            vm.loadMore()
+            var s2 = awaitItem()
+            while (s2 is HistoryUiState.Content && s2.totalQuakes() < 3) s2 = awaitItem()
+            assertEquals(3, (s2 as HistoryUiState.Content).totalQuakes(), "filter A should be 3 deep")
+
+            vm.setFilter(HistoryFilter(minMag = 6.0))
+            var s3 = awaitItem()
+            while (s3 is HistoryUiState.LoadingFirst) s3 = awaitItem()
+            assertEquals(1, (s3 as HistoryUiState.Content).totalQuakes(), "filter B should be 1 deep")
+
+            vm.setFilter(HistoryFilter())
+            var s4 = awaitItem()
+            while (s4 is HistoryUiState.LoadingFirst) s4 = awaitItem()
+            // Pre-fix: setFilter() unconditionally zeroes loadedCount, so revisiting A re-derives
+            // its display window from whatever THIS call's own (possibly empty/End) fetch returns,
+            // not from A's actual 3-row cache -- this lands on Empty. Post-fix: A's own cursor
+            // (tracked independently per filter inside HistoryPager, never reset by setFilter) is
+            // exactly where A's walk left off, so the display window still covers all 3 rows.
+            val content = assertIs<HistoryUiState.Content>(s4, "expected filter A's cached depth to still show; got $s4")
+            assertTrue(content.totalQuakes() >= 3, "revisiting filter A must not shrink below its previous depth (3), was ${content.totalQuakes()}")
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
 }
 
 class GroupByMonthTest {

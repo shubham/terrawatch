@@ -71,6 +71,14 @@ class QuakeDao(private val db: TerraWatchDb, private val clock: () -> Long = { 0
     fun pageBefore(timeMillis: Long, limit: Int, minMag: Double?): List<DomainQuake> =
         db.quakeQueries.pageBefore(timeMillis, minMag, limit.toLong()).executeAsList().map { it.toDomain() }
 
+    /**
+     * Task 5 fix round 1 (Plan 3, review Critical): `[lowerInclusive, upperExclusive)` range read,
+     * no LIMIT — see [com.yugma.terrawatch.data.QuakeRepository.pageBetween]'s own kdoc for why
+     * History's display query needs a range instead of a count-based page.
+     */
+    fun pageBetween(lowerInclusive: Long, upperExclusive: Long, minMag: Double?): List<DomainQuake> =
+        db.quakeQueries.pageBetween(lowerInclusive, upperExclusive, minMag).executeAsList().map { it.toDomain() }
+
     fun countAll(): Long = db.quakeQueries.countAll().executeAsOne()
 
     fun lastFetchedAtMillis(): Long? = db.quakeQueries.lastFetchedAt().executeAsOneOrNull()?.MAX

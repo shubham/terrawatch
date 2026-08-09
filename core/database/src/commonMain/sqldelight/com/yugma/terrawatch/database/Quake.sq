@@ -38,6 +38,19 @@ SELECT * FROM quake
 WHERE timeMillis < :timeMillis AND (:minMag IS NULL OR mag >= :minMag)
 ORDER BY timeMillis DESC LIMIT :limit;
 
+-- Task 5 fix round 1 (Plan 3, review Critical): History's display query needs "everything between
+-- this filter's paging cursor and its ceiling", not a count-bounded page — see
+-- QuakeRepository.pageBetween's own kdoc for the full story (loadedCount, the field this replaces,
+-- desynced from actual cache/cursor state on a filter revisit, an app restart, or an offline
+-- restart). No LIMIT: the range itself is the bound, by construction of how HistoryPager advances
+-- its cursor — an unbounded row count here would only happen for a filter whose own archive walk
+-- has gone extremely deep, which is a real usage pattern this app accepts un-paginated for v1 (see
+-- that kdoc's own performance note).
+pageBetween:
+SELECT * FROM quake
+WHERE timeMillis >= :lowerInclusive AND timeMillis < :upperExclusive AND (:minMag IS NULL OR mag >= :minMag)
+ORDER BY timeMillis DESC;
+
 countAll:
 SELECT COUNT(*) FROM quake;
 

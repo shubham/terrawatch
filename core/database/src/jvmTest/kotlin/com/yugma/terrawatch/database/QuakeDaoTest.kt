@@ -73,6 +73,36 @@ class QuakeDaoTest {
         assertEquals(listOf("c", "b"), page.map { it.id })
     }
 
+    // Task 5 fix round 1 (Plan 3, review Critical): pageBetween backs HistoryViewModel's own
+    // display query (QuakeRepository.pageBetween's kdoc has the full story) — a range read with no
+    // LIMIT, replacing a session-local fetch-count tally that could desync from the actual cache.
+    @Test fun `pageBetween returns rows in the range, magnitude-filtered, descending, no limit`() {
+        dao.upsertAll(listOf(
+            quake(id = "a", updated = 1).copy(timeMillis = 100, mag = 2.0),
+            quake(id = "b", updated = 1).copy(timeMillis = 200, mag = 5.0),
+            quake(id = "c", updated = 1).copy(timeMillis = 300, mag = 6.5),
+            quake(id = "d", updated = 1).copy(timeMillis = 400, mag = 7.0),
+        ))
+        // [200, 400) with minMag=4.5 -- "a" excluded (below range), "d" excluded (at/above ceiling),
+        // "b"/"c" both included even though that's more than a single arbitrary page size.
+        val rows = dao.pageBetween(lowerInclusive = 200, upperExclusive = 400, minMag = 4.5)
+        assertEquals(listOf("c", "b"), rows.map { it.id })
+    }
+
+    @Test fun `pageBetween with a null minMag and MAX_VALUE ceiling returns everything at or after the lower bound`() {
+        dao.upsertAll(listOf(
+            quake(id = "old", updated = 1).copy(timeMillis = 100, mag = 1.0),
+            quake(id = "new", updated = 1).copy(timeMillis = 500, mag = 9.0),
+        ))
+        val rows = dao.pageBetween(lowerInclusive = 500, upperExclusive = Long.MAX_VALUE, minMag = null)
+        assertEquals(listOf("new"), rows.map { it.id })
+    }
+
+    @Test fun `pageBetween on an empty range returns nothing`() {
+        dao.upsert(quake(id = "a").copy(timeMillis = 100))
+        assertEquals(emptyList(), dao.pageBetween(lowerInclusive = 200, upperExclusive = 300, minMag = null))
+    }
+
     @Test fun `delete removes the row`() {
         dao.upsert(quake())
         dao.delete("us1")

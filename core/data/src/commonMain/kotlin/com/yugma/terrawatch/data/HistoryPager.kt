@@ -102,6 +102,16 @@ class HistoryPager(
             )
     }
 
+    /**
+     * Task 5 fix round 1 (Plan 3, review Critical): read-only — resolves (and, on a cache miss,
+     * caches) [filter]'s current cursor without advancing it or touching the network. Exists so
+     * `HistoryViewModel`'s display query can derive "everything cached so far for this filter" from
+     * the SAME position [loadNext] itself is tracking, instead of a separately-maintained fetch
+     * tally that can desync from it (see [QuakeRepository.pageBetween]'s kdoc for the full
+     * incident). Safe to call as often as needed — same cache as [loadNext]'s own [cursorFor].
+     */
+    suspend fun currentCursor(filter: HistoryFilter): Long = cursorFor(filter)
+
     private suspend fun cursorFor(filter: HistoryFilter): Long =
         cursors[filter] ?: resolveInitialCursor(filter).also { cursors[filter] = it }
 
@@ -123,6 +133,18 @@ class HistoryPager(
     // from the two field values is unambiguously stable across all three without relying on
     // Double/Int.hashCode() cross-platform parity, and is human-readable in a debug DB dump for
     // free.
+    //
+    // Task 5 fix round 1 (review minor): this still leans on `minMag`'s (a `Double?`) implicit
+    // `toString()` for the interpolated key segment — an assumption, not independently verified for
+    // arbitrary values, that Kotlin's `Double.toString()` renders identically (no scientific
+    // notation, no locale-dependent separator) across the jvm/android/wasmJs targets for the SPECIFIC
+    // values this UI ever actually produces (`null`, `4.5`, `6.0` — the only three the shipped
+    // magnitude chips can select). Holds for those three trivially (short, exact, non-scientific
+    // decimals) but is not a general-purpose guarantee — an arbitrary future `minMag` (e.g. something
+    // computed rather than chip-selected, or an extreme magnitude) could in principle render
+    // differently across targets and split one logical filter into two cursor rows. Revisit with an
+    // explicit format (e.g. a fixed-decimal string) if `minMag` ever stops being one of these three
+    // literal values.
     private fun HistoryFilter.stableKey(): String = "min${minMag ?: "x"}_yr${year ?: "x"}"
 }
 

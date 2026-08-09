@@ -20,7 +20,7 @@ import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 /** One sticky-header group — "AUGUST 2026" plus the quakes that fall inside it, already in
- * whatever order [groupByMonth]'s input arrived in (time-descending, per [QuakeRepository.pageBefore]). */
+ * whatever order [groupByMonth]'s input arrived in (time-descending, per [QuakeRepository.pageBetween]). */
 data class HistorySection(val label: String, val quakes: List<Quake>)
 
 /**
@@ -109,12 +109,6 @@ class HistoryViewModel(
     private val _state = MutableStateFlow<HistoryUiState>(HistoryUiState.LoadingFirst)
     val state: StateFlow<HistoryUiState> = _state
 
-    // How many rows THIS filter's walk has ingested so far (across every successful PageResult.Loaded
-    // since the last setFilter reset) — the `limit` for [visibleItems]' own re-query of the cache,
-    // so the display always tries to show "everything fetched so far for this filter", not an
-    // arbitrary fixed page size.
-    private var loadedCount = 0
-
     // Guards against overlapping loadMore()/loadFirstPage() launches — same "track the one in-flight
     // Job, cancel before replacing it" shape as HomeViewModel's own retryJob/QuakeSelectionViewModel's
     // selectJob.
@@ -148,7 +142,6 @@ class HistoryViewModel(
         if (newFilter == _filter.value) return
         loadJob?.cancel()
         _filter.value = newFilter
-        loadedCount = 0
         loadFirstPage()
     }
 
@@ -188,7 +181,6 @@ class HistoryViewModel(
         while (_filter.value == filter) {
             when (val result = pager.loadNext(filter)) {
                 is PageResult.Loaded -> {
-                    loadedCount += result.count
                     val visible = visibleItems(filter)
                     if (visible.isNotEmpty()) {
                         publish(filter, historyContent(visible, endReached = false, loadMoreFailed = false))
@@ -224,18 +216,40 @@ class HistoryViewModel(
     }
 
     /**
-     * Re-reads the local cache for display: everything [loadedCount] rows deep, matching
-     * [HistoryFilter.minMag], SQL-bounded by the year's ceiling (excludes newer, un-related rows —
-     * e.g. Home's own always-running 24h feed poll writes into this SAME `quake` table, so a
-     * year=2025 filter must not let today's 2026 arrivals leak into "top N most recent" — bounding
-     * by [HistoryFilter.yearCeilingMillisExclusiveOrNull] in the SQL itself, not after the fact,
-     * is what prevents that), then client-side floor-filtered against
-     * [HistoryFilter.yearFloorMillisOrNull] (the "client-side floor filter" the plan calls for —
-     * [QuakeRepository.pageBefore] has no lower-bound parameter to push this into SQL too).
+     * Re-reads the local cache for display. Task 5 fix round 1 (review Critical): the display
+     * window is now derived from [HistoryPager]'s own current cursor for [filter] — "everything
+     * cached between where this filter's walk has gotten to and its ceiling" — not from a
+     * session-local fetch-count tally (the original `loadedCount` field, removed). That tally
+     * could desync from the real cache in three ways a review caught: revisiting a filter
+     * mid-session (`setFilter` zeroed it unconditionally, even though [HistoryPager]'s own
+     * per-filter cursor was untouched), an app restart (a fresh tally starts at 0 while the cursor
+     * correctly resumes from persisted meta), and worst, a restart while offline (the tally stays 0
+     * because the fetch itself fails, so the old `pageBefore(..., limit = 0, ...)` was
+     * unconditionally empty — a fully-cached archive rendered as a blank `Error`/`Empty`,
+     * contradicting the "cached pages browse offline" contract). A cursor-derived range has no
+     * separate state to desync: whatever [HistoryPager.currentCursor] answers — freshly advanced
+     * this session, resumed from a persisted meta row, or simply untouched by an unrelated fetch
+     * failure — IS the true lower bound of what this filter has ever cached.
+     *
+     * SQL-bounded by the year's ceiling on the way in (excludes newer, unrelated rows — e.g. Home's
+     * own always-running 24h feed poll writes into this SAME `quake` table, so a year=2025 filter
+     * must not let today's 2026 arrivals leak in — bounding by
+     * [HistoryFilter.yearCeilingMillisExclusiveOrNull] in the SQL itself, not after the fact, is
+     * what prevents that), then client-side floor-filtered against [HistoryFilter.yearFloorMillisOrNull]
+     * (the "client-side floor filter" the plan calls for — [QuakeRepository.pageBetween] has no
+     * lower-CEILING-side bound of its own for this; the floor check is still needed on top of the
+     * cursor-as-lower-bound, separately, because a year-filtered walk's LAST page can legitimately
+     * spill below the floor — see [HistoryPager]'s own kdoc — leaving the cursor itself sitting
+     * below the floor after that spill).
+     *
+     * See [QuakeRepository.pageBetween]'s own kdoc for the cross-filter cache-bleed semantics this
+     * range read carries (rows shown are always correct, but can be broader than what this exact
+     * filter's own walk fetched) and the accepted no-`LIMIT` performance tradeoff.
      */
     private suspend fun visibleItems(filter: HistoryFilter): List<Quake> {
         val ceilingExclusive = filter.yearCeilingMillisExclusiveOrNull() ?: Long.MAX_VALUE
-        val rows = repository.pageBefore(ceilingExclusive, loadedCount, filter.minMag)
+        val lowerInclusive = pager.currentCursor(filter)
+        val rows = repository.pageBetween(lowerInclusive, ceilingExclusive, filter.minMag)
         val floor = filter.yearFloorMillisOrNull()
         return if (floor != null) rows.filter { it.timeMillis >= floor } else rows
     }

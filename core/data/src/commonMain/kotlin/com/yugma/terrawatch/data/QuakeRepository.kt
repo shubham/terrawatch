@@ -164,13 +164,54 @@ class QuakeRepository(
     }
 
     /**
-     * Task 5 (Plan 3): thin DAO pass-through — same "suspend + [ioDispatcher]" shape as [byId].
-     * Both [HistoryPager] (this module) and `HistoryViewModel` (composeApp — re-querying the local
-     * cache for display after every page load/filter change) only depend on this repository, never
-     * [QuakeDao] directly, so this is the one seam either needs.
+     * Task 5 fix round 1 (Plan 3, review Critical): `HistoryViewModel`'s display query — everything
+     * cached between [HistoryPager]'s own current cursor position for a filter and that filter's
+     * ceiling, no `LIMIT`. Thin DAO pass-through, same "suspend + [ioDispatcher]" shape as [byId];
+     * `HistoryViewModel` only depends on this repository, never [QuakeDao] directly, so this is the
+     * one seam it needs for display reads (cursor persistence is the separate `historyCursor`/
+     * `setHistoryCursor` pair below).
+     *
+     * Replaces the original Task 5 shape — a `pageBefore(ceiling, limit = loadedCount, minMag)`
+     * call, where `loadedCount` was a session-local tally of how many rows THIS ViewModel instance
+     * had fetched via [HistoryPager.loadNext] this session. That tally is a fundamentally different
+     * quantity than "how much is actually cached for this filter," and desynced from it in three
+     * ways a code review caught (none guarded by a test until this fix): (a) revisiting a filter
+     * mid-session — [HistoryPager]'s own per-filter cursor is unaffected by `setFilter`, but
+     * `loadedCount` was unconditionally zeroed by it, so a revisit re-derived the display window
+     * from whatever ONE fresh fetch returned, not the filter's real cumulative depth; (b) an app
+     * restart — a fresh `HistoryViewModel` starts `loadedCount` at 0 even though [HistoryPager]
+     * correctly resumes its cursor from the persisted meta row, so the display window shrank to
+     * whatever the first post-restart fetch happened to return; (c) restart-while-offline — the
+     * worst case: `loadedCount` stays 0 because the first fetch attempt FAILS, so `pageBefore(...,
+     * limit = 0, ...)` is a SQL `LIMIT 0` — unconditionally empty — turning a fully-cached archive
+     * into a full-screen `Error`/`Empty`, exactly contradicting the "cached pages browse offline"
+     * contract. A cursor-derived range has no separate tally to desync: the display window is
+     * always "whatever this filter's cursor say it's covered," recomputed fresh every call, whether
+     * that cursor came from this session's own paging, from persisted meta after a restart, or was
+     * simply never touched by an unrelated fetch failure.
+     *
+     * **Cross-filter cache-bleed, documented honestly (a reviewer-requested clarification, not a
+     * new behavior this fix introduces — the original `pageBefore`-based query had the identical
+     * property, just harder to notice with a `LIMIT` in the way):** this range query matches
+     * [HistoryFilter.minMag] against EVERY row in that range regardless of which walk originally
+     * fetched it. A quake landing in `[lower, upper)` because [com.yugma.terrawatch.home.HomeViewModel]'s
+     * always-running 24h poll cached it, or because a DIFFERENT [HistoryFilter] value's own archive
+     * walk happened to pass through the same time range, shows up here too, as long as its magnitude
+     * matches. This is "correct but broader than this filter's own walk" — every row shown genuinely
+     * exists and genuinely matches the filter, never a false positive — but it does mean [HistoryPager]
+     * can spend a real network round trip re-fetching (idempotently — [ingest] no-ops on
+     * already-current data) a time span another source already populated. Accepted for v1: detecting
+     * "already covered by a different source" before paging would need cross-filter bookkeeping this
+     * task's brief never asked for, for a cost that's wasted egress, not incorrect data.
+     *
+     * **No `LIMIT`, documented tradeoff**: a filter whose own archive walk has gone extremely deep
+     * (many hundreds of pages) makes this an unbounded-width range read. Accepted for v1 — the
+     * `quake_time` index keeps the read itself cheap, and reaching that depth requires the user to
+     * have actually scrolled that far, at which point the query is proportionate to what's already
+     * been shown; revisit if real usage ever makes this measurably slow.
      */
-    suspend fun pageBefore(timeMillis: Long, limit: Int, minMag: Double? = null): List<Quake> =
-        withContext(ioDispatcher) { dao.pageBefore(timeMillis, limit, minMag) }
+    suspend fun pageBetween(lowerInclusive: Long, upperExclusive: Long, minMag: Double? = null): List<Quake> =
+        withContext(ioDispatcher) { dao.pageBetween(lowerInclusive, upperExclusive, minMag) }
 
     /**
      * Task 5 (Plan 3): [HistoryPager]'s cursor persistence — a suspend + [ioDispatcher] pass-through
