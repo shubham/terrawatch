@@ -1,6 +1,5 @@
 package com.yugma.terrawatch.nav
 
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -8,19 +7,15 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
@@ -36,6 +31,7 @@ import com.yugma.terrawatch.home.LayoutMode
 import com.yugma.terrawatch.home.QuakeSelectionViewModel
 import com.yugma.terrawatch.home.layoutMode
 import com.yugma.terrawatch.insights.InsightsScreen
+import com.yugma.terrawatch.onboarding.OnboardingScreen
 import com.yugma.terrawatch.settings.SettingsScreen
 import org.koin.compose.koinInject
 
@@ -238,9 +234,16 @@ private fun AppNavHost(
         // onBack pops this stack-only route — see SettingsScreen's own kdoc for why it needs one at
         // all (unlike HOME/HISTORY/INSIGHTS, this isn't a tab with its own back-stack root).
         composable(Routes.SETTINGS) { SettingsScreen(onBack = { navController.popBackStack() }) }
+        // Task 8 (Plan 3): the real 3-step pager replaces the OnboardingPlaceholder this route
+        // used to render (Task 4's own scaffolding, deleted below — see OnboardingScreen.kt's own
+        // kdoc for the 3 steps). onFinish fires from EITHER the pager's own "Done" (final step) or
+        // its top-right "Skip" (any step) — both mean the same thing to this call site: flip the
+        // one-shot flag, then pop onboarding off the back stack entirely so it can never be reached
+        // via system-back (see navigateToTab's own kdoc for why Routes.HOME, not
+        // findStartDestination(), is this graph's correct post-onboarding "first tab").
         composable(Routes.ONBOARDING) {
-            OnboardingPlaceholder(
-                onGetStarted = {
+            OnboardingScreen(
+                onFinish = {
                     onboardingStore.setOnboarded()
                     navController.navigate(Routes.HOME) {
                         popUpTo(Routes.ONBOARDING) { inclusive = true }
@@ -294,35 +297,3 @@ private val TAB_ITEMS = listOf(
     TabItem(Routes.HISTORY, "History") { HistoryTabIcon() },
     TabItem(Routes.INSIGHTS, "Insights") { InsightsTabIcon() },
 )
-
-/**
- * Task 4's onboarding placeholder -- Task 8 replaces this with the real 3-step pager
- * (`onboarding/OnboardingScreen.kt`). [onGetStarted] both flips [OnboardingStore]'s flag AND
- * navigates home in one step (wired by [AppNavHost]) — this composable itself is stateless UI
- * only, same "screen doesn't own the persistence decision" split every other screen/store pairing
- * in this codebase already draws.
- */
-@Composable
-private fun OnboardingPlaceholder(onGetStarted: () -> Unit) {
-    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        Column(
-            modifier = Modifier.fillMaxSize().padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Text(
-                text = "Welcome to TerraWatch",
-                style = MaterialTheme.typography.headlineMedium,
-                color = MaterialTheme.colorScheme.onBackground,
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = "Onboarding — Task 8",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(24.dp))
-            Button(onClick = onGetStarted) { Text("Get started") }
-        }
-    }
-}
