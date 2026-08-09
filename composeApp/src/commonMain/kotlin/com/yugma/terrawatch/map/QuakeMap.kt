@@ -2,6 +2,7 @@ package com.yugma.terrawatch.map
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.model.MagnitudeBand
 
 /**
@@ -55,6 +56,18 @@ data class QuakePin(
  *   call site, not a `BuildConfig` field — this module still has none, see QuakeMap.android.kt's
  *   Task 8 fix note); jvm/wasmJs accept the parameter to keep the expect/actual signature aligned
  *   but their placeholder panes have nothing to attach a gesture to.
+ * @param homeLocation Task 7 (Plan 3), USER REQUIREMENT: when non-null, every actual draws a
+ *   subtle home-radius ring ([radiusKm], Safe-green, ~25% alpha fill + 1.5dp stroke) centered here —
+ *   android: a `circlePolygon`-traced GeoJSON polygon `FillLayer`/`LineLayer` pair (MapLibre's
+ *   `CircleLayer` radius is a fixed on-screen pixel size, not a real-world distance, so it can't
+ *   draw this directly — see QuakeMap.android.kt's own kdoc); jvm/wasmJs forward straight to
+ *   `FallbackMapPane`'s own Canvas-projected approximation. Null (never shown) exactly matches
+ *   `PillStatus.Kind.ASK_LOCATION`'s own "no reference point yet" state.
+ * @param radiusKm the ring's radius — ignored when [homeLocation] is null. Defaults to
+ *   [com.yugma.terrawatch.data.AlertRuleStore.DEFAULT_RADIUS_KM]'s own value (100.0) so a caller
+ *   that doesn't yet thread a real store-fed value through still renders a geographically-honest
+ *   ring rather than an arbitrary placeholder number — `HomeScreen`'s real call sites always pass
+ *   `HomeViewModel.nearbyRadiusKm`'s live value instead of relying on this default.
  */
 @Composable
 expect fun QuakeMap(
@@ -63,4 +76,6 @@ expect fun QuakeMap(
     onPinTap: (String) -> Unit,
     modifier: Modifier = Modifier,
     onDebugLongPress: (lat: Double, lon: Double) -> Unit = { _, _ -> },
+    homeLocation: GeoPoint? = null,
+    radiusKm: Double = 100.0,
 )

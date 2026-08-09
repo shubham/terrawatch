@@ -2,6 +2,7 @@ package com.yugma.terrawatch.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.yugma.terrawatch.data.AlertRuleStore
 import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.data.QuakeRepository
 import com.yugma.terrawatch.data.RefreshStatus
@@ -69,6 +70,7 @@ class HomeViewModel(
     private val repository: QuakeRepository,
     private val homeLocationStore: HomeLocationStore,
     private val locationProvider: LocationProvider,
+    private val alertRuleStore: AlertRuleStore,
 ) : ViewModel() {
     private val _state = MutableStateFlow<HomeUiState>(HomeUiState.Loading)
     val state: StateFlow<HomeUiState> = _state
@@ -85,6 +87,20 @@ class HomeViewModel(
     // in both cases: nothing to be unsafe *about* without a reference point.
     private val _homeLocation = MutableStateFlow<GeoPoint?>(null)
     val homeLocation: StateFlow<GeoPoint?> = _homeLocation
+
+    // Task 7 (Plan 3), USER REQUIREMENT: the pill's radius/minMag are now user-settable (Settings
+    // screen slider -> AlertRuleStore) rather than pillStatus()'s own hardcoded 500.0/4.5 defaults.
+    // Seeded with the store's own compile-time defaults (not e.g. 0.0) so the very first composition
+    // — before either collector below has resolved a real DB read — already renders with the exact
+    // same numbers a fresh/never-configured store would produce, rather than a momentarily-wrong
+    // "radius 0" pill. Same "MutableStateFlow seeded with a sane default, then updated by a live
+    // collector" shape as [homeLocation] two lines up, minus that one's null/no-value-yet state:
+    // unlike home location, there is no "not yet known" state for a radius/threshold to be in.
+    private val _nearbyRadiusKm = MutableStateFlow(AlertRuleStore.DEFAULT_RADIUS_KM)
+    val nearbyRadiusKm: StateFlow<Double> = _nearbyRadiusKm
+
+    private val _minMag = MutableStateFlow(AlertRuleStore.DEFAULT_MIN_MAG)
+    val minMag: StateFlow<Double> = _minMag
 
     // Task 9: how many quakes have arrived since the feed sheet was last dragged open — the
     // sheet's "N NEW" chip. Incremented alongside refreshFailed's clearing below (same triggering
@@ -203,6 +219,18 @@ class HomeViewModel(
         // ordering between this collector's subscribe and the one-shot block's own write.
         viewModelScope.launch {
             homeLocationStore.updates.collect { point -> _homeLocation.value = point }
+        }
+
+        // Task 7 (Plan 3), USER REQUIREMENT: mirrors the homeLocationStore.updates collector just
+        // above — AlertRuleStore.nearbyRadiusKm/minMag are themselves live Flows (see that class's
+        // own kdoc for why, unlike HomeLocationStore's get()+updates split), so a plain collect{}
+        // is all this needs: no separate one-shot initial read, since the store's own Flow already
+        // emits its current value to a fresh subscriber (onStart{} in AlertRuleStore).
+        viewModelScope.launch {
+            alertRuleStore.nearbyRadiusKm.collect { radiusKm -> _nearbyRadiusKm.value = radiusKm }
+        }
+        viewModelScope.launch {
+            alertRuleStore.minMag.collect { minMag -> _minMag.value = minMag }
         }
 
         // The cache-driven state loop. Starts collecting immediately — does NOT wait on the

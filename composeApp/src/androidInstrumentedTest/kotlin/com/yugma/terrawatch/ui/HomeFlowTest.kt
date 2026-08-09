@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.test.platform.app.InstrumentationRegistry
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
+import com.yugma.terrawatch.data.AlertRuleStore
 import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.data.QuakeRepository
 import com.yugma.terrawatch.database.QuakeDao
@@ -120,7 +121,11 @@ class HomeFlowTest {
     private fun buildViewModel(repository: QuakeRepository): HomeViewModel {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val homeLocationStore = HomeLocationStore(QuakeDao(TerraWatchDb(freshDriver(context))))
-        return HomeViewModel(repository, homeLocationStore, LocationProvider(context))
+        // Task 7 (Plan 3): a fresh, empty AlertRuleStore — this class's own two tests don't
+        // exercise radius/minMag wiring (that's HomeViewModelTest's jvmTest job), only that
+        // HomeViewModel still constructs and reaches Content/the offline banner end to end.
+        val alertRuleStore = AlertRuleStore(QuakeDao(TerraWatchDb(freshDriver(context))))
+        return HomeViewModel(repository, homeLocationStore, LocationProvider(context), alertRuleStore)
             .also { createdViewModels += it }
     }
 

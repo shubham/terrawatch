@@ -1,16 +1,23 @@
 package com.yugma.terrawatch
 
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.Surface
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import com.yugma.terrawatch.data.ThemeSetting
+import com.yugma.terrawatch.data.ThemeStore
+import com.yugma.terrawatch.data.resolveDarkTheme
 import com.yugma.terrawatch.home.HomeViewModel
 import com.yugma.terrawatch.home.QuakeSelectionViewModel
 import com.yugma.terrawatch.motion.LocalReducedMotion
 import com.yugma.terrawatch.motion.systemReducedMotion
 import com.yugma.terrawatch.nav.AppNav
 import com.yugma.terrawatch.ui.theme.TerraTheme
+import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 
 // No KoinContext/KoinApplication wrapper: both platform entry points (MainActivity, jvmMain's
@@ -39,11 +46,22 @@ import org.koin.compose.viewmodel.koinViewModel
 // which is not what "shared instance across tabs" means. QuakeSelectionViewModel used to be
 // HomeScreen's own defaulted `= koinViewModel()` parameter (Task 3) specifically so this override
 // would be possible once Task 4 needed it — see that composable's own kdoc.
+// Task 7 (Plan 3): TerraTheme's darkTheme now resolves through the Settings screen's theme radio
+// (System/Light/Dusk) instead of always deferring to isSystemInDarkTheme(). ThemeStore is
+// koinInject()'d directly here — same non-ViewModel "plain single, plain koinInject()" shape
+// AppNav.kt already uses for OnboardingStore — rather than through a ViewModel App() would
+// otherwise have no other reason to own. collectAsState(initial = SYSTEM) is safe against a
+// "flash of the wrong theme" on cold start: ThemeStore.theme's own onStart{} block (see that
+// class's kdoc) emits the real stored value synchronously the moment this collector subscribes,
+// well before the first frame actually paints, so SYSTEM here is a type-safe placeholder for an
+// initial value collectAsState requires, not a value this composable ever visibly renders with.
 @Composable
 fun App() {
     val homeViewModel = koinViewModel<HomeViewModel>()
     val selectionViewModel = koinViewModel<QuakeSelectionViewModel>()
-    TerraTheme {
+    val themeStore = koinInject<ThemeStore>()
+    val themeSetting by themeStore.theme.collectAsState(initial = ThemeSetting.SYSTEM)
+    TerraTheme(darkTheme = resolveDarkTheme(themeSetting, isSystemInDarkTheme())) {
         // Task 10: resolved once here (composition root) and handed down via CompositionLocal so
         // every screen/component that gates motion off LocalReducedMotion reads the same answer
         // without each re-deriving the platform signal itself.

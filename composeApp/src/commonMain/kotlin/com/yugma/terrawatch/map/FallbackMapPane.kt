@@ -14,9 +14,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Fill
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
+import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.model.MagnitudeBand
+import com.yugma.terrawatch.model.circlePolygon
 import com.yugma.terrawatch.ui.theme.TerraColors
 import com.yugma.terrawatch.ui.theme.TerraRadii
 import com.yugma.terrawatch.ui.theme.magnitudeColor
@@ -36,6 +41,11 @@ import com.yugma.terrawatch.ui.theme.magnitudeColor
 private const val HIT_RADIUS_DP = 24f
 
 private const val CAPTION = "Live map on Android — showing latest quakes"
+
+// Task 7 (Plan 3): matches QuakeMap.android.kt's HomeRadiusRingLayer treatment exactly (Safe green,
+// ~25% alpha fill, 1.5dp stroke) — one visual spec, two renderers.
+private const val RING_FILL_ALPHA = 0.25f
+private const val RING_STROKE_WIDTH_DP = 1.5f
 
 /**
  * Equirectangular projection: longitude maps linearly across the full [-180, 180] range to
@@ -102,17 +112,29 @@ internal fun nearestPinWithin(
  * compromise, not a feature compromise: desktop's detail sheet opens from a fallback pin tap same
  * as it would from a card tap.
  *
- * Deliberately takes only [pins]/[onPinTap]/[modifier] — no `newQuakeId`: unlike `QuakeMap`'s
- * Android actual, there is no pin-drop-pop animation here at all. `QuakeMap.jvm.kt`/
- * `QuakeMap.wasmJs.kt` still accept `newQuakeId` (the shared `expect` signature demands it) but
- * never forward it into this pane — a brand new arrival simply appears in the next [pins] list this
- * pane redraws, with no separate "new" treatment.
+ * Deliberately takes only [pins]/[onPinTap]/[modifier] (plus [homeLocation]/[radiusKm], Task 7) —
+ * no `newQuakeId`: unlike `QuakeMap`'s Android actual, there is no pin-drop-pop animation here at
+ * all. `QuakeMap.jvm.kt`/`QuakeMap.wasmJs.kt` still accept `newQuakeId` (the shared `expect`
+ * signature demands it) but never forward it into this pane — a brand new arrival simply appears in
+ * the next [pins] list this pane redraws, with no separate "new" treatment.
+ *
+ * Task 7 (Plan 3), USER REQUIREMENT: [homeLocation]/[radiusKm] draw the same home-radius ring
+ * `QuakeMap.android.kt`'s `HomeRadiusRingLayer` draws with real map layers — here, a plain `Canvas`
+ * `Path` traced through [circlePolygon]'s vertices (the exact same pure geometry both targets
+ * share — one source of truth for "what does the ring look like"), each projected via the same
+ * [projectLon]/[projectLat] this pane already uses for pins. Honestly small at this pane's
+ * whole-world scale (this file's own kdoc already accepts that tradeoff for pins) — still real,
+ * accurate geometry rather than an arbitrary fixed-size decoration, and free: no second ring
+ * implementation to keep in sync with the Android one. Drawn BEFORE the pins loop so pins are never
+ * obscured by the ring's own fill.
  */
 @Composable
 fun FallbackMapPane(
     pins: List<QuakePin>,
     onPinTap: (String) -> Unit,
     modifier: Modifier = Modifier,
+    homeLocation: GeoPoint? = null,
+    radiusKm: Double = 100.0,
 ) {
     Box(modifier.fillMaxSize().background(TerraColors.Water)) {
         Canvas(
@@ -126,6 +148,18 @@ fun FallbackMapPane(
                     }
                 },
         ) {
+            if (homeLocation != null) {
+                val ringPath = Path().apply {
+                    circlePolygon(homeLocation, radiusKm, points = 64).forEachIndexed { index, point ->
+                        val x = projectLon(point.lon, size.width)
+                        val y = projectLat(point.lat, size.height)
+                        if (index == 0) moveTo(x, y) else lineTo(x, y)
+                    }
+                    close()
+                }
+                drawPath(ringPath, color = TerraColors.Safe.copy(alpha = RING_FILL_ALPHA), style = Fill)
+                drawPath(ringPath, color = TerraColors.Safe, style = Stroke(width = RING_STROKE_WIDTH_DP.dp.toPx()))
+            }
             for (pin in pins) {
                 drawCircle(
                     color = magnitudeColor(pin.band),

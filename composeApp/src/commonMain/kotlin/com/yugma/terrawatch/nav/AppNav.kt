@@ -1,7 +1,6 @@
 package com.yugma.terrawatch.nav
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -37,6 +36,7 @@ import com.yugma.terrawatch.home.LayoutMode
 import com.yugma.terrawatch.home.QuakeSelectionViewModel
 import com.yugma.terrawatch.home.layoutMode
 import com.yugma.terrawatch.insights.InsightsScreen
+import com.yugma.terrawatch.settings.SettingsScreen
 import org.koin.compose.koinInject
 
 /**
@@ -218,11 +218,6 @@ private fun AppNavHost(
                 onSettingsClick = { navController.navigate(Routes.SETTINGS) },
             )
         }
-        // Settings: placeholder screen THIS task -- Task 7 replaces this composable() body with
-        // its own new SettingsScreen (own file, own ViewModel). The four-states rule
-        // (Loading/Content/Empty/Error) explicitly does NOT apply to this placeholder -- there's
-        // no state to be in yet, just a name and which task owns filling it in.
-        //
         // Task 5 (Plan 3): History's own real HistoryViewModel is resolved INSIDE HistoryScreen's
         // own defaulted `= koinViewModel()` parameter (same shape HomeScreen's own
         // selectionViewModel param used before Task 4 needed to override it) -- Compose Navigation
@@ -237,7 +232,12 @@ private fun AppNavHost(
         // InsightsScreen's own defaulted `= koinViewModel()` param, selectionViewModel threaded
         // through explicitly so a STRONGEST-card tap opens the same shared detail sheet.
         composable(Routes.INSIGHTS) { InsightsScreen(selectionViewModel = selectionViewModel) }
-        composable(Routes.SETTINGS) { PlaceholderScreen("Settings — Task 7") }
+        // Task 7 (Plan 3): the real SettingsScreen replaces the placeholder — its own
+        // `= koinViewModel()` default resolves SettingsViewModel scoped to this route's own
+        // NavBackStackEntry (same shape History/Insights already use for their own ViewModels).
+        // onBack pops this stack-only route — see SettingsScreen's own kdoc for why it needs one at
+        // all (unlike HOME/HISTORY/INSIGHTS, this isn't a tab with its own back-stack root).
+        composable(Routes.SETTINGS) { SettingsScreen(onBack = { navController.popBackStack() }) }
         composable(Routes.ONBOARDING) {
             OnboardingPlaceholder(
                 onGetStarted = {
@@ -294,24 +294,6 @@ private val TAB_ITEMS = listOf(
     TabItem(Routes.HISTORY, "History") { HistoryTabIcon() },
     TabItem(Routes.INSIGHTS, "Insights") { InsightsTabIcon() },
 )
-
-/** History/Insights/Settings' shared placeholder body -- see [AppNavHost]'s own note on why the
- * four-states rule doesn't apply here. Reads [MaterialTheme] colors/typography (inherited from
- * the [com.yugma.terrawatch.ui.theme.TerraTheme] `App()` already wraps this whole nav graph in),
- * not hardcoded colors -- "TerraTheme'd" per the brief, without a redundant second TerraTheme{}
- * wrapper this deep in the tree. */
-@Composable
-private fun PlaceholderScreen(text: String) {
-    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(
-                text = text,
-                style = MaterialTheme.typography.headlineSmall,
-                color = MaterialTheme.colorScheme.onBackground,
-            )
-        }
-    }
-}
 
 /**
  * Task 4's onboarding placeholder -- Task 8 replaces this with the real 3-step pager

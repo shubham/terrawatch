@@ -24,7 +24,9 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.model.MagnitudeBand
+import com.yugma.terrawatch.model.circlePolygon
 import com.yugma.terrawatch.motion.LocalReducedMotion
 import com.yugma.terrawatch.ui.theme.TerraColors
 import com.yugma.terrawatch.ui.theme.magnitudeColor
@@ -43,6 +45,8 @@ import org.maplibre.compose.expressions.dsl.feature
 import org.maplibre.compose.expressions.dsl.not
 import org.maplibre.compose.expressions.dsl.switch
 import org.maplibre.compose.layers.CircleLayer
+import org.maplibre.compose.layers.FillLayer
+import org.maplibre.compose.layers.LineLayer
 import org.maplibre.compose.map.MaplibreMap
 import org.maplibre.compose.sources.GeoJsonData
 import org.maplibre.compose.sources.GeoJsonOptions
@@ -52,6 +56,7 @@ import org.maplibre.compose.util.ClickResult
 import org.maplibre.spatialk.geojson.Feature
 import org.maplibre.spatialk.geojson.FeatureCollection
 import org.maplibre.spatialk.geojson.Point
+import org.maplibre.spatialk.geojson.Polygon
 import org.maplibre.spatialk.geojson.Position
 
 // OpenFreeMap's "liberty" style — free, no API key, no attribution HTML to inject beyond what the
@@ -83,6 +88,14 @@ private const val CLUSTER_RADIUS_PX = 50
 private const val CLUSTER_MAX_ZOOM = 3
 private const val CLUSTER_MIN_POINTS = 3
 private const val CLUSTER_BUBBLE_RADIUS_DP = 14f
+
+// Task 7 (Plan 3), USER REQUIREMENT: the home-radius ring — Safe green, ~25% fill opacity, 1.5dp
+// outline, per the plan's own spec. 64 vertices matches circlePolygon's own default (smooth enough
+// at any on-screen zoom a phone map realistically renders at; see Geo.kt's own kdoc).
+private const val HOME_RADIUS_RING_POINTS = 64
+private const val HOME_RADIUS_FILL_OPACITY = 0.25f
+private const val HOME_RADIUS_STROKE_WIDTH_DP = 1.5f
+private const val HOME_RADIUS_RING_SOURCE_ID = "home-radius-ring"
 
 // STRONG/MAJOR/UNKNOWN keep Task 8's original always-all-bands per-band treatment (see
 // QuakeBandCircleLayer's kdoc for why that shape matters); LOW/MODERATE move to
@@ -151,6 +164,21 @@ private val UNCLUSTERED_BANDS = listOf(MagnitudeBand.STRONG, MagnitudeBand.MAJOR
  * - **Clustering** (validated + implemented, see [ClusteredLowModerateLayer]).
  * - **Debug long-press inject hook** (device verification only, debug builds): see
  *   [isDebuggableBuild] and the `pointerInput` wiring below.
+ *
+ * Task 7 (Plan 3) addition, USER REQUIREMENT — the home-radius ring ([HomeRadiusRingLayer]):
+ * MapLibre's `CircleLayer` `radius` paint property is a fixed ON-SCREEN PIXEL size (constant
+ * regardless of zoom — confirmed against the style spec, not assumed), not a real-world meters/km
+ * radius, so it cannot draw "everything within N km of home" directly (that's exactly why the
+ * pin/ring-animation layers above all size themselves in `.dp`, a screen unit, and never claim to
+ * represent a ground distance). A GeoJSON polygon traced in actual lat/lon space is the correct
+ * primitive instead: [com.yugma.terrawatch.model.circlePolygon] (core:model, TDD'd standalone)
+ * generates the ring's vertices via the haversine destination-point formula, and a `FillLayer` +
+ * `LineLayer` pair (both confirmed real, public composables via the same `javap`-against-the-
+ * resolved-artifact discipline this file's own kdoc already documents for `CircleLayer`/
+ * `SymbolLayer` — `FillLayer`/`LineLayer` share `CircleLayer`'s exact "internal backing class +
+ * public composable facade of the same name" shape) renders it, matching the pattern this file
+ * already established for the pin-drop rings ([NewQuakeRingLayer]) and cluster bubbles
+ * ([ClusteredLowModerateLayer]).
  */
 @Composable
 actual fun QuakeMap(
@@ -159,6 +187,8 @@ actual fun QuakeMap(
     onPinTap: (String) -> Unit,
     modifier: Modifier,
     onDebugLongPress: (lat: Double, lon: Double) -> Unit,
+    homeLocation: GeoPoint?,
+    radiusKm: Double,
 ) {
   val cameraState =
       rememberCameraState(
@@ -303,7 +333,14 @@ actual fun QuakeMap(
       baseStyle = BaseStyle.Uri(OPENFREEMAP_LIBERTY_STYLE_URL),
       cameraState = cameraState,
   ) {
-    // Bottom-most: the expanding rings, so they never sit visually on top of any pin (this one or
+    // Bottom-most of all: the home-radius ring, so it never sits on top of a pin or the pin-drop
+    // animation rings below. Always composed (never conditional on homeLocation != null) — see
+    // HomeRadiusRingLayer's own kdoc for why: the exact same "always mount, only the underlying
+    // source's data changes" discipline this file's BUG FIX note (top of file) already established
+    // for the band layers, applied here too.
+    HomeRadiusRingLayer(homeLocation = homeLocation, radiusKm = radiusKm)
+
+    // The expanding rings, so they never sit visually on top of any pin (this one or
     // any other quake's, if one happens to be nearby).
     NewQuakeRingLayer(id = "quake-ring-1", pin = activePin, progress = ring1Progress)
     NewQuakeRingLayer(id = "quake-ring-2", pin = activePin, progress = ring2Progress)
@@ -332,6 +369,78 @@ actual fun QuakeMap(
     // Top-most: the animating pin itself, so it's never covered by any static layer beneath it.
     NewQuakePinOverlay(pin = activePin, scale = scale)
   }
+}
+
+/**
+ * Task 7 (Plan 3), USER REQUIREMENT: the home-radius ring — see [QuakeMap]'s own kdoc for why this
+ * needs a real GeoJSON polygon (traced via [circlePolygon]) rather than `CircleLayer`'s fixed-pixel
+ * `radius`.
+ *
+ * [homeLocation] null (no reference point yet — [com.yugma.terrawatch.data.PillStatus.Kind.ASK_LOCATION])
+ * degrades to an EMPTY `FeatureCollection`, drawing nothing — same "always mounted, data-only
+ * change" shape [NewQuakeRingLayer]'s own kdoc documents for its `pin == null` case, deliberately
+ * NOT a conditional `if (homeLocation != null) { FillLayer(...); LineLayer(...) }` call at the
+ * composition level: this file's own top-of-file BUG FIX note is exactly the lesson that
+ * conditionally adding/removing a maplibre-compose layer/source — rather than always composing it
+ * and only ever changing the DATA fed into an already-`remember`-ed source — risks silently
+ * recreating the underlying native style and blanking the map.
+ *
+ * `remember(homeLocation, radiusKm)` (both plain, `equals`-comparable values — `GeoPoint` is a data
+ * class) is what makes the ring "update live on radius/home change" (this task's own brief): a
+ * Settings slider drag reaching `HomeViewModel.nearbyRadiusKm` and flowing into this composable's
+ * `radiusKm` parameter invalidates this `remember` block, which calls `GeoJsonSource`'s own
+ * `setData` (via `rememberGeoJsonSource`, the same incremental-update path every other source in
+ * this file already relies on) with a freshly-traced, larger/smaller ring — no source/layer
+ * teardown, so no blank-map risk.
+ *
+ * Fill opacity (not the fill color's own alpha channel) is what carries [HOME_RADIUS_FILL_OPACITY]
+ * — the idiomatic MapLibre/Mapbox style-spec mechanism for "this shape is N% opaque" as a paint
+ * property independent of the color itself, matching how `fill-opacity`/`line-opacity` are
+ * conventionally used across real map styles (and avoiding compounding two separate alpha values
+ * into one, which stacking a `color.copy(alpha=...)` AND `opacity` together would do).
+ *
+ * Parameter names below (`color`/`opacity`/`width`, NOT `fillColor`/`fillOpacity`/`lineWidth`) were
+ * confirmed against the real compiled artifact, not guessed — `javap -v` on the resolved
+ * `maplibre-compose-android-0.14.0.aar`'s `FillLayerKt`/`LineLayerKt` classes decodes each
+ * composable's embedded Compose-compiler `sourceInformation` string (`C(FillLayer)N(id,source,
+ * ...,opacity,color,...)` / `C(LineLayer)N(id,source,...,color,...,width,...)`), which lists every
+ * parameter's REAL declared name in order — the same technique that, applied to `CircleLayerKt`,
+ * reproduces this file's own already-working `CircleLayer(id, source, color, radius, strokeColor,
+ * strokeWidth, onClick)` call verbatim, cross-validating the method. This is very likely the exact
+ * "different, separately-invalid argument" this file's own kdoc left unresolved after the original
+ * `SymbolLayer(textField = ...)` cluster-label attempt failed with this identical "it is internal"
+ * error (see [ClusteredLowModerateLayer]'s kdoc) — a guessed `fieldPrefix`-style parameter name that
+ * doesn't exist makes Kotlin's overload resolution discard the real composable function candidate
+ * entirely and fall through to the (inaccessible) backing class constructor instead, which is
+ * exactly the misleading error shape both attempts hit.
+ */
+@Composable
+private fun HomeRadiusRingLayer(homeLocation: GeoPoint?, radiusKm: Double) {
+  val geoJsonData = remember(homeLocation, radiusKm) {
+    val feature = homeLocation?.let { center ->
+      val ring = circlePolygon(center, radiusKm, points = HOME_RADIUS_RING_POINTS)
+          .map { point -> Position(longitude = point.lon, latitude = point.lat) }
+      Feature(
+          geometry = Polygon(listOf(ring)),
+          properties = JsonObject(emptyMap()),
+          id = JsonPrimitive(HOME_RADIUS_RING_SOURCE_ID),
+      )
+    }
+    GeoJsonData.Features(FeatureCollection(listOfNotNull(feature)))
+  }
+  val source = rememberGeoJsonSource(geoJsonData)
+  FillLayer(
+      id = "$HOME_RADIUS_RING_SOURCE_ID-fill",
+      source = source,
+      color = const(TerraColors.Safe),
+      opacity = const(HOME_RADIUS_FILL_OPACITY),
+  )
+  LineLayer(
+      id = "$HOME_RADIUS_RING_SOURCE_ID-outline",
+      source = source,
+      color = const(TerraColors.Safe),
+      width = const(HOME_RADIUS_STROKE_WIDTH_DP.dp),
+  )
 }
 
 private fun isDebuggableBuild(context: Context): Boolean =

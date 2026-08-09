@@ -5,6 +5,7 @@ package com.yugma.terrawatch.home
 import androidx.lifecycle.viewModelScope
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import app.cash.turbine.test
+import com.yugma.terrawatch.data.AlertRuleStore
 import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.data.QuakeRepository
 import com.yugma.terrawatch.database.QuakeDao
@@ -102,7 +103,9 @@ class HomeViewModelTest {
         repository: QuakeRepository,
         homeLocationStore: HomeLocationStore = emptyHomeLocationStore(),
         locationProvider: LocationProvider = LocationProvider(),
-    ): HomeViewModel = HomeViewModel(repository, homeLocationStore, locationProvider).also { createdViewModels += it }
+        alertRuleStore: AlertRuleStore = emptyAlertRuleStore(),
+    ): HomeViewModel =
+        HomeViewModel(repository, homeLocationStore, locationProvider, alertRuleStore).also { createdViewModels += it }
 
     @AfterTest fun tearDown() {
         Dispatchers.resetMain()
@@ -714,6 +717,43 @@ class HomeViewModelTest {
     // Task 11's selection wiring tests (`select`/`dismissSelection`/`selectedQuake`) MIGRATED to
     // QuakeSelectionViewModelTest.kt as of Task 3 (Plan 3) — see QuakeSelectionViewModel's own
     // kdoc for why that state no longer lives on this class at all.
+
+    // Task 7 (Plan 3), USER REQUIREMENT: nearbyRadiusKm/minMag — same "loads the stored value, then
+    // reacts live to a store update" shape the homeLocation tests above already pin for
+    // HomeLocationStore, applied to AlertRuleStore's own Flows instead of a get()+updates split.
+
+    @Test fun `nearbyRadiusKm defaults to AlertRuleStore's own 100km default`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val vm = createVm(fakeRepositoryAlwaysFailing())
+        vm.nearbyRadiusKm.test {
+            assertEquals(100.0, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `nearbyRadiusKm reacts to a store update landing mid-session, no restart needed`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val alertRuleStore = emptyAlertRuleStore()
+        val vm = createVm(fakeRepositoryAlwaysFailing(), alertRuleStore = alertRuleStore)
+        vm.nearbyRadiusKm.test {
+            assertEquals(100.0, awaitItem())
+            alertRuleStore.setNearbyRadius(500.0)
+            assertEquals(500.0, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `minMag reacts to a store update landing mid-session`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val alertRuleStore = emptyAlertRuleStore()
+        val vm = createVm(fakeRepositoryAlwaysFailing(), alertRuleStore = alertRuleStore)
+        vm.minMag.test {
+            assertEquals(4.5, awaitItem())
+            alertRuleStore.setMinMag(6.0)
+            assertEquals(6.0, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
 }
 
 // A fresh, empty in-memory-backed HomeLocationStore — used by every test above that needs
@@ -723,6 +763,15 @@ private fun emptyHomeLocationStore(): HomeLocationStore {
     val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
     TerraWatchDb.Schema.create(driver)
     return HomeLocationStore(QuakeDao(TerraWatchDb(driver)))
+}
+
+// Task 7 (Plan 3): same "fresh, empty, don't-care-what-it-resolves-to" role as
+// emptyHomeLocationStore() above, for HomeViewModel's new AlertRuleStore constructor param — every
+// pre-existing test that doesn't care about radius/minMag wiring gets this via createVm()'s default.
+private fun emptyAlertRuleStore(): AlertRuleStore {
+    val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+    TerraWatchDb.Schema.create(driver)
+    return AlertRuleStore(QuakeDao(TerraWatchDb(driver)))
 }
 
 // Builds a real QuakeRepository over an in-memory JVM SQLDelight driver with a MockEngine that

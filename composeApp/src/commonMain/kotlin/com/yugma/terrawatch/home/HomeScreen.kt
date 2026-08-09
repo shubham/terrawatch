@@ -170,6 +170,12 @@ fun HomeScreen(
     val state by viewModel.state.collectAsState()
     val homeLocation by viewModel.homeLocation.collectAsState()
     val newSinceExpand by viewModel.newSinceExpand.collectAsState()
+    // Task 7 (Plan 3), USER REQUIREMENT: the user-settable "nearby" radius/min-magnitude — fed into
+    // both pillStatus() (the pill's own verdict) and QuakeMap()'s home-radius ring below, in both
+    // PhoneLayout and TwoPaneLayout, so a Settings slider change reaches whichever layout is
+    // currently showing without needing to leave/return to the Home tab.
+    val nearbyRadiusKm by viewModel.nearbyRadiusKm.collectAsState()
+    val minMag by viewModel.minMag.collectAsState()
     // Task 11: drives the detail sheet below — non-null shows it, null (the initial value, and
     // whatever QuakeSelectionViewModel.dismissSelection()/an unresolved select() settles back to)
     // hides it. Task 3 (Plan 3): moved from `viewModel` to `selectionViewModel` — see this
@@ -200,6 +206,8 @@ fun HomeScreen(
                 homeLocation = homeLocation,
                 nowMillis = nowMillis,
                 newQuakeId = newQuakeId,
+                nearbyRadiusKm = nearbyRadiusKm,
+                minMag = minMag,
                 viewModel = viewModel,
                 selectionViewModel = selectionViewModel,
                 onAskLocation = { showLocationAsk = true },
@@ -211,6 +219,8 @@ fun HomeScreen(
                 newSinceExpand = newSinceExpand,
                 nowMillis = nowMillis,
                 newQuakeId = newQuakeId,
+                nearbyRadiusKm = nearbyRadiusKm,
+                minMag = minMag,
                 maxHeight = maxHeight,
                 viewModel = viewModel,
                 selectionViewModel = selectionViewModel,
@@ -276,6 +286,8 @@ private fun PhoneLayout(
     newSinceExpand: Int,
     nowMillis: Long,
     newQuakeId: String?,
+    nearbyRadiusKm: Double,
+    minMag: Double,
     maxHeight: Dp,
     viewModel: HomeViewModel,
     selectionViewModel: QuakeSelectionViewModel,
@@ -320,6 +332,8 @@ private fun PhoneLayout(
                 onPinTap = { id -> selectionViewModel.select(id) },
                 modifier = Modifier.fillMaxSize(),
                 onDebugLongPress = { lat, lon -> viewModel.injectDebugQuake(lat, lon) },
+                homeLocation = homeLocation,
+                radiusKm = nearbyRadiusKm,
             )
             when (val s = state) {
                 HomeUiState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -330,7 +344,10 @@ private fun PhoneLayout(
                     // `remember`-ed (see the Task 9 brief: "keep it a pure call in
                     // composition, cheap"); quakes/home/nowMillis are all already Compose
                     // State reads, so this only re-runs when one of them actually changes.
-                    val pill = pillStatus(s.quakes, homeLocation, nowMillis)
+                    // Task 7 (Plan 3), USER REQUIREMENT: radiusKm/minMag are now the
+                    // user-settable, store-fed values (HomeViewModel.nearbyRadiusKm/minMag) rather
+                    // than this function's own 500.0/4.5 defaults.
+                    val pill = pillStatus(s.quakes, homeLocation, nowMillis, radiusKm = nearbyRadiusKm, minMag = minMag)
                     Column(
                         modifier = Modifier
                             .align(Alignment.TopCenter)
@@ -344,6 +361,7 @@ private fun PhoneLayout(
                             nowMillis = nowMillis,
                             onClick = { onPillClick(pill, selectionViewModel, onAskLocation) },
                             modifier = Modifier.fillMaxWidth().padding(end = GEAR_CHIP_CLEARANCE),
+                            radiusKm = nearbyRadiusKm,
                         )
                         // Banner moves below the pill when both are showing (Task 9 brief:
                         // "above banner if both — banner moves below pill").
@@ -394,6 +412,8 @@ private fun TwoPaneLayout(
     homeLocation: GeoPoint?,
     nowMillis: Long,
     newQuakeId: String?,
+    nearbyRadiusKm: Double,
+    minMag: Double,
     viewModel: HomeViewModel,
     selectionViewModel: QuakeSelectionViewModel,
     onAskLocation: () -> Unit,
@@ -411,6 +431,8 @@ private fun TwoPaneLayout(
                 onPinTap = { id -> selectionViewModel.select(id) },
                 modifier = Modifier.fillMaxSize(),
                 onDebugLongPress = { lat, lon -> viewModel.injectDebugQuake(lat, lon) },
+                homeLocation = homeLocation,
+                radiusKm = nearbyRadiusKm,
             )
             if (state is HomeUiState.Loading) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -428,13 +450,14 @@ private fun TwoPaneLayout(
             // empty/Loading pill would have to either lie ("all calm") or invent a fourth,
             // not-yet-loaded PillStatus.Kind, neither of which this task's brief asked for.
             if (state is HomeUiState.Content) {
-                val pill = pillStatus(state.quakes, homeLocation, nowMillis)
+                val pill = pillStatus(state.quakes, homeLocation, nowMillis, radiusKm = nearbyRadiusKm, minMag = minMag)
                 Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
                     StatusShield(
                         status = pill,
                         nowMillis = nowMillis,
                         onClick = { onPillClick(pill, selectionViewModel, onAskLocation) },
                         modifier = Modifier.fillMaxWidth().padding(end = GEAR_CHIP_CLEARANCE),
+                        radiusKm = nearbyRadiusKm,
                     )
                     if (state.refreshFailed || isStale(state.lastUpdatedMillis, nowMillis)) {
                         Spacer(Modifier.height(8.dp))

@@ -8,6 +8,7 @@ import com.yugma.terrawatch.model.haversineKm
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 private const val NOW = 2_000_000L
 private val HOME = GeoPoint(12.97, 77.59) // Bengaluru, same reference point AlertRuleEngineTest uses
@@ -90,5 +91,24 @@ class PillStatusTest {
         val status = pillStatus(listOf(stale), HOME, NOW, windowMs = windowMs)
         assertEquals(PillStatus.Kind.CALM, status.kind)
         assertNull(status.quake)
+    }
+
+    // Task 7 (Plan 3), USER REQUIREMENT: the named device-verification scenario, pinned as a unit
+    // test too - a quake ~150km from home is CALM at the new 100km default radius but ALERT once
+    // the (user-settable, via AlertRuleStore/Settings slider) radius widens to 500km. Distance is
+    // computed via the same haversineKm the implementation itself calls, not guessed, matching this
+    // file's own "exact boundary" convention above.
+    @Test fun `a quake 150km from home is calm at 100km radius but alerts at 500km radius`() {
+        val quakePoint = GeoPoint(HOME.lat + 1.35, HOME.lon) // roughly 150km due north
+        val distanceKm = haversineKm(HOME, quakePoint)
+        assertTrue(distanceKm in 140.0..160.0, "test setup: expected ~150km, got $distanceKm")
+        val quake = q(mag = 5.0, lat = quakePoint.lat, lon = quakePoint.lon)
+
+        val atDefaultNewRadius = pillStatus(listOf(quake), HOME, NOW, radiusKm = 100.0)
+        assertEquals(PillStatus.Kind.CALM, atDefaultNewRadius.kind)
+
+        val atWidenedRadius = pillStatus(listOf(quake), HOME, NOW, radiusKm = 500.0)
+        assertEquals(PillStatus.Kind.ALERT, atWidenedRadius.kind)
+        assertEquals(quake.id, atWidenedRadius.quake?.id)
     }
 }

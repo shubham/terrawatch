@@ -156,7 +156,7 @@ class InsightsViewModel(
         // above (backed by `_period`'s own initial value).
         //
         // Fix round (review I2): `.conflate()` - SQLDelight's own table-changed notification is
-        // table-level, not row-level (see `recentQuakes`'s own kdoc chain), so a single batched
+        // table-level, not row-level (see `QuakeDao.replaceAndDelete`'s own kdoc), so a single batched
         // ingest of N quakes (a typical poll tick landing several new events at once) fires N
         // separate "quake table changed" notifications, one per `replaceAndDelete` transaction
         // commit - without this, that is N redundant recomputes queued back-to-back for data this

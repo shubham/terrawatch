@@ -24,10 +24,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.yugma.terrawatch.data.PillStatus
 import com.yugma.terrawatch.model.magnitudeBand
+import com.yugma.terrawatch.ui.format.formatCount
 import com.yugma.terrawatch.ui.format.formatMagnitude
 import com.yugma.terrawatch.ui.format.formatRelativeTime
 import com.yugma.terrawatch.ui.theme.TerraColors
 import com.yugma.terrawatch.ui.theme.TerraRadii
+import kotlin.math.roundToLong
 
 private val ALERT_CORNER = 20.dp
 private val GLYPH_SIZE = 26.dp
@@ -50,6 +52,12 @@ private val GLYPH_SIZE = 26.dp
  * slightly squarer corner) per the Task 9 brief's shape-morph note — this is the static version;
  * animating the corner between the two is explicitly out of scope this task (Task 10 owns
  * motion).
+ *
+ * Task 7 (Plan 3) fix, device-caught (USER REQUIREMENT — found live on 98bc1cd8 while verifying
+ * the radius slider, not from reading the diff): the CALM subtitle used to hardcode "Nothing within
+ * 500 km · 24 h" regardless of [radiusKm] — a caller could set the stored radius to 100 (the new
+ * default) and this pill would keep claiming "500 km" forever, directly contradicting the very
+ * feature this task exists to ship. [radiusKm] now drives that text for real.
  */
 @Composable
 fun StatusShield(
@@ -57,6 +65,7 @@ fun StatusShield(
     nowMillis: Long,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    radiusKm: Double = 100.0,
 ) {
     val shape = if (status.kind == PillStatus.Kind.ALERT) {
         RoundedCornerShape(ALERT_CORNER)
@@ -77,7 +86,7 @@ fun StatusShield(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             when (status.kind) {
-                PillStatus.Kind.CALM -> CalmContent()
+                PillStatus.Kind.CALM -> CalmContent(radiusKm)
                 PillStatus.Kind.ALERT -> AlertContent(status, nowMillis)
                 PillStatus.Kind.ASK_LOCATION -> AskLocationContent()
             }
@@ -86,7 +95,7 @@ fun StatusShield(
 }
 
 @Composable
-private fun CalmContent() {
+private fun CalmContent(radiusKm: Double) {
     CheckGlyph(tint = TerraColors.Safe, modifier = Modifier.size(GLYPH_SIZE))
     Column {
         Text(
@@ -96,7 +105,7 @@ private fun CalmContent() {
             color = MaterialTheme.colorScheme.onSurface,
         )
         Text(
-            text = "Nothing within 500 km · 24 h",
+            text = "Nothing within ${formatCount(radiusKm.roundToLong())} km · 24 h",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

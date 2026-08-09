@@ -113,7 +113,10 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = 1
-        versionName = "0.1.0"
+        // Task 7 (Plan 3): bumped to match SettingsScreen's own About section version string —
+        // both now name the same Plan 3 milestone (3 tabs + settings + theme + user-settable
+        // radius) rather than the app's own manifest disagreeing with what Settings tells the user.
+        versionName = "0.3.0"
         // Task 13: required for connectedDebugAndroidTest to resolve a runner at all — AGP's
         // default is the deprecated android.test.InstrumentationTestRunner otherwise.
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

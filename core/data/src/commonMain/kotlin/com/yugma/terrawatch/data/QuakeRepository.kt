@@ -36,6 +36,16 @@ class QuakeRepository(
     private val alerts: AlertRuleEngine = AlertRuleEngine(),
     private val clock: () -> Long,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    // Task 7 (Plan 3), USER REQUIREMENT: store-fed alert rules - see [currentRules]'s own kdoc.
+    // Both optional/defaulted to null (not required constructor params) purely for backward
+    // compatibility: every existing caller across this module's own test suite, HomeViewModelTest,
+    // HistoryPagerTest, QuakeSelectionViewModelTest, InsightsViewModelTest and HomeFlowTest
+    // constructs this class WITHOUT either (grepped before adding these - EVIDENCE INTEGRITY),
+    // proving pre-existing default-rule behavior (DEFAULT_RULES, home=null) that must keep
+    // compiling and behaving identically. AppModule.kt's real Koin wiring is the one call site that
+    // ever supplies both.
+    private val alertRuleStore: AlertRuleStore? = null,
+    private val homeLocationStore: HomeLocationStore? = null,
 ) {
     private val _alertEvents = MutableSharedFlow<AlertEvent>(extraBufferCapacity = 16)
     val alertEvents: SharedFlow<AlertEvent> = _alertEvents
@@ -91,7 +101,13 @@ class QuakeRepository(
     suspend fun refreshFeed(): RefreshStatus = withContext(ioDispatcher) {
         when (val result = api.fetchFeed(previousEtag = dao.metaGet(FEED_ETAG_KEY))) {
             is FeedResult.Fresh -> {
-                result.quakes.forEach { ingest(it) }
+                // Task 7 (Plan 3): read once per batch, not once per quake - the whole batch from
+                // one feed response shares the same "what does the store say right now" snapshot,
+                // exactly like [loadArchivePage] already reads [clock] once for [DomainQuake.
+                // fetchedAtMillis] across its own forEach below rather than re-reading per row.
+                val rules = currentRules()
+                val home = currentHome()
+                result.quakes.forEach { ingest(it, rules = rules, home = home) }
                 result.etag?.let { dao.metaPut(FEED_ETAG_KEY, it) }
                 RefreshStatus.UPDATED
             }
@@ -101,7 +117,11 @@ class QuakeRepository(
     }
 
     suspend fun startLive(scope: CoroutineScope) {
-        scope.launch { live.events().collect { ingest(it) } }
+        // Task 7 (Plan 3): unlike refreshFeed's one-snapshot-per-batch above, a live event arrives
+        // one at a time, potentially hours apart - currentRules()/currentHome() are read fresh for
+        // EACH event, so a radius/home change the user makes mid-session is honored by the very
+        // next live arrival, not just the next poll tick.
+        scope.launch { live.events().collect { ingest(it, rules = currentRules(), home = currentHome()) } }
     }
 
     /**
@@ -156,6 +176,15 @@ class QuakeRepository(
      * old `Int` shape (`grep -rn loadArchivePage`), so this is a safe, unshared widening, not a
      * breaking change to any existing consumer. Callers that only want the count still have it for
      * free via `.size`.
+     *
+     * Task 7 (Plan 3) note: deliberately NOT wired to [currentRules]/[currentHome] the way
+     * [refreshFeed]/[startLive] are (see [currentRules]'s own kdoc) — this task's brief names only
+     * "startLive/refresh paths" for store-fed rules, and there is a real reason beyond just
+     * following that literally: this is History's archive-backfill path, which can page in quakes
+     * from years ago as the user scrolls. Evaluating live alert rules against a years-old event
+     * arriving because someone scrolled History has no sensible "alert" meaning (nothing currently
+     * surfaces [alertEvents] to the user either way — Plan 4 territory), so it stays on [ingest]'s
+     * own compile-time [DEFAULT_RULES]/`home = null` defaults, unchanged from before this task.
      */
     suspend fun loadArchivePage(beforeMillis: Long, minMag: Double? = null): List<Quake> = withContext(ioDispatcher) {
         val page = api.queryArchive(endTimeMillis = beforeMillis, minMagnitude = minMag)
@@ -244,6 +273,39 @@ class QuakeRepository(
 
     suspend fun strongest(sinceMillis: Long): Quake? =
         withContext(ioDispatcher) { dao.strongest(sinceMillis) }
+
+    /**
+     * Task 7 (Plan 3), USER REQUIREMENT: the "near" rule's radius/minMag are now STORE-fed, not
+     * [DEFAULT_RULES]'s compile-time 500.0/4.5 — [alertRuleStore], once wired (every real call site
+     * always wires it via [AppModule][com.yugma.terrawatch.di.appModule]; only tests that construct
+     * this repository without one ever fall back here), is the one source of truth. [DEFAULT_RULES]
+     * itself is untouched and stays exactly what it always was: the compile-time fallback for a
+     * caller with no store at all (unit tests, mainly) — not a second, competing definition of
+     * "near."
+     *
+     * Read FRESH on every call, not cached-with-invalidation (the brief's own offered fork —
+     * "read per-ingest? cache w/ updates invalidation"): [AlertRuleStore]'s reads
+     * ([AlertRuleStore.currentRadiusKm]/[AlertRuleStore.currentMinMag]) are plain synchronous local
+     * DAO lookups — the exact same cost class as this class's own unconditional
+     * `dao.metaGet(FEED_ETAG_KEY)` a few lines up in [refreshFeed], or the `dao.byId`/window-query
+     * pair [ingest] below already does per call. A cache would only trade that non-existent
+     * performance problem for a real correctness risk of its own: a missed or late-arriving
+     * [AlertRuleStore.updates] signal silently serving a stale radius to an in-flight ingest.
+     * "World" stays a fixed rule (magnitude ≥6.0, global) — only "near" (radius + a home reference
+     * point) is meaningfully store-configurable; there is no store-backed knob for "world" to read.
+     */
+    suspend fun currentRules(): List<AlertRule> = withContext(ioDispatcher) {
+        val store = alertRuleStore ?: return@withContext DEFAULT_RULES
+        listOf(
+            AlertRule(id = "near", minMag = store.currentMinMag(), radiusKm = store.currentRadiusKm(), center = null),
+            AlertRule(id = "world", minMag = 6.0, radiusKm = null, center = null),
+        )
+    }
+
+    /** [currentRules]'s home-location counterpart — [HomeLocationStore.get] is itself already a
+     * plain synchronous DAO read (see that class's own kdoc), so this needs no [ioDispatcher] hop
+     * of its own beyond whatever the caller (already inside one, at every real call site) provides. */
+    private fun currentHome(): GeoPoint? = homeLocationStore?.get()
 
     suspend fun ingest(
         incoming: Quake,

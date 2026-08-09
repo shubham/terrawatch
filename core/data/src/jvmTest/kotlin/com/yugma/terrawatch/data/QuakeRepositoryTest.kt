@@ -4,10 +4,12 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import app.cash.turbine.test
 import com.yugma.terrawatch.database.QuakeDao
 import com.yugma.terrawatch.database.TerraWatchDb
+import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.model.MagRevision
 import com.yugma.terrawatch.model.Quake
 import com.yugma.terrawatch.model.QuakeStatus
 import com.yugma.terrawatch.model.Source
+import com.yugma.terrawatch.model.haversineKm
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -20,6 +22,8 @@ import com.yugma.terrawatch.network.UsgsApi
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlin.test.BeforeTest
 
 class QuakeRepositoryTest {
@@ -304,4 +308,144 @@ class QuakeRepositoryTest {
         assertEquals(1, dao.countAll())
         assertNotNull(dao.byId("us1"))
     }
+
+    // Task 7 (Plan 3), USER REQUIREMENT: currentRules()/refreshFeed() must read the "near" rule's
+    // radius/minMag from a wired AlertRuleStore instead of DEFAULT_RULES' compile-time 500.0/4.5.
+
+    @Test fun `currentRules falls back to DEFAULT_RULES when no store is wired`() = runTest {
+        val r = repoNoop(2_000_000)
+        assertEquals(DEFAULT_RULES, r.currentRules())
+    }
+
+    @Test fun `currentRules builds the near rule from the wired AlertRuleStore, world rule unchanged`() = runTest {
+        val alertRuleStore = AlertRuleStore(dao).apply {
+            setNearbyRadius(50.0)
+            setMinMag(5.0)
+        }
+        val r = QuakeRepository(
+            UsgsApi(HttpClient(MockEngine { respond("", HttpStatusCode.NotFound) })),
+            EmscLiveSource(HttpClient(MockEngine { respond("", HttpStatusCode.NotFound) })),
+            dao, clock = { 2_000_000 }, alertRuleStore = alertRuleStore,
+        )
+        val rules = r.currentRules()
+        val near = rules.single { it.id == "near" }
+        assertEquals(50.0, near.radiusKm)
+        assertEquals(5.0, near.minMag)
+        val world = rules.single { it.id == "world" }
+        assertEquals(6.0, world.minMag)
+        assertNull(world.radiusKm)
+    }
+
+    // The end-to-end proof: a quake safely inside DEFAULT_RULES' 500km "near" radius must NOT fire
+    // once the store configures a SMALLER radius that excludes it — if refreshFeed() were still
+    // silently using DEFAULT_RULES underneath, this quake would fire "near" and this test would go
+    // red. Distance is computed via the same haversineKm the implementation itself calls (matches
+    // PillStatusTest's own "derive the boundary from the real formula" convention), not guessed.
+    @Test fun `refreshFeed does not fire the near rule beyond the store's configured radius, even within DEFAULT_RULES' 500km`() = runTest {
+        val home = GeoPoint(12.9716, 77.5946) // Bengaluru
+        val quakePoint = GeoPoint(15.5, 77.5946) // due north
+        val distanceKm = haversineKm(home, quakePoint)
+        assertTrue(distanceKm < 500.0, "test setup: must be within DEFAULT_RULES' 500km to prove anything ($distanceKm km)")
+
+        val homeLocationStore = HomeLocationStore(dao).apply { set(home) }
+        val alertRuleStore = AlertRuleStore(dao).apply {
+            setNearbyRadius(distanceKm - 20.0) // smaller than the actual distance -> excludes it
+            setMinMag(4.0)
+        }
+        val engine = MockEngine {
+            respond(
+                oneFeatureGeoJson(id = "q1", lat = quakePoint.lat, lon = quakePoint.lon, mag = 5.0),
+                HttpStatusCode.OK,
+                headersOf(HttpHeaders.ContentType to listOf("application/json")),
+            )
+        }
+        val r = QuakeRepository(
+            UsgsApi(HttpClient(engine)), EmscLiveSource(HttpClient(engine)), dao,
+            clock = { 2_000_000 }, alertRuleStore = alertRuleStore, homeLocationStore = homeLocationStore,
+        )
+        r.alertEvents.test {
+            r.refreshFeed()
+            expectNoEvents()
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `refreshFeed fires the near rule for a quake within the store's configured radius`() = runTest {
+        val home = GeoPoint(12.9716, 77.5946) // Bengaluru
+        val quakePoint = GeoPoint(15.5, 77.5946) // due north
+        val distanceKm = haversineKm(home, quakePoint)
+
+        val homeLocationStore = HomeLocationStore(dao).apply { set(home) }
+        val alertRuleStore = AlertRuleStore(dao).apply {
+            setNearbyRadius(distanceKm + 20.0) // larger than the actual distance -> includes it
+            setMinMag(4.0)
+        }
+        val engine = MockEngine {
+            respond(
+                oneFeatureGeoJson(id = "q1", lat = quakePoint.lat, lon = quakePoint.lon, mag = 5.0),
+                HttpStatusCode.OK,
+                headersOf(HttpHeaders.ContentType to listOf("application/json")),
+            )
+        }
+        val r = QuakeRepository(
+            UsgsApi(HttpClient(engine)), EmscLiveSource(HttpClient(engine)), dao,
+            clock = { 2_000_000 }, alertRuleStore = alertRuleStore, homeLocationStore = homeLocationStore,
+        )
+        r.alertEvents.test {
+            r.refreshFeed()
+            assertEquals("near", awaitItem().matchedRuleId)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    // loadArchivePage deliberately stays unwired (see that function's own Task 7 kdoc) - proves the
+    // exclusion is real, not accidental: a store-configured radius that would exclude this quake
+    // from the "near" rule has no effect here, because loadArchivePage never reads the store at all.
+    @Test fun `loadArchivePage does not honor the store - it always uses DEFAULT_RULES`() = runTest {
+        val home = GeoPoint(12.9716, 77.5946)
+        val quakePoint = GeoPoint(0.0, 0.0) // far outside any "near" radius, well within "world" territory
+        val homeLocationStore = HomeLocationStore(dao).apply { set(home) }
+        val alertRuleStore = AlertRuleStore(dao).apply { setNearbyRadius(10.0) }
+        val engine = MockEngine {
+            respond(
+                oneFeatureGeoJson(id = "q1", lat = quakePoint.lat, lon = quakePoint.lon, mag = 6.5),
+                HttpStatusCode.OK,
+                headersOf(HttpHeaders.ContentType to listOf("application/json")),
+            )
+        }
+        val r = QuakeRepository(
+            UsgsApi(HttpClient(engine)), EmscLiveSource(HttpClient(engine)), dao,
+            clock = { 2_000_000 }, alertRuleStore = alertRuleStore, homeLocationStore = homeLocationStore,
+        )
+        r.alertEvents.test {
+            r.loadArchivePage(beforeMillis = 2_000_000)
+            // DEFAULT_RULES' "world" rule (minMag 6.0, no radius) fires regardless of home/store -
+            // proving alerts were evaluated at all (not silently skipped) using the compile-time
+            // defaults, not the store.
+            assertEquals("world", awaitItem().matchedRuleId)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    private fun oneFeatureGeoJson(id: String, lat: Double, lon: Double, mag: Double, timeMillis: Long = 1_950_000L) = """
+        {
+          "type": "FeatureCollection",
+          "features": [
+            {
+              "type": "Feature",
+              "id": "$id",
+              "properties": {
+                "mag": $mag,
+                "place": "Test quake",
+                "time": $timeMillis,
+                "updated": $timeMillis,
+                "magType": "mw",
+                "status": "automatic",
+                "tsunami": 0
+              },
+              "geometry": { "type": "Point", "coordinates": [$lon, $lat, 10.0] }
+            }
+          ]
+        }
+    """.trimIndent()
 }

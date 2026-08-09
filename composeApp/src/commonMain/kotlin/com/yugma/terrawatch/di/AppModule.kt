@@ -1,9 +1,11 @@
 package com.yugma.terrawatch.di
 
+import com.yugma.terrawatch.data.AlertRuleStore
 import com.yugma.terrawatch.data.HistoryPager
 import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.data.OnboardingStore
 import com.yugma.terrawatch.data.QuakeRepository
+import com.yugma.terrawatch.data.ThemeStore
 import com.yugma.terrawatch.database.QuakeDao
 import com.yugma.terrawatch.history.HistoryViewModel
 import com.yugma.terrawatch.home.HomeViewModel
@@ -13,6 +15,7 @@ import com.yugma.terrawatch.location.LocationProvider
 import com.yugma.terrawatch.location.LocationRequester
 import com.yugma.terrawatch.network.EmscLiveSource
 import com.yugma.terrawatch.network.UsgsApi
+import com.yugma.terrawatch.settings.SettingsViewModel
 import io.ktor.client.HttpClient
 import org.koin.core.module.Module
 import org.koin.core.module.dsl.viewModel
@@ -32,8 +35,20 @@ fun appModule(http: HttpClient, dao: QuakeDao, locationProvider: LocationProvide
     single { UsgsApi(http) }
     single { EmscLiveSource(http) }
     single { dao }
-    single { QuakeRepository(get(), get(), get(), clock = { Clock.System.now().toEpochMilliseconds() }) }
+    // Task 7 (Plan 3), USER REQUIREMENT: alertRuleStore/homeLocationStore are the two optional
+    // trailing params QuakeRepository.kt's own kdoc documents — this is the one real call site that
+    // ever supplies both, so refreshFeed()/startLive() actually evaluate AlertRuleEngine against the
+    // user's stored radius/minMag and real home, not the compile-time DEFAULT_RULES/null every test
+    // construction implicitly falls back to.
+    single { QuakeRepository(get(), get(), get(), clock = { Clock.System.now().toEpochMilliseconds() }, alertRuleStore = get(), homeLocationStore = get()) }
     single { HomeLocationStore(get()) }
+    // Task 7 (Plan 3): AlertRuleStore/ThemeStore are plain singles (same "no ViewModel needed"
+    // shape as HomeLocationStore/OnboardingStore above) — HomeViewModel/SettingsViewModel both
+    // depend on AlertRuleStore via constructor injection, and App() resolves ThemeStore directly
+    // via koinInject() at the composition root (see App.kt's own kdoc), exactly like AppNav.kt
+    // already does for OnboardingStore.
+    single { AlertRuleStore(get()) }
+    single { ThemeStore(get()) }
     // Task 4 (Plan 3): resolved via koinInject<OnboardingStore>() at AppNav's composition root
     // (same non-ViewModel "plain single, plain koinInject()" shape LocationAskDialog.kt already
     // uses for HomeLocationStore/LocationRequester) rather than through any ViewModel constructor
@@ -58,7 +73,7 @@ fun appModule(http: HttpClient, dao: QuakeDao, locationProvider: LocationProvide
     // and they carried a latent second startLive() collector (see FeedViewModel's own former
     // init{}) that this repository never needed twice. Both deleted outright, not just
     // unregistered — see task-10-report.md's Fix Round 1 for the removal record.
-    viewModel { HomeViewModel(get(), get(), get()) }
+    viewModel { HomeViewModel(get(), get(), get(), get()) }
     // Task 3 (Plan 3): QuakeSelectionViewModel's second constructor param is
     // androidx.lifecycle.SavedStateHandle, which has no `single {}`/`factory {}` registration
     // anywhere in this module — and needs none. Koin's own ViewModel factory
@@ -86,4 +101,7 @@ fun appModule(http: HttpClient, dao: QuakeDao, locationProvider: LocationProvide
     // HistoryPager's own injected seam two lines up (real wall-clock at the platform boundary,
     // fully substitutable in tests).
     viewModel { InsightsViewModel(get(), clock = { Clock.System.now().toEpochMilliseconds() }) }
+    // Task 7 (Plan 3): Settings' own tab-scoped ViewModel — resolved via SettingsScreen's own
+    // defaulted `= koinViewModel()` param, same shape as HistoryViewModel/InsightsViewModel above.
+    viewModel { SettingsViewModel(get(), get(), get()) }
 }
