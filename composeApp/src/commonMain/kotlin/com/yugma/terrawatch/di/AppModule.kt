@@ -6,7 +6,7 @@ import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.data.OnboardingStore
 import com.yugma.terrawatch.data.QuakeRepository
 import com.yugma.terrawatch.data.ThemeStore
-import com.yugma.terrawatch.database.QuakeDao
+import com.yugma.terrawatch.database.QuakeStore
 import com.yugma.terrawatch.history.HistoryViewModel
 import com.yugma.terrawatch.home.HomeViewModel
 import com.yugma.terrawatch.home.QuakeSelectionViewModel
@@ -23,15 +23,17 @@ import org.koin.dsl.module
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
-// Platform entry points supply: HttpClient (engine differs), QuakeDao (driver differs), and
-// LocationProvider (android needs a Context, jvm/wasmJs need nothing — see LocationProvider.kt's
-// no-declared-constructor rationale, mirroring DriverFactory).
+// Platform entry points supply: HttpClient (engine differs), a QuakeStore (android/jvm hand in a
+// real QuakeDao over their own DriverFactory; wasmJs hands in an InMemoryQuakeStore — Task 9, Plan
+// 3, see QuakeStore's own kdoc for why), and LocationProvider (android needs a Context, jvm/wasmJs
+// need nothing — see LocationProvider.kt's no-declared-constructor rationale, mirroring
+// DriverFactory).
 // kotlinx.datetime.Clock is now a deprecated typealias for kotlin.time.Clock (Kotlin 2.1+, still
 // @ExperimentalTime as of Kotlin 2.2) — same migration as kotlinx.datetime.Instant elsewhere in
 // this codebase (see EmscParser.kt). Importing the stdlib type directly avoids a typealias
 // nested-object resolution quirk seen when going through the kotlinx.datetime alias.
 @OptIn(ExperimentalTime::class)
-fun appModule(http: HttpClient, dao: QuakeDao, locationProvider: LocationProvider): Module = module {
+fun appModule(http: HttpClient, dao: QuakeStore, locationProvider: LocationProvider): Module = module {
     single { UsgsApi(http) }
     single { EmscLiveSource(http) }
     single { dao }

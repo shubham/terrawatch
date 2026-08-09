@@ -1,6 +1,6 @@
 package com.yugma.terrawatch.data
 
-import com.yugma.terrawatch.database.QuakeDao
+import com.yugma.terrawatch.database.QuakeStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -20,7 +20,9 @@ enum class ThemeSetting { SYSTEM, LIGHT, DUSK }
  * and every value it changes to" is what the one real caller actually needs — there's no second
  * concern here for a separate `updates` side-channel to serve.
  */
-class ThemeStore(private val dao: QuakeDao) {
+// Task 9 (Plan 3): dao widened from QuakeDao to QuakeStore — see that interface's kdoc. Only
+// metaGet/metaPut are used here, both on the interface; zero behavior change.
+class ThemeStore(private val dao: QuakeStore) {
     private val _updates = MutableSharedFlow<Unit>(replay = 1, extraBufferCapacity = 4)
 
     val theme: Flow<ThemeSetting> = _updates

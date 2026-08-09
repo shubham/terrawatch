@@ -1,6 +1,6 @@
 package com.yugma.terrawatch.data
 
-import com.yugma.terrawatch.database.QuakeDao
+import com.yugma.terrawatch.database.QuakeStore
 
 /**
  * The first-run gate (Task 4, Plan 3): "first-run flag in meta (\"onboarded\"=true) → if absent,
@@ -16,7 +16,9 @@ import com.yugma.terrawatch.database.QuakeDao
  * 's own composition start to pick a start destination — nothing needs to observe it changing
  * live.
  */
-class OnboardingStore(private val dao: QuakeDao) {
+// Task 9 (Plan 3): dao widened from QuakeDao to QuakeStore — see that interface's kdoc. Only
+// metaGet/metaPut are used here, both on the interface; zero behavior change.
+class OnboardingStore(private val dao: QuakeStore) {
     fun isOnboarded(): Boolean = dao.metaGet(ONBOARDED_KEY) == "true"
 
     fun setOnboarded() {

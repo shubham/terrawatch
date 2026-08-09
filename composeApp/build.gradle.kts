@@ -66,6 +66,18 @@ kotlin {
             implementation(libs.ktor.client.websockets)
             implementation(libs.coroutines.swing)
         }
+        // Task 9 (Plan 3): web enablement — the Js engine (browser fetch/XHR + native WebSocket
+        // under the hood) is what main.kt's real (no longer WebPlaceholder) startKoin() call now
+        // builds an HttpClient on. Same "composeApp needs its own explicit per-target ktor deps"
+        // reasoning as jvmMain/androidMain above: core:network's own ktor-client-websockets is an
+        // `implementation` dependency there, so it does NOT leak transitively through
+        // projects.core.data's `api(projects.core.network)` — composeApp's AppModule.kt/main.kt
+        // construct their own HttpClient directly and need the engine + WebSockets plugin on their
+        // own classpath regardless.
+        wasmJsMain.dependencies {
+            implementation(libs.ktor.client.js)
+            implementation(libs.ktor.client.websockets)
+        }
         // Real QuakeRepository construction needs the JVM-only SQLDelight JDBC driver, so this
         // suite lives in jvmTest rather than commonTest (commonTest compiles for androidTarget and
         // wasmJs too, neither of which has JdbcSqliteDriver on its classpath).

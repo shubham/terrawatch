@@ -36,7 +36,11 @@ data class BandCount(val band: MagnitudeBand, val n: Long)
 private fun bandFromLabel(label: String?): MagnitudeBand =
     MagnitudeBand.entries.firstOrNull { it.name == label } ?: MagnitudeBand.UNKNOWN
 
-class QuakeDao(private val db: TerraWatchDb, private val clock: () -> Long = { 0L }) {
+// Task 9 (Plan 3): implements QuakeStore — see that interface's own kdoc for the web-enablement
+// spike this extraction came from. Purely mechanical here: `: QuakeStore` plus `override` on the 13
+// methods that interface declares; every method body below is untouched, byte-for-byte, from before
+// this task (verified by the full jvmTest suite staying green with zero edits to this class's logic).
+class QuakeDao(private val db: TerraWatchDb, private val clock: () -> Long = { 0L }) : QuakeStore {
     private val json = Json
 
     fun upsert(quake: DomainQuake) = db.transaction { upsertInternal(quake) }
@@ -59,16 +63,16 @@ class QuakeDao(private val db: TerraWatchDb, private val clock: () -> Long = { 0
         db.quakeQueries.insertOrReplace(toWrite.toRow())
     }
 
-    fun byId(id: String): DomainQuake? = byIdInternal(id)
+    override fun byId(id: String): DomainQuake? = byIdInternal(id)
 
     private fun byIdInternal(id: String): DomainQuake? =
         db.quakeQueries.byId(id).executeAsOneOrNull()?.toDomain()
 
-    fun recent(sinceMillis: Long): Flow<List<DomainQuake>> =
+    override fun recent(sinceMillis: Long): Flow<List<DomainQuake>> =
         db.quakeQueries.recent(sinceMillis).asFlow().mapToList(Dispatchers.Default)
             .map { rows -> rows.map { it.toDomain() } }
 
-    fun pageBefore(timeMillis: Long, limit: Int, minMag: Double?): List<DomainQuake> =
+    override fun pageBefore(timeMillis: Long, limit: Int, minMag: Double?): List<DomainQuake> =
         db.quakeQueries.pageBefore(timeMillis, minMag, limit.toLong()).executeAsList().map { it.toDomain() }
 
     /**
@@ -76,12 +80,12 @@ class QuakeDao(private val db: TerraWatchDb, private val clock: () -> Long = { 0
      * no LIMIT — see [com.yugma.terrawatch.data.QuakeRepository.pageBetween]'s own kdoc for why
      * History's display query needs a range instead of a count-based page.
      */
-    fun pageBetween(lowerInclusive: Long, upperExclusive: Long, minMag: Double?): List<DomainQuake> =
+    override fun pageBetween(lowerInclusive: Long, upperExclusive: Long, minMag: Double?): List<DomainQuake> =
         db.quakeQueries.pageBetween(lowerInclusive, upperExclusive, minMag).executeAsList().map { it.toDomain() }
 
     fun countAll(): Long = db.quakeQueries.countAll().executeAsOne()
 
-    fun lastFetchedAtMillis(): Long? = db.quakeQueries.lastFetchedAt().executeAsOneOrNull()?.MAX
+    override fun lastFetchedAtMillis(): Long? = db.quakeQueries.lastFetchedAt().executeAsOneOrNull()?.MAX
 
     /**
      * Task 6 (Plan 3): Insights' "quakes per day" bar chart source — one [DayCount] per calendar
@@ -89,7 +93,7 @@ class QuakeDao(private val db: TerraWatchDb, private val clock: () -> Long = { 0
      * ascending by bucket. Sparse by construction (a zero-quake day contributes no row at all,
      * per SQL `GROUP BY` semantics) — see [DayCount]'s own kdoc for who fills the gaps.
      */
-    fun quakesPerDay(sinceMillis: Long): List<DayCount> =
+    override fun quakesPerDay(sinceMillis: Long): List<DayCount> =
         db.quakeQueries.quakesPerDay(sinceMillis).executeAsList().map { DayCount(it.dayBucket, it.n) }
 
     /**
@@ -97,7 +101,7 @@ class QuakeDao(private val db: TerraWatchDb, private val clock: () -> Long = { 0
      * that has at least one quake with `timeMillis >= [sinceMillis]` (also sparse, same reasoning
      * as [quakesPerDay] — a band with zero matches in-window contributes no row).
      */
-    fun bandDistribution(sinceMillis: Long): List<BandCount> =
+    override fun bandDistribution(sinceMillis: Long): List<BandCount> =
         db.quakeQueries.bandDistribution(sinceMillis).executeAsList().map { BandCount(bandFromLabel(it.band), it.n) }
 
     /**
@@ -111,7 +115,7 @@ class QuakeDao(private val db: TerraWatchDb, private val clock: () -> Long = { 0
      * (vs. `Quake.mag: Double?`); the two mapping extensions below share [rowToDomain] rather
      * than duplicating the field-by-field construction twice.
      */
-    fun strongest(sinceMillis: Long): DomainQuake? =
+    override fun strongest(sinceMillis: Long): DomainQuake? =
         db.quakeQueries.strongest(sinceMillis).executeAsOneOrNull()?.toDomain()
 
     fun delete(id: String) = db.quakeQueries.delete(id)
@@ -119,11 +123,17 @@ class QuakeDao(private val db: TerraWatchDb, private val clock: () -> Long = { 0
     /** Fix Round 1 (I2): bulk-purges every row whose id starts with [prefix] — used to sweep up
      * debug-injected quakes (HomeViewModel.injectDebugQuake's "debug-"-prefixed ids) in one
      * statement instead of tracking individual ids to delete. */
-    fun deleteByIdPrefix(prefix: String) = db.quakeQueries.deleteByIdPrefix(prefix)
+    // Block body, not `=`: the generated mutator returns the affected-row count (Long), which an
+    // expression body would infer as this override's OWN return type — mismatching QuakeStore's
+    // declared `Unit` (a real compile error hit extracting that interface: "Return type of
+    // 'deleteByIdPrefix' is not a subtype of the return type of the overridden member"). Nothing
+    // ever consumed that count anyway (this method's callers only ever wanted the delete to happen),
+    // so discarding it via a block body is behavior-identical, not a loss.
+    override fun deleteByIdPrefix(prefix: String) { db.quakeQueries.deleteByIdPrefix(prefix) }
 
-    fun metaGet(key: String): String? = db.quakeQueries.meta_get(key).executeAsOneOrNull()
+    override fun metaGet(key: String): String? = db.quakeQueries.meta_get(key).executeAsOneOrNull()
 
-    fun metaPut(key: String, value: String) { db.quakeQueries.meta_put(key, value) }
+    override fun metaPut(key: String, value: String) { db.quakeQueries.meta_put(key, value) }
 
     /**
      * Unconditional write for DedupeEngine-reconciled rows. The reconciler has already
@@ -133,7 +143,7 @@ class QuakeDao(private val db: TerraWatchDb, private val clock: () -> Long = { 0
      * a lagging timestamp). Idempotent for self-merges: reconcile() of an already-stored
      * row reproduces the stored row byte-for-byte.
      */
-    fun replace(quake: DomainQuake) = replaceAndDelete(quake, deleteIds = emptyList())
+    override fun replace(quake: DomainQuake) = replaceAndDelete(quake, deleteIds = emptyList())
 
     /**
      * Atomically delete every id in [deleteIds] and write [quake], as ONE transaction — one
@@ -155,7 +165,7 @@ class QuakeDao(private val db: TerraWatchDb, private val clock: () -> Long = { 0
      * the feed's `ids` alias list — differs from its `sources[USGS]` value — taken from the
      * feed's top-level feature id; see Task 9 review round 3). Both stale rows must go.
      */
-    fun replaceAndDelete(quake: DomainQuake, deleteIds: List<String> = emptyList()) = db.transaction {
+    override fun replaceAndDelete(quake: DomainQuake, deleteIds: List<String>) = db.transaction {
         deleteIds.forEach { db.quakeQueries.delete(it) }
         db.quakeQueries.insertOrReplace(quake.toRow())
     }

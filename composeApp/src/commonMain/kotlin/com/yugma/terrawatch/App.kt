@@ -13,6 +13,7 @@ import com.yugma.terrawatch.data.ThemeStore
 import com.yugma.terrawatch.data.resolveDarkTheme
 import com.yugma.terrawatch.home.HomeViewModel
 import com.yugma.terrawatch.home.QuakeSelectionViewModel
+import com.yugma.terrawatch.home.rememberQuakeSelectionExtras
 import com.yugma.terrawatch.motion.LocalReducedMotion
 import com.yugma.terrawatch.motion.systemReducedMotion
 import com.yugma.terrawatch.nav.AppNav
@@ -58,7 +59,18 @@ import org.koin.compose.viewmodel.koinViewModel
 @Composable
 fun App() {
     val homeViewModel = koinViewModel<HomeViewModel>()
-    val selectionViewModel = koinViewModel<QuakeSelectionViewModel>()
+    // Task 9 (Plan 3): rememberQuakeSelectionExtras() is null on every platform except wasmJs —
+    // see that function's own kdoc (QuakeSelectionExtras.kt) for the real crash this works around
+    // (Koin's SavedStateHandle auto-injection needs a SavedStateRegistryOwner that wasmJs's
+    // ComposeViewport doesn't supply by default; Android's ComponentActivity already does, so this
+    // branch is a pure no-op there — koinViewModel<QuakeSelectionViewModel>()'s own default
+    // `extras` is untouched on every platform but wasmJs).
+    val quakeSelectionExtras = rememberQuakeSelectionExtras()
+    val selectionViewModel = if (quakeSelectionExtras != null) {
+        koinViewModel<QuakeSelectionViewModel>(extras = quakeSelectionExtras)
+    } else {
+        koinViewModel<QuakeSelectionViewModel>()
+    }
     val themeStore = koinInject<ThemeStore>()
     val themeSetting by themeStore.theme.collectAsState(initial = ThemeSetting.SYSTEM)
     TerraTheme(darkTheme = resolveDarkTheme(themeSetting, isSystemInDarkTheme())) {

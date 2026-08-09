@@ -1,6 +1,6 @@
 package com.yugma.terrawatch.data
 
-import com.yugma.terrawatch.database.QuakeDao
+import com.yugma.terrawatch.database.QuakeStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -35,7 +35,9 @@ import kotlinx.coroutines.flow.onStart
  * row from a plain synchronous [MutableSharedFlow.tryEmit] caller, e.g. a Settings slider being
  * dragged).
  */
-class AlertRuleStore(private val dao: QuakeDao) {
+// Task 9 (Plan 3): dao widened from QuakeDao to QuakeStore — see that interface's kdoc. Only
+// metaGet/metaPut are used here, both on the interface; zero behavior change.
+class AlertRuleStore(private val dao: QuakeStore) {
     private val _updates = MutableSharedFlow<Unit>(replay = 1, extraBufferCapacity = 4)
     val updates: SharedFlow<Unit> = _updates
 

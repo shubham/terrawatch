@@ -2,7 +2,7 @@ package com.yugma.terrawatch.data
 
 import com.yugma.terrawatch.database.BandCount
 import com.yugma.terrawatch.database.DayCount
-import com.yugma.terrawatch.database.QuakeDao
+import com.yugma.terrawatch.database.QuakeStore
 import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.model.Quake
 import com.yugma.terrawatch.network.EmscLiveSource
@@ -31,7 +31,14 @@ enum class RefreshStatus { UPDATED, NOT_MODIFIED, FAILED }
 class QuakeRepository(
     private val api: UsgsApi,
     private val live: EmscLiveSource,
-    private val dao: QuakeDao,
+    // Task 9 (Plan 3): widened from the concrete QuakeDao to the QuakeStore interface it now
+    // implements — see QuakeStore's own kdoc for the web-enablement spike this came from. Every
+    // method this class calls on `dao` (recent/lastFetchedAtMillis/byId/metaGet/metaPut/replace/
+    // deleteByIdPrefix/pageBetween/quakesPerDay/bandDistribution/strongest/pageBefore/
+    // replaceAndDelete) is on that interface — this is a pure type-widening, zero-behavior-change
+    // edit (jvmTest's existing 287 cases construct this with a real QuakeDao, unmodified, and stay
+    // green because QuakeDao IS-A QuakeStore).
+    private val dao: QuakeStore,
     private val dedupe: DedupeEngine = DedupeEngine(),
     private val alerts: AlertRuleEngine = AlertRuleEngine(),
     private val clock: () -> Long,

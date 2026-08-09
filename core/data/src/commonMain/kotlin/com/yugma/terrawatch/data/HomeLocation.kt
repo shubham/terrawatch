@@ -1,6 +1,6 @@
 package com.yugma.terrawatch.data
 
-import com.yugma.terrawatch.database.QuakeDao
+import com.yugma.terrawatch.database.QuakeStore
 import com.yugma.terrawatch.model.GeoPoint
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -18,7 +18,9 @@ import kotlinx.coroutines.flow.SharedFlow
  * the already-composed pill — the exact "ASK pill frozen even after granting, needs an app restart"
  * gap this task closes.
  */
-class HomeLocationStore(private val dao: QuakeDao) {
+// Task 9 (Plan 3): dao widened from QuakeDao to QuakeStore — see that interface's kdoc. Only
+// metaGet/metaPut are used here, both on the interface; zero behavior change.
+class HomeLocationStore(private val dao: QuakeStore) {
     // Task 3 (Plan 3) carry-in — the Task 2 ledger minor: this used to be replay = 0, with a kdoc
     // claiming extraBufferCapacity alone meant a racing collector's set() "is not silently lost."
     // That claim was only half true: extraBufferCapacity governs BACKPRESSURE for a collector that
