@@ -234,6 +234,75 @@ class HomeViewModelTest {
         }
     }
 
+    // Task 2 (Plan 3) carry-in — the Task 1 refreshFailed fencing debt: refreshOnce() captures its
+    // own `refreshGeneration` at call time and only writes refreshFailed if that generation is
+    // still current when its (possibly slow) result lands. Without this, a poll that's been sitting
+    // in flight for a while can resolve FAILED *after* a live arrival already proved the feed
+    // healthy again (repository.insertedQuakeIds bumping the generation and clearing refreshFailed
+    // itself, same as the "refreshFailed clears once a new quake proves data is flowing again" test
+    // above) — and unconditionally re-raise a banner the user just watched clear. Red (pre-fix):
+    // the slow attempt's `refreshFailed.value = true` always lands unfenced, so the drain loop below
+    // observes a second Content with refreshFailed flipped back to true.
+    //
+    // fakeRepositorySlowThenFailing gates ONLY the very first refreshFeed() call (init{}'s own) on
+    // [gate] — a real suspension point, not virtual time, same reasoning
+    // "cached pins render immediately..." documents for its own CompletableDeferred gate.
+    @Test fun `a slow-failed poll landing after a live-clear does not re-raise the banner`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val gate = CompletableDeferred<Unit>()
+        val repository = fakeRepositorySlowThenFailing(gate)
+        val vm = createVm(repository)
+
+        vm.state.test {
+            // The initial refreshOnce() is parked on `gate` inside the network layer -- state so
+            // far only reflects the (empty, never-failed) cache-driven collector.
+            var s = awaitItem()
+            while (s is HomeUiState.Loading) s = awaitItem()
+            assertFalse(assertIs<HomeUiState.Content>(s).refreshFailed)
+
+            // A live-style arrival WHILE the slow poll is still in flight -- bumps refreshGeneration
+            // (HomeViewModel.refreshGeneration's own kdoc) via the insertedQuakeIds collector, the
+            // exact same path "refreshFailed clears once a new quake proves data is flowing again"
+            // exercises.
+            repository.ingest(freshQuake("live1"))
+            var s2 = awaitItem()
+            while (s2 is HomeUiState.Content && s2.quakes.none { it.id == "live1" }) s2 = awaitItem()
+            assertFalse(assertIs<HomeUiState.Content>(s2).refreshFailed)
+
+            // Now let the slow poll's own FAILED result land. Pre-fix, refreshOnce()'s
+            // `refreshFailed.value = true` re-raises the banner right here even though live1
+            // already proved the feed healthy; post-fix, this write is fenced out -- its captured
+            // generation no longer matches after the ingest above bumped it.
+            gate.complete(Unit)
+
+            // The fenced-out attempt still bumps pollTick unconditionally (a harmless re-subscribe
+            // with a fresh cutoff -- see refreshOnce()'s own kdoc). _state is a StateFlow, which
+            // conflates a re-combined value that's data-equal to the current one -- so the fenced,
+            // correct outcome is that NOTHING further ever arrives here at all (same quakes, same
+            // refreshFailed=false as s2 above). The unfenced, buggy outcome is exactly one more
+            // Content with refreshFailed flipped back to true (a genuine change from s2, so it is
+            // NOT conflated away).
+            //
+            // NOT `withTimeoutOrNull(...) { awaitItem() }`: Turbine's own awaitItem() internally
+            // catches ANY TimeoutCancellationException reaching it -- including one thrown by an
+            // ENCLOSING withTimeoutOrNull -- and rethrows it as a (package-internal, so caught here
+            // via its public AssertionError supertype rather than by its own unnamable type)
+            // TurbineAssertionError, which withTimeoutOrNull no longer recognizes as its own
+            // cancellation and lets propagate as a real failure (confirmed by actually running
+            // this: the first draft's withTimeoutOrNull wrapper never suppressed anything, it just
+            // relabeled the exception). Catching the timeout-triggered AssertionError directly is
+            // the correct way to say "nothing arrived within Turbine's own wait budget" here.
+            val afterGate = try {
+                awaitItem()
+            } catch (expectedWhenFenceHolds: AssertionError) {
+                null
+            }
+            val sawFailedAgain = afterGate is HomeUiState.Content && afterGate.refreshFailed
+            assertFalse(sawFailedAgain, "a slow-failed poll must not re-raise the banner after a live-clear")
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
     // Fix Round 2, blocking fix 2 (review finding): the cache-driven recentQuakes() collection
     // used to run in the same coroutine as, and strictly after, the refreshFeed() network call --
     // so a pre-seeded local cache wouldn't paint until the network round-trip resolved, one way or
@@ -618,6 +687,30 @@ class HomeViewModelTest {
         }
     }
 
+    // Task 2 (Plan 3), "close the location loop": homeLocation used to be resolved ONCE at
+    // startup (a plain `val stored = store.get() ?: ...` assignment, never revisited) — a grant or
+    // city-pick landing mid-session (HomeLocationStore.set(), called from MainActivity's permission
+    // callback or LocationAskDialog's CityPickerDialog) would sit in the DB forever, invisible to
+    // this already-running ViewModel, until the next process restart re-ran init{}. This is the
+    // device-observable bug: the ASK pill staying frozen even after the user just granted location.
+    //
+    // The store starts genuinely empty (no seeded point, and createVm()'s default LocationProvider()
+    // jvm actual always resolves null too — see LocationProvider.jvm.kt) so the FIRST emission is
+    // deterministically null, not a race between "not yet resolved" and "resolved to something" the
+    // way the seeded test above has to loop over — only [store.set] below should ever produce a
+    // non-null value here.
+    @Test fun `homeLocation reacts to a store update landing mid-session, no restart needed`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val store = emptyHomeLocationStore()
+        val vm = createVm(fakeRepositoryAlwaysFailing(), store)
+        vm.homeLocation.test {
+            assertEquals(null, awaitItem())
+            store.set(GeoPoint(9.9, 8.8))
+            assertEquals(GeoPoint(9.9, 8.8), awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
     // Task 11: selection wiring for the detail sheet. fakeRepositoryWithOneQuake()'s seeded feed
     // (see ONE_FEATURE_GEOJSON below) always lands as id "us1234" once refreshFeed() resolves —
     // select() reads through the repository's real (DAO-backed) byId(), not some in-memory copy of
@@ -734,6 +827,26 @@ private fun fakeRepositoryAlwaysFailing(clock: () -> Long = { 2_000_000L }): Qua
         EmscLiveSource(HttpClient(engine)),
         dao,
         clock = clock,
+    )
+}
+
+// Task 2 (Plan 3) carry-in: gates every feed response on [gate] before resolving FAILED (500) --
+// used to hold the very first refreshOnce() call in flight while the test ingests a live-style
+// quake out from under it, reproducing "a slow-failed poll landing after a live-clear" in a
+// controlled, deterministic order rather than hoping for a real race.
+private fun fakeRepositorySlowThenFailing(gate: CompletableDeferred<Unit>): QuakeRepository {
+    val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+    TerraWatchDb.Schema.create(driver)
+    val dao = QuakeDao(TerraWatchDb(driver))
+    val engine = MockEngine {
+        gate.await()
+        respond("", HttpStatusCode.InternalServerError)
+    }
+    return QuakeRepository(
+        UsgsApi(HttpClient(engine)),
+        EmscLiveSource(HttpClient(engine)),
+        dao,
+        clock = { 2_000_000L },
     )
 }
 

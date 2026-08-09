@@ -32,6 +32,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import com.yugma.terrawatch.data.PillStatus
 import com.yugma.terrawatch.data.pillStatus
 import com.yugma.terrawatch.detail.DetailSheet
+import com.yugma.terrawatch.location.LocationAskDialog
 import com.yugma.terrawatch.map.QuakeMap
 import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.model.haversineKm
@@ -147,6 +149,12 @@ fun HomeScreen(viewModel: HomeViewModel) {
     // Task 10: the pin-drop animation's trigger — see rememberExpiringNewQuakeId's own kdoc for
     // why this needs its own expiry rather than passing viewModel.newQuakeIds straight through.
     val newQuakeId by rememberExpiringNewQuakeId(viewModel.newQuakeIds)
+    // Task 2 (Plan 3): the ASK-pill's tap target — see onPillClick below. Scoped to this composable
+    // (not HomeViewModel) because it's pure transient UI state with no persistence/business-logic
+    // half of its own, same "UI-only state lives in the composable" split [selectedQuake] draws
+    // against the sheet-visibility question below (that one IS VM state, because it also carries
+    // which quake to render — this one carries nothing beyond "is the ask dialog showing").
+    var showLocationAsk by remember { mutableStateOf(false) }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         if (layoutMode(maxWidth.value.toInt()) == LayoutMode.TWO_PANE) {
@@ -156,6 +164,7 @@ fun HomeScreen(viewModel: HomeViewModel) {
                 nowMillis = nowMillis,
                 newQuakeId = newQuakeId,
                 viewModel = viewModel,
+                onAskLocation = { showLocationAsk = true },
             )
         } else {
             PhoneLayout(
@@ -166,6 +175,7 @@ fun HomeScreen(viewModel: HomeViewModel) {
                 newQuakeId = newQuakeId,
                 maxHeight = maxHeight,
                 viewModel = viewModel,
+                onAskLocation = { showLocationAsk = true },
             )
         }
         // Task 11: the quake detail sheet — a second, independent, on-demand ModalBottomSheet
@@ -189,6 +199,11 @@ fun HomeScreen(viewModel: HomeViewModel) {
                 onDismiss = { viewModel.dismissSelection() },
             )
         }
+        // Task 2 (Plan 3): a THIRD independent overlay layer, same "stacks on top of whichever
+        // layout/DetailSheet is active" shape as the detail sheet just above.
+        if (showLocationAsk) {
+            LocationAskDialog(onDismiss = { showLocationAsk = false })
+        }
     }
 }
 
@@ -210,6 +225,7 @@ private fun PhoneLayout(
     newQuakeId: String?,
     maxHeight: Dp,
     viewModel: HomeViewModel,
+    onAskLocation: () -> Unit,
 ) {
     val content = state as? HomeUiState.Content
     val scaffoldState = rememberBottomSheetScaffoldState()
@@ -272,7 +288,7 @@ private fun PhoneLayout(
                         StatusShield(
                             status = pill,
                             nowMillis = nowMillis,
-                            onClick = { onPillClick(pill, viewModel) },
+                            onClick = { onPillClick(pill, viewModel, onAskLocation) },
                             modifier = Modifier.fillMaxWidth(),
                         )
                         // Banner moves below the pill when both are showing (Task 9 brief:
@@ -325,6 +341,7 @@ private fun TwoPaneLayout(
     nowMillis: Long,
     newQuakeId: String?,
     viewModel: HomeViewModel,
+    onAskLocation: () -> Unit,
 ) {
     val content = state as? HomeUiState.Content
     // Fix 1 (see kdoc above): re-fires on every `state` emission, i.e. every genuinely new arrival
@@ -361,7 +378,7 @@ private fun TwoPaneLayout(
                     StatusShield(
                         status = pill,
                         nowMillis = nowMillis,
-                        onClick = { onPillClick(pill, viewModel) },
+                        onClick = { onPillClick(pill, viewModel, onAskLocation) },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     if (state.refreshFailed || isStale(state.lastUpdatedMillis, nowMillis)) {
@@ -450,10 +467,15 @@ private fun isStale(lastUpdatedMillis: Long?, nowMillis: Long): Boolean =
  * that both host their own [StatusShield] call site — extracted so the two layouts' `onClick`
  * lambdas can't quietly drift out of sync with each other the way two independent copies of this
  * `when` could.
+ *
+ * Task 2 (Plan 3): the [PillStatus.Kind.ASK_LOCATION] TODO this used to carry dies here —
+ * [onAskLocation] opens [com.yugma.terrawatch.location.LocationAskDialog] (wired from HomeScreen's
+ * own `showLocationAsk` state, since a plain function like this one can't itself hold Compose
+ * state or show a dialog).
  */
-private fun onPillClick(pill: PillStatus, viewModel: HomeViewModel) {
+private fun onPillClick(pill: PillStatus, viewModel: HomeViewModel, onAskLocation: () -> Unit) {
     when (pill.kind) {
-        PillStatus.Kind.ASK_LOCATION -> {} // TODO(Plan 3 settings): re-ask permission / open settings.
+        PillStatus.Kind.ASK_LOCATION -> onAskLocation()
         PillStatus.Kind.ALERT -> pill.quake?.let { viewModel.select(it.id) }
         PillStatus.Kind.CALM -> {} // Nothing to show.
     }

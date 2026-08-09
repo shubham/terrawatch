@@ -5,6 +5,7 @@ import com.yugma.terrawatch.data.QuakeRepository
 import com.yugma.terrawatch.database.QuakeDao
 import com.yugma.terrawatch.home.HomeViewModel
 import com.yugma.terrawatch.location.LocationProvider
+import com.yugma.terrawatch.location.LocationRequester
 import com.yugma.terrawatch.network.EmscLiveSource
 import com.yugma.terrawatch.network.UsgsApi
 import io.ktor.client.HttpClient
@@ -29,6 +30,13 @@ fun appModule(http: HttpClient, dao: QuakeDao, locationProvider: LocationProvide
     single { QuakeRepository(get(), get(), get(), clock = { Clock.System.now().toEpochMilliseconds() }) }
     single { HomeLocationStore(get()) }
     single { locationProvider }
+    // Task 2 (Plan 3): unlike locationProvider above (built at each platform's entry point and
+    // handed in, since android's actual needs a Context the shared expect signature can't carry),
+    // LocationRequester's no-arg constructor is uniform across every target — see its own kdoc —
+    // so it's constructed directly here instead. LocationAskDialog (composeApp/location) resolves
+    // this via koinInject(), not through HomeViewModel's constructor: nothing else in this graph
+    // needs it.
+    single { LocationRequester() }
     // viewModel {} (not factory {}) — scopes HomeViewModel to the platform ViewModelStore via
     // koin-compose-viewmodel's koinViewModel<HomeViewModel>() at the App() call site, instead of
     // minting a fresh instance (and a fresh startLive() collector) on every recomposition/rotation.

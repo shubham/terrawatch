@@ -123,6 +123,18 @@ class HomeViewModel(
     // ingest() just wrote a genuinely new quake, no "previous count" bookkeeping required.
     private val refreshFailed = MutableStateFlow(false)
 
+    // Task 2 (Plan 3) carry-in — the Task 1 entry-conditions debt this closes: "a slow-failed poll
+    // landing after a live-clear must not re-raise the banner." [refreshOnce] captures this at call
+    // time and only writes [refreshFailed] if it's still current when that (possibly slow) call's
+    // result lands; the [insertedQuakeIds] collector below bumps it on every live-clear, so a
+    // [refreshOnce] attempt that was already in flight when a genuinely new quake proved the feed
+    // healthy again has its now-stale write silently discarded instead of stomping back over that
+    // more-recent truth. Plain Main-confined `var` (like [selectJob]/[retryJob] above) — both the
+    // writer (refreshOnce, via the poll loop/retryNow, always viewModelScope-launched with no
+    // dispatcher override) and the other writer (the insertedQuakeIds collector below, same
+    // constraint) only ever run on Main, so there's no concurrent-mutation hazard to guard against.
+    private var refreshGeneration = 0L
+
     // Task 1 (Plan 3): bumped by every [refreshOnce] attempt (loop tick or [retryNow]) so the
     // quakes-list collector below re-subscribes to [QuakeRepository.recentQuakes] against a FRESH
     // cutoff each time, rather than the cutoff that function's own Flow froze once at whatever
@@ -186,6 +198,21 @@ class HomeViewModel(
             _homeLocation.value = stored ?: locationProvider.current()?.also { homeLocationStore.set(it) }
         }
 
+        // Task 2 (Plan 3), "close the location loop": homeLocation used to be resolved exactly
+        // once, above — a grant (MainActivity's permission callback) or a city pick
+        // (LocationAskDialog/CityPickerDialog) landing at any later point in the session would
+        // write HomeLocationStore but never reach this already-running ViewModel, leaving the ASK
+        // pill frozen until the next process restart re-ran init{}. A separate, long-lived
+        // collector (not folded into the one-shot block above, which only runs once) is what
+        // actually closes that loop: every [HomeLocationStore.updates] emission — including the
+        // one this SAME block's own `homeLocationStore.set(it)` call above may have just fired —
+        // updates [_homeLocation] directly. Re-applying the startup value here too is harmless
+        // (StateFlow conflates an equal consecutive value), so there's no need to coordinate
+        // ordering between this collector's subscribe and the one-shot block's own write.
+        viewModelScope.launch {
+            homeLocationStore.updates.collect { point -> _homeLocation.value = point }
+        }
+
         // The cache-driven state loop. Starts collecting immediately — does NOT wait on the
         // refresh-loop launch above (see its comment).
         viewModelScope.launch {
@@ -209,6 +236,12 @@ class HomeViewModel(
             launch {
                 repository.insertedQuakeIds.collect {
                     refreshFailed.value = false
+                    // Task 2 (Plan 3): a live-clear invalidates any [refreshOnce] attempt already
+                    // in flight — see [refreshGeneration]'s own kdoc. Bumped here (not just
+                    // wherever [refreshOnce] itself runs) because this is the ONLY place a clear
+                    // can originate from outside that function entirely (a live-WebSocket-sourced
+                    // insert never goes through [refreshOnce] at all).
+                    refreshGeneration++
                     _newSinceExpand.value += 1
                 }
             }
@@ -268,12 +301,25 @@ class HomeViewModel(
      * [RefreshStatus.NOT_MODIFIED] poll is just as much proof the feed is reachable and healthy
      * as one that happened to find something new — the old code had no path that ever cleared a
      * previously-failed flag from a no-op-but-successful poll at all.
+     *
+     * Task 2 (Plan 3) carry-in — the Task 1 entry-conditions debt: [gen] snapshots
+     * [refreshGeneration] at the moment THIS call starts; the write below only actually lands if
+     * [refreshGeneration] is still exactly [gen] once [repository.refreshFeed] (which can suspend
+     * for a while — it's a real network round trip) finally resolves. A live arrival while this
+     * call was in flight bumps [refreshGeneration] (see the [repository.insertedQuakeIds] collector
+     * in [init]), which is what makes a slow, now-stale FAILED (or thrown) result unable to stomp
+     * back over a [refreshFailed] the user already watched clear — without this fence, whichever of
+     * the two happened to write last always won, regardless of which one was actually more recent
+     * in wall-clock terms.
      */
     private suspend fun refreshOnce() {
+        val gen = ++refreshGeneration
         runCatching { repository.refreshFeed() }
             .fold(
-                onSuccess = { status -> refreshFailed.value = (status == RefreshStatus.FAILED) },
-                onFailure = { refreshFailed.value = true },
+                onSuccess = { status ->
+                    if (gen == refreshGeneration) refreshFailed.value = (status == RefreshStatus.FAILED)
+                },
+                onFailure = { if (gen == refreshGeneration) refreshFailed.value = true },
             )
         pollTick.value += 1
     }
