@@ -87,6 +87,11 @@ fun DetailSheet(
     // Driving the same sheetState explicitly from the button - hide() first, onDismiss() chained
     // via invokeOnCompletion - gives the button-tap path the identical animated close instead of
     // a third, unanimated one.
+    //
+    // Fix Round 2: guard the onDismiss callback with !sheetState.isVisible to catch edge case
+    // where hide() is cancelled by a racing interaction (user swipes or taps the scrim *while* the
+    // Dismiss button click is queued), preventing a spurious second dismiss callback. M3's own
+    // scrim and swipe internal paths use the same guard pattern.
     val sheetState = rememberModalBottomSheetState()
     val scope = rememberCoroutineScope()
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, modifier = modifier) {
@@ -106,7 +111,7 @@ fun DetailSheet(
             Spacer(Modifier.height(16.dp))
             ActionRow(
                 onShare = { onShare(buildShareText(quake, nowMillis)) },
-                onDismiss = { scope.launch { sheetState.hide() }.invokeOnCompletion { onDismiss() } },
+                onDismiss = { scope.launch { sheetState.hide() }.invokeOnCompletion { if (!sheetState.isVisible) onDismiss() } },
             )
         }
     }
