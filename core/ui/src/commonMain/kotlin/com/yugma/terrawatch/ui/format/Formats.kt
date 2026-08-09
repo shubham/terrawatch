@@ -1,5 +1,6 @@
 package com.yugma.terrawatch.ui.format
 
+import com.yugma.terrawatch.model.MagRevision
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.time.ExperimentalTime
@@ -66,6 +67,31 @@ fun formatRelativeTime(thenMillis: Long, nowMillis: Long): String {
     }
 }
 
+/**
+ * Task 11: the detail sheet's revision-honesty badge text - null unless the magnitude has
+ * genuinely changed at least once. "Genuinely" excludes re-stamps: an agency re-broadcasting the
+ * exact same magnitude value at a later timestamp is not a second distinct revision, so a long run
+ * of identical re-confirmations never manufactures a badge (consecutive-duplicate values are
+ * collapsed away entirely, keeping only the first occurrence of each new value). When there IS a
+ * real change, the badge always compares the latest two DISTINCT magnitude values - never the
+ * oldest two, however many distinct values the full history contains - and times itself off when
+ * the CURRENT (latest) value took effect, not when the previous one did: matches the mockup's
+ * "revised from M 5.9 · 12 min ago", where 12 min is how long ago the number now shown took effect,
+ * not how long the previous number lasted.
+ */
+fun revisionNote(revisions: List<MagRevision>, nowMillis: Long): String? {
+    val distinctByValue = mutableListOf<MagRevision>()
+    for (revision in revisions.sortedBy { it.atMillis }) {
+        if (distinctByValue.isEmpty() || distinctByValue.last().mag != revision.mag) {
+            distinctByValue.add(revision)
+        }
+    }
+    if (distinctByValue.size < 2) return null
+    val previous = distinctByValue[distinctByValue.size - 2]
+    val latest = distinctByValue[distinctByValue.size - 1]
+    return "revised from M ${formatMagnitude(previous.mag)} · ${formatRelativeTime(latest.atMillis, nowMillis)}"
+}
+
 /** Groups the digits of [n]'s absolute value in threes from the right; sign is applied after. */
 private fun groupThousands(n: Int): String {
     val digits = abs(n).toString()
@@ -82,3 +108,30 @@ private fun groupThousands(n: Int): String {
 /** e.g. 4102.3 -> "4,102 km", NaN -> "0 km". Rounded to the nearest whole km, thousands-grouped. */
 fun formatDistanceKm(km: Double): String =
     if (km.isNaN()) "0 km" else "${groupThousands(km.roundToInt())} km"
+
+/**
+ * Two-decimal analog of [oneDecimal] - needed for [formatCoordinates]'s precision, still no
+ * java.text/String.format (unavailable on wasmJs). Unlike [oneDecimal], always zero-pads the
+ * fractional part to two digits (5 -> "05") since a bare single digit would silently read as
+ * tenths rather than the intended hundredths (7.5 vs. 7.05).
+ */
+private fun twoDecimals(value: Double): String {
+    val d = (value * 100).roundToInt()
+    val whole = d / 100
+    val frac = abs(d % 100)
+    val fracStr = if (frac < 10) "0$frac" else "$frac"
+    val formatted = if (value < 0 && whole == 0) "-$whole.$fracStr" else "$whole.$fracStr"
+    return if (formatted == "-0.00") "0.00" else formatted
+}
+
+/**
+ * e.g. (7.12, 126.54) -> "7.12°N, 126.54°E". Negative lat/lon flip to S/W (zero counts as N/E)
+ * instead of printing a minus sign, matching how real-world coordinates are conventionally
+ * written; callers always pass a quake's raw (always-finite) lat/lon, so no NaN guard is needed
+ * here the way the nullable magnitude/depth formatters above need one.
+ */
+fun formatCoordinates(lat: Double, lon: Double): String {
+    val latDirection = if (lat < 0) "S" else "N"
+    val lonDirection = if (lon < 0) "W" else "E"
+    return "${twoDecimals(abs(lat))}°$latDirection, ${twoDecimals(abs(lon))}°$lonDirection"
+}

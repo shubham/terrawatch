@@ -77,6 +77,13 @@ class HomeViewModel(
     private val _newSinceExpand = MutableStateFlow(0)
     val newSinceExpand: StateFlow<Int> = _newSinceExpand
 
+    // Task 11: the detail sheet's data source. Holds a full Quake (not just an id) so DetailSheet
+    // itself stays a dumb presentational composable with no lookup of its own — see [select].
+    // Null means "no sheet showing," doing double duty as both "nothing selected yet" and
+    // "dismissed" rather than a separate Boolean visibility flag.
+    private val _selectedQuake = MutableStateFlow<Quake?>(null)
+    val selectedQuake: StateFlow<Quake?> = _selectedQuake
+
     // Fix Round 2 (review finding): this used to be a `val status = repository.refreshFeed()`
     // local, captured ONCE inside the same coroutine that then went on to collect
     // recentQuakes() forever, re-reading that same frozen `status` on every emission — so a
@@ -187,6 +194,29 @@ class HomeViewModel(
      * `.Expanded` — the user has now seen the list, so the "N NEW" chip resets. */
     fun markSheetExpanded() {
         _newSinceExpand.value = 0
+    }
+
+    /**
+     * Task 11: opens the detail sheet for [id] — called from a map pin tap, a [
+     * com.yugma.terrawatch.ui.components.QuakeCard] tap, or the status pill's alert face. Reads
+     * through [QuakeRepository.byId] (the DAO, not [state]'s already-collected `quakes` list) so
+     * this also works for a quake that isn't in the current 24h window a pin/card tap couldn't
+     * otherwise have come from anyway, but mainly so this stays the one obvious source of truth —
+     * no second "find it in the in-memory list" path to keep in sync with the first. An [id] that
+     * doesn't resolve to any stored quake (e.g. it aged out between the tap and this lookup
+     * resolving) settles on null, same as no selection at all — there is deliberately no separate
+     * "not found" error state for the sheet to render.
+     */
+    fun select(id: String) {
+        viewModelScope.launch {
+            _selectedQuake.value = repository.byId(id)
+        }
+    }
+
+    /** Called by DetailSheet's `onDismiss` (both the Dismiss button and the sheet's own
+     * scrim/swipe dismissal funnel through this one callback). */
+    fun dismissSelection() {
+        _selectedQuake.value = null
     }
 
     /**

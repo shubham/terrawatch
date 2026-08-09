@@ -70,6 +70,14 @@ class QuakeRepository(
     /** Pass-through for Home's staleness banner (Task 8) — see [QuakeDao.lastFetchedAtMillis]. */
     fun lastFetchedAtMillis(): Long? = dao.lastFetchedAtMillis()
 
+    /**
+     * Task 11: thin DAO pass-through for the detail sheet's selection — `HomeViewModel.select(id)`
+     * needs exactly "look up one quake by id right now," which [QuakeDao.byId] already does
+     * synchronously. `suspend` + [ioDispatcher] moves that synchronous SQLDelight read off Main,
+     * same convention every other DAO-touching method in this class already follows.
+     */
+    suspend fun byId(id: String): Quake? = withContext(ioDispatcher) { dao.byId(id) }
+
     suspend fun refreshFeed(): RefreshStatus = withContext(ioDispatcher) {
         when (val result = api.fetchFeed(previousEtag = dao.metaGet(FEED_ETAG_KEY))) {
             is FeedResult.Fresh -> {

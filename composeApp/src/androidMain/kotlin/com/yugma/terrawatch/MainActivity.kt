@@ -11,6 +11,7 @@ import com.yugma.terrawatch.database.QuakeDao
 import com.yugma.terrawatch.database.createDatabase
 import com.yugma.terrawatch.di.appModule
 import com.yugma.terrawatch.location.LocationProvider
+import com.yugma.terrawatch.share.initShareContext
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.websocket.WebSockets
@@ -63,6 +64,11 @@ class MainActivity : ComponentActivity() {
         // koinViewModel(), which binds to this Activity's ViewModelStore (survives rotation) rather
         // than being newly constructed on every onCreate().
         if (firstLaunchThisProcess) {
+            // Task 11: the Share button's Android actual needs a Context but shareQuakeText's
+            // expect/actual signature can't carry one (see Share.kt's kdoc) - this is the one-time
+            // wiring that substitutes for it, same "build/wire the platform-specific bit once here"
+            // spirit as the dao/http/locationProvider construction right below.
+            initShareContext(applicationContext)
             val dao = QuakeDao(createDatabase(DriverFactory(applicationContext)), clock = { Clock.System.now().toEpochMilliseconds() })
             // Fix Round 1 (I1): pingIntervalMillis makes ktor send a WS ping frame on this cadence
             // and expect a pong back — see EmscLiveSource.kt's kdoc for why this is required, not

@@ -34,9 +34,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.yugma.terrawatch.data.PillStatus
 import com.yugma.terrawatch.data.pillStatus
+import com.yugma.terrawatch.detail.DetailSheet
 import com.yugma.terrawatch.map.QuakeMap
 import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.model.haversineKm
+import com.yugma.terrawatch.share.shareQuakeText
 import com.yugma.terrawatch.ui.components.StatusShield
 import com.yugma.terrawatch.ui.format.formatRelativeTime
 import com.yugma.terrawatch.ui.theme.TerraRadii
@@ -115,6 +117,9 @@ fun HomeScreen(viewModel: HomeViewModel) {
     val state by viewModel.state.collectAsState()
     val homeLocation by viewModel.homeLocation.collectAsState()
     val newSinceExpand by viewModel.newSinceExpand.collectAsState()
+    // Task 11: drives the detail sheet below — non-null shows it, null (the initial value, and
+    // whatever HomeViewModel.dismissSelection()/an unresolved select() settles back to) hides it.
+    val selectedQuake by viewModel.selectedQuake.collectAsState()
     // Fix Round 2 (review finding): feeds both isStale() and the banner's formatRelativeTime()
     // call below, so the staleness verdict and the displayed age both actually advance every 30s
     // instead of freezing at whatever they were when `state` last changed — see
@@ -150,7 +155,7 @@ fun HomeScreen(viewModel: HomeViewModel) {
                     distanceKm = { quake ->
                         homeLocation?.let { haversineKm(it, GeoPoint(quake.lat, quake.lon)) }
                     },
-                    onQuakeClick = {}, // TODO(Task 11): open the quake detail sheet.
+                    onQuakeClick = { id -> viewModel.select(id) },
                 )
             },
         ) {
@@ -163,7 +168,7 @@ fun HomeScreen(viewModel: HomeViewModel) {
                 QuakeMap(
                     pins = content?.pins.orEmpty(),
                     newQuakeId = newQuakeId,
-                    onPinTap = {}, // TODO(Task 11): open the quake detail sheet.
+                    onPinTap = { id -> viewModel.select(id) },
                     modifier = Modifier.fillMaxSize(),
                     onDebugLongPress = { lat, lon -> viewModel.injectDebugQuake(lat, lon) },
                 )
@@ -189,12 +194,15 @@ fun HomeScreen(viewModel: HomeViewModel) {
                                 status = pill,
                                 nowMillis = nowMillis,
                                 onClick = {
-                                    // Task 9 scope: every variant is a no-op tap for now — see the
+                                    // Task 9 scope: every variant was a no-op tap for now — see the
                                     // brief's explicit "this task: no-op with TODO" call for
-                                    // ASK_LOCATION, and Task 11/Plan 3 for the other two.
+                                    // ASK_LOCATION. Task 11 closes out the ALERT TODO: the pill
+                                    // already carries the nearest significant quake, so opening its
+                                    // detail sheet reuses the exact same select() path as a pin/card
+                                    // tap rather than a bespoke third one.
                                     when (pill.kind) {
                                         PillStatus.Kind.ASK_LOCATION -> {} // TODO(Plan 3 settings): re-ask permission / open settings.
-                                        PillStatus.Kind.ALERT -> {} // TODO(Task 11): open the detail sheet for pill.quake.
+                                        PillStatus.Kind.ALERT -> pill.quake?.let { viewModel.select(it.id) }
                                         PillStatus.Kind.CALM -> {} // Nothing to show.
                                     }
                                 },
@@ -210,6 +218,22 @@ fun HomeScreen(viewModel: HomeViewModel) {
                     }
                 }
             }
+        }
+        // Task 11: the quake detail sheet — a second, independent, on-demand ModalBottomSheet
+        // layered above everything else in this BoxWithConstraints (the map, the pill/banner
+        // column, and the persistent feed-sheet BottomSheetScaffold above), matching the mockup's
+        // "detail expands over the map, feed sheet unaffected" treatment. distanceKm is computed
+        // fresh here rather than threaded through from FeedSheet's per-row closure — same
+        // haversineKm(home, quakePoint) call FeedSheet already makes per row, just for the one
+        // selected quake.
+        selectedQuake?.let { quake ->
+            DetailSheet(
+                quake = quake,
+                distanceKm = homeLocation?.let { home -> haversineKm(home, GeoPoint(quake.lat, quake.lon)) },
+                nowMillis = nowMillis,
+                onShare = { text -> shareQuakeText(text) },
+                onDismiss = { viewModel.dismissSelection() },
+            )
         }
     }
 }

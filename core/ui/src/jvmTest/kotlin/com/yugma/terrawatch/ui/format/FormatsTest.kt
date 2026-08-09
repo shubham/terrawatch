@@ -1,7 +1,10 @@
 package com.yugma.terrawatch.ui.format
 
+import com.yugma.terrawatch.model.MagRevision
+import com.yugma.terrawatch.model.Source
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 
 /**
  * Table-driven tests for the pure formatting helpers in Formats.kt. Every table row plus every
@@ -104,5 +107,66 @@ class FormatsTest {
     @Test
     fun `formatDistanceKm returns zero km for NaN, same fallback style as the nullable formatters`() {
         assertEquals("0 km", formatDistanceKm(Double.NaN))
+    }
+
+    @Test
+    fun `formatCoordinates renders hemisphere letters and two decimals`() {
+        assertEquals("7.12°N, 126.54°E", formatCoordinates(7.12, 126.54))
+    }
+
+    @Test
+    fun `formatCoordinates uses S and W for negative latitude and longitude`() {
+        assertEquals("33.87°S, 151.21°W", formatCoordinates(-33.87, -151.21))
+    }
+
+    @Test
+    fun `formatCoordinates treats zero as N and E, and zero-pads a single-digit fraction`() {
+        assertEquals("0.05°N, 0.00°E", formatCoordinates(0.05, 0.0))
+    }
+
+    // --- revisionNote (Task 11: the detail sheet's revision-honesty badge) ---
+
+    @Test
+    fun `revisionNote returns null when there are no revisions`() {
+        assertNull(revisionNote(emptyList(), nowMillis = 2_000_000L))
+    }
+
+    @Test
+    fun `revisionNote returns null when only one distinct magnitude has ever been reported`() {
+        // Two entries, but a same-mag re-stamp - not a real revision, per the brief.
+        val revisions = listOf(
+            MagRevision(5.9, "mw", 1_000_000L, Source.USGS),
+            MagRevision(5.9, "mw", 1_500_000L, Source.USGS),
+        )
+        assertNull(revisionNote(revisions, nowMillis = 2_000_000L))
+    }
+
+    @Test
+    fun `revisionNote reports an upward revision with the previous magnitude and relative time`() {
+        val revisions = listOf(
+            MagRevision(5.9, "mw", 1_000_000L, Source.USGS),
+            MagRevision(6.1, "mw", 1_880_000L, Source.USGS), // 120_000ms before now -> "2 min ago"
+        )
+        assertEquals("revised from M 5.9 · 2 min ago", revisionNote(revisions, nowMillis = 2_000_000L))
+    }
+
+    @Test
+    fun `revisionNote reports a downward revision the same way as an upward one`() {
+        val revisions = listOf(
+            MagRevision(6.1, "mw", 1_000_000L, Source.USGS),
+            MagRevision(5.9, "mw", 1_940_000L, Source.EMSC), // 60_000ms before now -> "1 min ago"
+        )
+        assertEquals("revised from M 6.1 · 1 min ago", revisionNote(revisions, nowMillis = 2_000_000L))
+    }
+
+    @Test
+    fun `revisionNote uses only the latest two distinct magnitudes, ignoring same-mag re-stamps`() {
+        val revisions = listOf(
+            MagRevision(5.0, "mw", 500_000L, Source.USGS), // oldest distinct mag - must NOT be "prev"
+            MagRevision(5.9, "mw", 1_000_000L, Source.USGS),
+            MagRevision(5.9, "mw", 1_400_000L, Source.USGS), // re-stamp of 5.9 - doesn't count
+            MagRevision(6.1, "mw", 1_940_000L, Source.USGS), // 60_000ms before now -> "1 min ago"
+        )
+        assertEquals("revised from M 5.9 · 1 min ago", revisionNote(revisions, nowMillis = 2_000_000L))
     }
 }
