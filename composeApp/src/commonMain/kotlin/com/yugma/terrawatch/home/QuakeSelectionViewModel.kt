@@ -11,10 +11,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 // Persisted key for the currently-selected quake's id. Snake_case to match this codebase's other
-// persisted string keys (HomeLocationStore's "home_lat"/"home_lon", the later Plan 3 tasks'
-// "history_cursor_<filterhash>"/"rule_minmag" etc.) rather than SavedStateHandle-idiomatic-Android
-// camelCase — consistency with the rest of this codebase's own persistence keys wins over matching
-// an external convention this codebase doesn't otherwise follow.
+// persisted string keys (HomeLocationStore's "home_lat"/"home_lon", Task 5's own
+// "history_cursor_min<mag>_yr<year>" — see QuakeRepository.historyCursor/HistoryPager.stableKey;
+// a descriptive key, not literally a hash, despite what this comment used to say before that task
+// landed and settled the actual format — "rule_minmag" etc.) rather than SavedStateHandle-
+// idiomatic-Android camelCase — consistency with the rest of this codebase's own persistence keys
+// wins over matching an external convention this codebase doesn't otherwise follow.
 private const val SELECTED_ID_KEY = "selected_id"
 
 /**
@@ -29,10 +31,13 @@ private const val SELECTED_ID_KEY = "selected_id"
  * Deliberately has NO dependency on [HomeViewModel] in either direction — map/pill/sheet state
  * (still on HomeViewModel) and selection/detail state (here) don't need each other's internals,
  * only a shared [QuakeRepository]. `HomeScreen` is what wires both together at the UI layer (see
- * its own kdoc). This separation is also what Task 4's nav-graph-scoped sharing needs: History and
- * Insights will resolve the SAME [QuakeSelectionViewModel] instance (scoped to the nav graph, not
- * to Home's own back-stack entry) to drive their own detail sheets, which only works if this class
- * doesn't otherwise assume it's talking to Home.
+ * its own kdoc). This separation is also what Task 4's sharing needs: History (Task 5) and
+ * Insights resolve the SAME [QuakeSelectionViewModel] instance Home does to drive their own detail
+ * sheets — Activity-scoped (resolved once in `App()`, passed down through `AppNav` to every tab,
+ * never re-resolved per nav-back-stack-entry; see `AppNav.kt`'s own kdoc), not "scoped to the nav
+ * graph" as an earlier draft of this paragraph said before Task 4 settled on Activity scope
+ * specifically (doc fix, Task 5, Plan 3 review) — which only works if this class doesn't otherwise
+ * assume it's talking to Home.
  *
  * **Koin wiring note (verified against koin-core-viewmodel 4.1.0's actual bytecode + the current
  * Koin docs, not just assumed):** `AppModule.kt` registers this with the plain

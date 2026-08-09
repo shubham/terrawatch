@@ -1,9 +1,11 @@
 package com.yugma.terrawatch.di
 
+import com.yugma.terrawatch.data.HistoryPager
 import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.data.OnboardingStore
 import com.yugma.terrawatch.data.QuakeRepository
 import com.yugma.terrawatch.database.QuakeDao
+import com.yugma.terrawatch.history.HistoryViewModel
 import com.yugma.terrawatch.home.HomeViewModel
 import com.yugma.terrawatch.home.QuakeSelectionViewModel
 import com.yugma.terrawatch.location.LocationProvider
@@ -68,4 +70,14 @@ fun appModule(http: HttpClient, dao: QuakeDao, locationProvider: LocationProvide
     // own current docs ("Add SavedStateHandle to your ViewModel constructor - Koin injects it
     // automatically"). See QuakeSelectionViewModel's own kdoc for the fuller citation.
     viewModel { QuakeSelectionViewModel(get(), get()) }
+    // Task 5 (Plan 3): HistoryPager's clock seam is only ever consulted for a year-LESS filter's
+    // very first cursor ("now") — same injected-at-the-platform-boundary shape as QuakeRepository's
+    // own `clock` two lines up, not a default baked into core:data (which stays platform-clock-
+    // decoupled/testable — see HistoryPager's own kdoc).
+    single { HistoryPager(get(), clock = { Clock.System.now().toEpochMilliseconds() }) }
+    // History's own tab-scoped ViewModel — resolved via HistoryScreen's own defaulted
+    // `= koinViewModel()` parameter (not threaded through AppNav like HomeViewModel/
+    // QuakeSelectionViewModel are), since nothing else in this graph needs to share it; Compose
+    // Navigation scopes that call to the "history" route's own NavBackStackEntry automatically.
+    viewModel { HistoryViewModel(get(), get()) }
 }

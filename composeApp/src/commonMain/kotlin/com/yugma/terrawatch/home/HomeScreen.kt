@@ -32,7 +32,6 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -46,6 +45,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.yugma.terrawatch.common.rememberNowMillisTicker
 import com.yugma.terrawatch.data.PillStatus
 import com.yugma.terrawatch.data.pillStatus
 import com.yugma.terrawatch.detail.DetailSheet
@@ -61,21 +61,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.collectLatest
 import org.koin.compose.viewmodel.koinViewModel
-import kotlin.time.Clock
-import kotlin.time.ExperimentalTime
 
 // Spec's Offline row (docs/superpowers/specs/2026-08-08-terrawatch-design.md): "Glass banner...
 // Map desaturates. Cache stays fully browsable" — Task 8 ships the banner text + the "always
 // render the map underneath" half; map desaturation and the Retry link are not part of this task's
 // brief and are left for whichever task next touches this banner.
 private const val STALE_AFTER_MILLIS = 10 * 60 * 1000L
-
-// Fix Round 2 (review finding): how often the ticker below re-reads wall-clock time. Without it,
-// isStale()'s verdict and the banner's "N min ago" text were computed once per recomposition of
-// the Content branch and never again — Compose has no State read to invalidate on there, so a
-// screen left open would freeze at whatever staleness/age it happened to show the moment `state`
-// last changed, however much real time then passed with zero new data.
-private const val TICKER_INTERVAL_MILLIS = 30_000L
 
 // Task 9: M3's BottomSheetScaffold gives 2-3 fixed detents, not an arbitrary one — "peek +
 // expanded" is the accepted compromise (see the Task 9 brief's FeedSheet interface note). Peek
@@ -187,9 +178,10 @@ fun HomeScreen(
     // Fix Round 2 (review finding): feeds both isStale() and the banner's formatRelativeTime()
     // call below, so the staleness verdict and the displayed age both actually advance every 30s
     // instead of freezing at whatever they were when `state` last changed — see
-    // TICKER_INTERVAL_MILLIS and rememberNowMillisTicker() below. Task 9 also feeds this into
-    // pillStatus() below — the pill's own age math (e.g. the ALERT face's relative-time text)
-    // needs to keep advancing for exactly the same reason.
+    // com.yugma.terrawatch.common.rememberNowMillisTicker's own kdoc (Task 5, Plan 3: extracted out
+    // of this file into a shared helper the moment History needed the identical ticker too). Task 9
+    // also feeds this into pillStatus() below — the pill's own age math (e.g. the ALERT face's
+    // relative-time text) needs to keep advancing for exactly the same reason.
     val nowMillis by rememberNowMillisTicker()
     // Task 10: the pin-drop animation's trigger — see rememberExpiringNewQuakeId's own kdoc for
     // why this needs its own expiry rather than passing viewModel.newQuakeIds straight through.
@@ -480,23 +472,6 @@ private fun TwoPaneLayout(
 }
 
 /**
- * Fix Round 2 (review finding): a plain wall-clock read inside a `@Composable` body is not itself
- * a Compose `State` — recomposition happens when a `State` *value* changes, not merely because
- * time passed, so `isStale`/the banner text used to be computed once and never revisited.
- * `produceState` runs its block in a coroutine scoped to the caller's composition lifetime; looping
- * forever and re-assigning `value` every [TICKER_INTERVAL_MILLIS] is what actually triggers
- * recomposition of whatever reads this ticker.
- */
-@Composable
-private fun rememberNowMillisTicker(): State<Long> =
-    produceState(initialValue = currentTimeMillis()) {
-        while (true) {
-            delay(TICKER_INTERVAL_MILLIS)
-            value = currentTimeMillis()
-        }
-    }
-
-/**
  * Task 10: turns the hot, fire-and-forget [newQuakeIds] SharedFlow into a `State<String?>` that
  * QuakeMap's `newQuakeId` param can key its pin-drop animation off of — holding each arrival for
  * [NEW_QUAKE_HIGHLIGHT_EXPIRY_MILLIS] (Fix Round 1: 2.5s, was 1.5s — see that constant's own kdoc
@@ -518,9 +493,6 @@ private fun rememberExpiringNewQuakeId(newQuakeIds: SharedFlow<String>): State<S
     }
     return state
 }
-
-@OptIn(ExperimentalTime::class)
-private fun currentTimeMillis(): Long = Clock.System.now().toEpochMilliseconds()
 
 private fun isStale(lastUpdatedMillis: Long?, nowMillis: Long): Boolean =
     lastUpdatedMillis != null && nowMillis - lastUpdatedMillis > STALE_AFTER_MILLIS
@@ -598,10 +570,15 @@ private fun StalenessBanner(
 /**
  * Task 4 (Plan 3): the gear chip that opens Settings (`AppNav`'s `Routes.SETTINGS`) — same glass
  * treatment (translucent [Surface] + tonal/shadow elevation) as [StatusShield]/[StalenessBanner]
- * above, per the glass allow-list. `contentDescription` is set explicitly rather than left for
- * Task 10's broader a11y sweep to backfill: an entirely unlabeled tappable icon is an easy-to-avoid
- * gap this task would otherwise be introducing fresh, not a pre-existing one Task 10 is already
- * scheduled to fix.
+ * above. Doc fix (Task 5, Plan 3 review): this is a 5th glass-styled surface, not literally one of
+ * the spec Global Constraints' 4-item glass allow-list (pill/banner/nav/sheet-header) — the prior
+ * wording here ("per the glass allow-list") implied this chip was already covered by that list,
+ * which isn't quite true. Extending the glass treatment to a new element the list doesn't name was
+ * a controller judgment call (visual consistency with the pill this chip sits beside), not
+ * something the allow-list pre-approved — flagged here rather than implied as already covered.
+ * `contentDescription` is set explicitly rather than left for Task 10's broader a11y sweep to
+ * backfill: an entirely unlabeled tappable icon is an easy-to-avoid gap this task would otherwise
+ * be introducing fresh, not a pre-existing one Task 10 is already scheduled to fix.
  */
 @Composable
 private fun SettingsGearChip(onClick: () -> Unit, modifier: Modifier = Modifier) {

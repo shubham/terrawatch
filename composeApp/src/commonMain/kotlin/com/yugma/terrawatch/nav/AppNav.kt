@@ -30,6 +30,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.yugma.terrawatch.data.OnboardingStore
+import com.yugma.terrawatch.history.HistoryScreen
 import com.yugma.terrawatch.home.HomeScreen
 import com.yugma.terrawatch.home.HomeViewModel
 import com.yugma.terrawatch.home.LayoutMode
@@ -156,18 +157,40 @@ fun AppNav(homeViewModel: HomeViewModel, selectionViewModel: QuakeSelectionViewM
 }
 
 /**
- * THE map-survival mechanism (plan Task 4 brief, verbatim recipe): `launchSingleTop` skips pushing
- * a duplicate entry when the tapped tab is already current; `restoreState`/`popUpTo(HOME,
- * saveState = true)` is Navigation Compose's standard "multi-tab back stack" pattern — each tab's
- * `NavBackStackEntry` (and therefore its scoped `ViewModelStore`/`SavedStateHandle`) is saved
- * rather than destroyed when you leave it, and restored rather than rebuilt from scratch when you
- * come back. [Routes.HOME] (not `navController.graph.findStartDestination()`) is the literal
- * `popUpTo` target by deliberate choice, not an oversight: this graph's OWN start destination is
- * conditionally [Routes.ONBOARDING] on a fresh install (see [AppNav]), which is popped off the
- * back stack entirely (`inclusive = true`) the moment onboarding finishes — `findStartDestination`
- * would keep resolving to onboarding's id even after it's gone, where [Routes.HOME] is always the
- * correct "first tab" target for every caller of this function (it's only ever invoked from tab
- * chrome, which never shows during onboarding — see [TAB_ROUTES]).
+ * THE map-survival mechanism, corrected (Task 5, Plan 3 — Task 4 review flagged this kdoc's prior
+ * wording as misattributed): `launchSingleTop` skips pushing a duplicate entry when the tapped tab
+ * is already current; `restoreState`/`popUpTo(HOME, saveState = true)` is Navigation Compose's
+ * standard "multi-tab back stack" pattern — each tab's `NavBackStackEntry`, and the
+ * `SaveableStateRegistry` scoped to it, is saved rather than destroyed when you leave it, and
+ * restored rather than rebuilt from scratch when you come back.
+ *
+ * That `SaveableStateRegistry` — NOT `ViewModelStore`/`SavedStateHandle` survival, this kdoc's own
+ * prior wording — is what actually keeps `QuakeMap`'s camera position (pan/zoom) alive across a tab
+ * round trip: maplibre-compose's `rememberCameraState()` calls `rememberSaveable(saver =
+ * CameraStateSaver, ...)` internally (decompiled-verified against the real
+ * `maplibre-compose-android-0.14.0.aar`, not assumed from the function's name alone —
+ * `CameraStateKt.rememberCameraState`'s bytecode invokes
+ * `androidx.compose.runtime.saveable.RememberSaveableKt.rememberSaveable` with
+ * `org.maplibre.compose.camera.CameraStateSaver.INSTANCE` as the `Saver` argument), and
+ * `rememberSaveable`'s own save/restore scope is exactly this `NavBackStackEntry`'s
+ * `SaveableStateRegistry` — the thing `saveState = true` above is what preserves.
+ *
+ * [HomeViewModel]/[QuakeSelectionViewModel] were never at risk from tab navigation at all, and so
+ * were never something this `popUpTo` recipe needed to protect on their behalf: both are resolved
+ * once, at `App()`, OUTSIDE this whole `NavHost` (see [AppNav]'s own kdoc and `App.kt`'s) — neither
+ * was ever inside a `NavBackStackEntry`-scoped `ViewModelStore` to begin with, so there was never a
+ * destroy-on-navigate risk here for anything to guard against. Conflating "the camera position
+ * survives" with "the ViewModels are Activity-scoped" (this kdoc's own prior wording did, by
+ * crediting both to the same `NavBackStackEntry`/`ViewModelStore`/`SavedStateHandle` save) describes
+ * two different, unrelated survival mechanisms as if they were one.
+ *
+ * [Routes.HOME] (not `navController.graph.findStartDestination()`) is the literal `popUpTo` target
+ * by deliberate choice, not an oversight: this graph's OWN start destination is conditionally
+ * [Routes.ONBOARDING] on a fresh install (see [AppNav]), which is popped off the back stack
+ * entirely (`inclusive = true`) the moment onboarding finishes — `findStartDestination` would keep
+ * resolving to onboarding's id even after it's gone, where [Routes.HOME] is always the correct
+ * "first tab" target for every caller of this function (it's only ever invoked from tab chrome,
+ * which never shows during onboarding — see [TAB_ROUTES]).
  */
 private fun navigateToTab(navController: NavHostController, route: String) {
     navController.navigate(route) {
@@ -194,12 +217,22 @@ private fun AppNavHost(
                 onSettingsClick = { navController.navigate(Routes.SETTINGS) },
             )
         }
-        // History/Insights/Settings: placeholder screens THIS task -- Tasks 5/6/7 replace these
-        // three composable() bodies with their own new HistoryScreen/InsightsScreen/
-        // SettingsScreen (own files, own ViewModels). The four-states rule (Loading/Content/
-        // Empty/Error) explicitly does NOT apply to these placeholders -- there's no state to be
-        // in yet, just a name and which task owns filling it in.
-        composable(Routes.HISTORY) { PlaceholderScreen("History — Task 5") }
+        // Insights/Settings: placeholder screens THIS task -- Tasks 6/7 replace these two
+        // composable() bodies with their own new InsightsScreen/SettingsScreen (own files, own
+        // ViewModels). The four-states rule (Loading/Content/Empty/Error) explicitly does NOT
+        // apply to these placeholders -- there's no state to be in yet, just a name and which task
+        // owns filling it in.
+        //
+        // Task 5 (Plan 3): History's own real HistoryViewModel is resolved INSIDE HistoryScreen's
+        // own defaulted `= koinViewModel()` parameter (same shape HomeScreen's own
+        // selectionViewModel param used before Task 4 needed to override it) -- Compose Navigation
+        // scopes that call to THIS route's own NavBackStackEntry automatically, giving History the
+        // same "survives a tab-away/tab-back round trip for as long as launchSingleTop/restoreState
+        // keeps this entry warm" behavior Home's own map/ViewModels get, with no special-casing
+        // needed here. selectionViewModel is passed through explicitly (not defaulted) -- it must
+        // be the SAME Activity-scoped instance Home shares, never a second nav-back-stack-entry-
+        // scoped one (see HistoryScreen's own kdoc).
+        composable(Routes.HISTORY) { HistoryScreen(selectionViewModel = selectionViewModel) }
         composable(Routes.INSIGHTS) { PlaceholderScreen("Insights — Task 6") }
         composable(Routes.SETTINGS) { PlaceholderScreen("Settings — Task 7") }
         composable(Routes.ONBOARDING) {

@@ -141,10 +141,49 @@ class QuakeRepository(
         dao.deleteByIdPrefix(DEBUG_QUAKE_ID_PREFIX)
     }
 
-    suspend fun loadArchivePage(beforeMillis: Long, minMag: Double? = null): Int = withContext(ioDispatcher) {
+    /**
+     * Task 5 (Plan 3): returns the actual ingested batch, not just a count — [HistoryPager] needs
+     * the batch's own oldest [Quake.timeMillis] to advance its paging cursor, and the raw network
+     * response is the only unambiguous place to read that from. Re-deriving it from the DB after
+     * the fact (e.g. re-querying the most-recent N rows) would be ambiguous whenever [DedupeEngine]
+     * merges two of THIS SAME batch's own events into one stored row (plausible for multi-agency or
+     * revision-heavy archive spans), which shrinks the visible row count below what was actually
+     * fetched. Deliberately widened from the original `Int` (Plan 1's own draft signature, "returns
+     * rows ingested") the moment this task became this function's first real caller — grepped the
+     * whole repo first (EVIDENCE INTEGRITY): zero other production call sites and no test pins the
+     * old `Int` shape (`grep -rn loadArchivePage`), so this is a safe, unshared widening, not a
+     * breaking change to any existing consumer. Callers that only want the count still have it for
+     * free via `.size`.
+     */
+    suspend fun loadArchivePage(beforeMillis: Long, minMag: Double? = null): List<Quake> = withContext(ioDispatcher) {
         val page = api.queryArchive(endTimeMillis = beforeMillis, minMagnitude = minMag)
         page.forEach { ingest(it) }
-        page.size
+        page
+    }
+
+    /**
+     * Task 5 (Plan 3): thin DAO pass-through — same "suspend + [ioDispatcher]" shape as [byId].
+     * Both [HistoryPager] (this module) and `HistoryViewModel` (composeApp — re-querying the local
+     * cache for display after every page load/filter change) only depend on this repository, never
+     * [QuakeDao] directly, so this is the one seam either needs.
+     */
+    suspend fun pageBefore(timeMillis: Long, limit: Int, minMag: Double? = null): List<Quake> =
+        withContext(ioDispatcher) { dao.pageBefore(timeMillis, limit, minMag) }
+
+    /**
+     * Task 5 (Plan 3): [HistoryPager]'s cursor persistence — a suspend + [ioDispatcher] pass-through
+     * around a synchronous meta-table read/write, scoped to this ONE purpose (a dedicated method
+     * pair, not a generic key/value pass-through) so this repository's public surface doesn't grow
+     * an arbitrary KV store just to satisfy one caller. The `"history_cursor_"` prefix is owned
+     * entirely here — [HistoryPager] only ever hands this a bare per-filter key — so there is a
+     * single place that could ever collide with [FEED_ETAG_KEY] or a future meta key, not two
+     * independently-formatted ones.
+     */
+    suspend fun historyCursor(filterKey: String): Long? =
+        withContext(ioDispatcher) { dao.metaGet("history_cursor_$filterKey")?.toLongOrNull() }
+
+    suspend fun setHistoryCursor(filterKey: String, cursorMillis: Long) {
+        withContext(ioDispatcher) { dao.metaPut("history_cursor_$filterKey", cursorMillis.toString()) }
     }
 
     suspend fun ingest(

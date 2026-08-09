@@ -32,6 +32,10 @@ kotlin {
             implementation(libs.koin.compose.viewmodel)
             implementation(libs.androidx.lifecycle.viewmodel)
             implementation(libs.kotlinx.coroutines.core)
+            // Task 5 (Plan 3): HistoryViewModel.groupByMonth's UTC month bucketing needs the same
+            // kotlinx-datetime core:data's own HistoryPager (year-filter boundary math) and core:ui's
+            // Formats.kt already depend on for the identical reason.
+            implementation(libs.kotlinx.datetime)
             // Task 4 (Plan 3): nav/AppNav.kt's NavHost + bottom NavigationBar/NavigationRail
             // tab-switching. See libs.versions.toml's navigationCompose entry for the version
             // choice (2.9.2, latest stable) and the wasmJs-target verification.
