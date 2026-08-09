@@ -26,7 +26,9 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.job
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -77,6 +79,20 @@ class HomeViewModelTest {
     // dispatcher `kotlinx-coroutines-swing` registers (composeApp's jvmMain depends on
     // `libs.coroutines.swing` for the desktop target; jvmTest inherits it) — an ordinary
     // `SwingDispatcher` that accepts posts from any thread, no reentrancy assertion to trip.
+    //
+    // Fix Round 1 (review finding, "close teardown race structurally"): the reorder above fixed the
+    // crash/hang symptom, but plain `.cancel()` only REQUESTS cancellation — it returns immediately
+    // without waiting for the cascading cancellation to actually finish draining (finally blocks,
+    // the forever-retrying startLive() delay() loop unwinding, the flowOn(Dispatchers.Default)
+    // child's completion hopping back onto Main, ...). tearDown() could therefore return, and the
+    // next test's @Test method call Dispatchers.setMain(UnconfinedTestDispatcher()) again, while the
+    // PREVIOUS test's viewModelScope was still mid-unwind — the same class of cross-test race that
+    // caused the original ~8% flake, just narrowed rather than closed. `cancelAndJoin()` (needs a
+    // suspend context, hence the `runBlocking` wrapper — JUnit's `@AfterTest` is not itself
+    // suspending) blocks tearDown() until each tracked VM's job, and everything structurally under
+    // it, has fully completed cancelling before the next test can start. Structural fix, not a
+    // timing one: correctness no longer depends on cancellation happening to finish fast enough
+    // between tests.
     private val createdViewModels = mutableListOf<HomeViewModel>()
 
     private fun createVm(
@@ -87,7 +103,7 @@ class HomeViewModelTest {
 
     @AfterTest fun tearDown() {
         Dispatchers.resetMain()
-        createdViewModels.forEach { it.viewModelScope.cancel() }
+        runBlocking { createdViewModels.forEach { it.viewModelScope.coroutineContext.job.cancelAndJoin() } }
         createdViewModels.clear()
     }
 
