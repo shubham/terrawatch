@@ -79,6 +79,18 @@ class QuakeDaoTest {
         assertEquals(0, dao.countAll())
     }
 
+    // Fix Round 1 (I2): the debug long-press hook's injected fake quakes must be purgeable without
+    // touching real data — every debug-injected id is prefixed "debug-" (HomeViewModel), so a
+    // prefix-delete is the whole mechanism. TDD: written before `deleteByIdPrefix` exists.
+    @Test fun `deleteByIdPrefix removes only ids with that prefix`() {
+        dao.upsert(quake(id = "debug-1"))
+        dao.upsert(quake(id = "debug-2"))
+        dao.upsert(quake(id = "us123"))
+        dao.deleteByIdPrefix("debug-")
+        assertEquals(1, dao.countAll())
+        assertNotNull(dao.byId("us123"))
+    }
+
     @Test fun `metaGet returns null for an unknown key`() {
         assertEquals(null, dao.metaGet("feed_etag"))
     }

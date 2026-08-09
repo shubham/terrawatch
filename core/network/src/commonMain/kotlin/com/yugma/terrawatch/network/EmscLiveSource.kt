@@ -23,6 +23,25 @@ class EmscLiveSource(
     // return or thrown exception, both handled below. Structure-level tested only (jvmTest asserts
     // the initial false); the true/false flips themselves need a fake WS server to exercise honestly
     // and are Plan-2-integration scope (see docs/superpowers/plans/plan-2-entry-conditions.md).
+    //
+    // Fix Round 1 (I1, "zombie LIVE"): the flip to false above depends entirely on the `for (frame
+    // in incoming)` loop actually ending — either the server sends a WS close frame, or the
+    // underlying TCP connection itself errors out. Neither happens for a socket that's gone dark
+    // silently: a NAT/carrier/proxy timeout, a phone moving out of range, or a server that simply
+    // stops writing without closing cleanly all leave the client-side socket object looking
+    // perfectly healthy — `incoming` just never produces another frame, `for (frame in incoming)`
+    // parks forever, `_connected` never flips back to false, and the LIVE dot claims a connection
+    // that no longer exists, indefinitely. This is a client-observable liveness gap that no amount
+    // of code in this loop alone can close: nothing available to `events()` distinguishes "no
+    // frames because nothing new happened" from "no frames because the socket is dead." The fix
+    // lives one layer down, at both `HttpClient` construction sites (MainActivity.kt, jvmMain's
+    // main.kt): `install(WebSockets) { pingIntervalMillis = 30_000 }` makes ktor itself send a
+    // ping frame on that cadence and require a pong back — a socket that's actually dead fails to
+    // pong, ktor surfaces that as an exception out of the `http.webSocket { ... }` session block,
+    // and this file's existing `catch (_: Throwable)` branch below (already present pre-Fix-Round-1
+    // for ordinary connection failures) flips `_connected.value = false` and falls through to the
+    // reconnect/backoff path exactly as it already does for any other socket failure — no new
+    // branch needed here, just a real failure signal reaching the branch that was already correct.
     private val _connected = MutableStateFlow(false)
     val connected: StateFlow<Boolean> = _connected
 

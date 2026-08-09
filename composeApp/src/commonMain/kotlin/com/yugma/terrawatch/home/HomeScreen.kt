@@ -69,7 +69,20 @@ private const val SHEET_PEEK_FRACTION = 0.3f
 // long enough for the pin-drop pop + ring animation (~1.2s total, see QuakeMap.android.kt) to
 // fully play out, short enough that it can't still be "new" by the time a user who glances away
 // looks back.
-private const val NEW_QUAKE_HIGHLIGHT_EXPIRY_MILLIS = 1_500L
+//
+// Fix Round 1 (entangled minor, "ring 2 truncation"): was 1_500L. QuakeMap.android.kt's
+// LaunchedEffect(newQuakeId) is keyed on this same value — the moment it reverts to null, that
+// effect RESTARTS (a LaunchedEffect key change cancels the running coroutine before relaunching),
+// cutting off whatever animation was still in flight. The animation's own timeline isn't just the
+// ~1.2s of ring2's stagger+duration (300ms + 900ms): QuakeMap.android.kt's polling loop for the
+// matching pin to land in `pins` can itself take up to NEW_PIN_LOOKUP_MAX_FRAMES (~0.75s at 60fps)
+// BEFORE the animation even starts, since `pins` and `newQuakeIds` are independently-collected
+// upstreams with no ordering guarantee between them (see that file's own LaunchedEffect comment).
+// Worst case, lookup-poll + ring2's full timeline could already approach or exceed 1.5s, visibly
+// truncating ring 2's fade mid-flight. 2_500L gives a comfortable margin over that worst case
+// (~0.75s poll + 1.2s animation ≈ 2.0s) without meaningfully changing when a glanced-away user
+// stops seeing something flagged "new."
+private const val NEW_QUAKE_HIGHLIGHT_EXPIRY_MILLIS = 2_500L
 
 /**
  * The app's centerpiece: a full-bleed [QuakeMap] fed from [viewModel], with a translucent
@@ -221,11 +234,12 @@ private fun rememberNowMillisTicker(): State<Long> =
 /**
  * Task 10: turns the hot, fire-and-forget [newQuakeIds] SharedFlow into a `State<String?>` that
  * QuakeMap's `newQuakeId` param can key its pin-drop animation off of — holding each arrival for
- * [NEW_QUAKE_HIGHLIGHT_EXPIRY_MILLIS] before reverting to null. `collectLatest` (not `collect`) is
- * the "collects latest with 1.5s expiry" the brief calls for: if a second quake arrives before the
- * first one's expiry delay finishes, that delay is cancelled outright and the value jumps straight
- * to the new id — QuakeMap's own `LaunchedEffect(newQuakeId)` (keyed on this value) then restarts
- * for the new arrival rather than ever seeing a spurious null in between.
+ * [NEW_QUAKE_HIGHLIGHT_EXPIRY_MILLIS] (Fix Round 1: 2.5s, was 1.5s — see that constant's own kdoc
+ * for the truncation bug that raised it) before reverting to null. `collectLatest` (not `collect`)
+ * is the "collects latest with an expiry" behavior the brief calls for: if a second quake arrives
+ * before the first one's expiry delay finishes, that delay is cancelled outright and the value
+ * jumps straight to the new id — QuakeMap's own `LaunchedEffect(newQuakeId)` (keyed on this value)
+ * then restarts for the new arrival rather than ever seeing a spurious null in between.
  */
 @Composable
 private fun rememberExpiringNewQuakeId(newQuakeIds: SharedFlow<String>): State<String?> {

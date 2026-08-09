@@ -59,6 +59,11 @@ class QuakeDao(private val db: TerraWatchDb, private val clock: () -> Long = { 0
 
     fun delete(id: String) = db.quakeQueries.delete(id)
 
+    /** Fix Round 1 (I2): bulk-purges every row whose id starts with [prefix] — used to sweep up
+     * debug-injected quakes (HomeViewModel.injectDebugQuake's "debug-"-prefixed ids) in one
+     * statement instead of tracking individual ids to delete. */
+    fun deleteByIdPrefix(prefix: String) = db.quakeQueries.deleteByIdPrefix(prefix)
+
     fun metaGet(key: String): String? = db.quakeQueries.meta_get(key).executeAsOneOrNull()
 
     fun metaPut(key: String, value: String) { db.quakeQueries.meta_put(key, value) }

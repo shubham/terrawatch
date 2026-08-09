@@ -22,8 +22,8 @@ import org.koin.compose.viewmodel.koinViewModel
 // gate (SHOW_MAP_SPIKE) is gone. TerraTheme (not a bare MaterialTheme) wraps everything from here
 // down so the Calm Guardian ColorScheme/Typography — magnitude colors, bold numerals — actually
 // reach the UI; this is its first real call site (core:ui's Task 5 tokens existed but were unused
-// by any screen until now). FeedScreen/FeedViewModel are intentionally left on disk, unreferenced
-// — Task 9's detail sheet may reuse FeedScreen's list internals; if not, that's when it goes.
+// by any screen until now). FeedScreen/FeedViewModel (the pre-Task-8 screen) were deleted in Task
+// 10 Fix Round 1 — dead since this screen took over and never claimed by Task 9's detail sheet.
 @Composable
 fun App() {
     val homeViewModel = koinViewModel<HomeViewModel>()

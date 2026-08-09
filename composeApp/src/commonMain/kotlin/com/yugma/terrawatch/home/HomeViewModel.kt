@@ -90,6 +90,17 @@ class HomeViewModel(
     private val refreshFailed = MutableStateFlow(false)
 
     init {
+        // Fix Round 1 (I2): sweeps out any "debug-"-prefixed rows a previous debug-long-press
+        // session left behind (see injectDebugQuake below) — unconditional, not debug-build-gated,
+        // by controller decision: it's a single indexed DELETE ... WHERE id LIKE 'debug-%' that
+        // matches zero rows on every device that has never used the hook (i.e. every real user,
+        // every release build), so gating it would add a platform-specific debug-build check to a
+        // ViewModel that is otherwise deliberately platform/build-type agnostic, to guard against a
+        // cost that doesn't exist. Independent top-level launch — nothing else in this class
+        // depends on it completing, and it must not block/delay the cache-driven or refresh loops
+        // below.
+        viewModelScope.launch { repository.purgeDebugQuakes() }
+
         // The refresh loop. Fix Round 2 (review finding): this used to run in the SAME coroutine
         // as, and immediately before, `repository.recentQuakes().collect { ... }` below — since
         // refreshFeed() suspends on the network, that delayed the very first read of the
@@ -179,23 +190,34 @@ class HomeViewModel(
     }
 
     /**
-     * Task 10 device-verification hook: manufactures a fake M6.0 "quake" at the given point and
-     * pushes it through the exact same [QuakeRepository.ingest] path a real live-WS or feed-poll
-     * quake would take — the pin-drop animation, the feed sheet's "N NEW" chip, and
-     * [refreshFailed] clearing all fire exactly as they would for a real arrival, because
-     * `ingest()` has no way to tell this one didn't come off the wire. This method itself carries
-     * no debug/release branch (HomeViewModel stays platform/build-type agnostic, matching the rest
-     * of this class) — gating to debug builds only happens at the call site, where QuakeMap's
-     * Android actual decides whether to attach the long-press gesture that invokes this at all.
-     * The id includes a random suffix (not just the timestamp) so two presses landing in the same
-     * millisecond still both count as "new" rather than one silently overwriting the other.
+     * Task 10 device-verification hook: manufactures a fake M6.0 "quake" at the given point.
+     *
+     * Fix Round 1 (I2, review finding): used to push this through the exact same
+     * [QuakeRepository.ingest] real quakes take — but that runs the fake through [DedupeEngine]
+     * (risking a merge into a real nearby quake's row, corrupting it) and [AlertRuleEngine] (a
+     * debug tap must never fire a real, user-visible alert). Now calls
+     * [QuakeRepository.ingestDebugBypassingDedupe] instead — same [insertedQuakeIds] signal (so
+     * the pin-drop animation and the feed sheet's "N NEW" chip still fire honestly), no dedupe, no
+     * alert evaluation. `refreshFailed` clearing is the one behavior this genuinely no longer
+     * shares with a real arrival, since that's wired off the same `insertedQuakeIds` collector
+     * regardless of which ingest path fired it — unchanged, still fires here too.
+     *
+     * This method itself carries no debug/release branch (HomeViewModel stays platform/build-type
+     * agnostic, matching the rest of this class) — gating to debug builds only happens at the call
+     * site, where QuakeMap's Android actual decides whether to attach the long-press gesture that
+     * invokes this at all. The id keeps its "debug-" prefix (required — this class's [init] above
+     * calls [QuakeRepository.purgeDebugQuakes] unconditionally, which keys off this exact prefix
+     * via [QuakeDao.deleteByIdPrefix] to sweep these rows back out) plus a random suffix so two
+     * presses landing in the same millisecond still both count as "new" rather than one silently
+     * overwriting the other. `place` is prefixed "[DEBUG]" so a fake row is never mistaken for a
+     * real quake if one ever surfaces somewhere this purge doesn't reach.
      */
     @OptIn(ExperimentalTime::class)
     fun injectDebugQuake(lat: Double, lon: Double) {
         viewModelScope.launch {
             val now = Clock.System.now().toEpochMilliseconds()
             val id = "debug-$now-${Random.nextInt(100_000)}"
-            repository.ingest(
+            repository.ingestDebugBypassingDedupe(
                 Quake(
                     id = id,
                     timeMillis = now,
@@ -204,7 +226,7 @@ class HomeViewModel(
                     depthKm = 10.0,
                     mag = 6.0,
                     magType = "mw",
-                    place = "Debug-injected M6.0",
+                    place = "[DEBUG] Injected M6.0",
                     tsunami = false,
                     felt = null,
                     status = QuakeStatus.AUTOMATIC,

@@ -44,6 +44,12 @@ SELECT COUNT(*) FROM quake;
 delete:
 DELETE FROM quake WHERE id = ?;
 
+-- Fix Round 1 (I2): purges debug-injected quakes (see HomeViewModel.injectDebugQuake's "debug-"
+-- id prefix) without a per-id list — the debug hook can inject an unbounded number of these across
+-- a device's lifetime.
+deleteByIdPrefix:
+DELETE FROM quake WHERE id LIKE :prefix || '%';
+
 meta_get:
 SELECT value FROM meta WHERE key = ?;
 

@@ -59,12 +59,18 @@ class MainActivity : ComponentActivity() {
         val firstLaunchThisProcess = GlobalContext.getOrNull() == null
         // ALL construction lives inside this guard now: on a rotation, onCreate() runs again, but
         // Koin (and the singletons it holds — QuakeRepository, etc.) is built exactly once per
-        // process. FeedViewModel itself is no longer built here at all — App() resolves it via
+        // process. HomeViewModel itself is no longer built here at all — App() resolves it via
         // koinViewModel(), which binds to this Activity's ViewModelStore (survives rotation) rather
         // than being newly constructed on every onCreate().
         if (firstLaunchThisProcess) {
             val dao = QuakeDao(createDatabase(DriverFactory(applicationContext)), clock = { Clock.System.now().toEpochMilliseconds() })
-            val http = HttpClient(OkHttp) { install(WebSockets) }
+            // Fix Round 1 (I1): pingIntervalMillis makes ktor send a WS ping frame on this cadence
+            // and expect a pong back — see EmscLiveSource.kt's kdoc for why this is required, not
+            // just tidy: without it, a dead socket that never sends a TCP-level close (silently
+            // dropped by a NAT/carrier/proxy) is invisible to `for (frame in incoming)`, which
+            // simply never receives another frame and never throws — `connected` (and therefore
+            // the LIVE indicator) stays true forever over a socket that is actually gone.
+            val http = HttpClient(OkHttp) { install(WebSockets) { pingIntervalMillis = 30_000 } }
             startKoin { modules(appModule(http, dao, locationProvider)) }
         }
         setContent { App() }

@@ -3,7 +3,6 @@ package com.yugma.terrawatch.di
 import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.data.QuakeRepository
 import com.yugma.terrawatch.database.QuakeDao
-import com.yugma.terrawatch.feed.FeedViewModel
 import com.yugma.terrawatch.home.HomeViewModel
 import com.yugma.terrawatch.location.LocationProvider
 import com.yugma.terrawatch.network.EmscLiveSource
@@ -30,14 +29,16 @@ fun appModule(http: HttpClient, dao: QuakeDao, locationProvider: LocationProvide
     single { QuakeRepository(get(), get(), get(), clock = { Clock.System.now().toEpochMilliseconds() }) }
     single { HomeLocationStore(get()) }
     single { locationProvider }
-    // viewModel {} (not factory {}) — scopes FeedViewModel to the platform ViewModelStore via
-    // koin-compose-viewmodel's koinViewModel<FeedViewModel>() at the App() call site, instead of
+    // viewModel {} (not factory {}) — scopes HomeViewModel to the platform ViewModelStore via
+    // koin-compose-viewmodel's koinViewModel<HomeViewModel>() at the App() call site, instead of
     // minting a fresh instance (and a fresh startLive() collector) on every recomposition/rotation.
-    viewModel { FeedViewModel(get()) }
-    // Task 8: Home is now App()'s real screen; FeedViewModel/FeedScreen stay registered/on-disk
-    // unreferenced (Task 9's detail sheet may reuse FeedScreen's list internals).
     // Task 9: HomeViewModel gains the pill's home-location dependency — HomeLocationStore and
     // LocationProvider are both already singles above, so get()/get() resolve them by the
     // constructor's own parameter types, same pattern as QuakeRepository's get()-per-param above.
+    // Fix Round 1 (entangled minor): FeedViewModel/FeedScreen registration removed — dead since
+    // Task 8 made Home the app's real screen (see App.kt); nothing has referenced either since,
+    // and they carried a latent second startLive() collector (see FeedViewModel's own former
+    // init{}) that this repository never needed twice. Both deleted outright, not just
+    // unregistered — see task-10-report.md's Fix Round 1 for the removal record.
     viewModel { HomeViewModel(get(), get(), get()) }
 }

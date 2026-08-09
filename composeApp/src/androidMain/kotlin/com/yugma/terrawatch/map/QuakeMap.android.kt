@@ -9,7 +9,6 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -173,7 +172,8 @@ actual fun QuakeMap(
   // Task 10: the signature pin-drop moment. `pinsState` lets the LaunchedEffect below always see
   // the LATEST [pins] without restarting every time [pins] itself changes reference — the effect
   // is keyed only on [newQuakeId] (HomeScreen already de-bounces/expires it to one live value per
-  // arrival, 1.5s window — see HomeScreen.kt), which changes far less often than [pins] does.
+  // arrival, 2.5s window as of Fix Round 1 — see HomeScreen.kt), which changes far less often than
+  // [pins] does.
   val pinsState = rememberUpdatedState(pins)
   val reducedMotion = LocalReducedMotion.current
   var activePin by remember { mutableStateOf<QuakePin?>(null) }
@@ -233,11 +233,31 @@ actual fun QuakeMap(
   // both a real device and the emulator — a touch-slop/consumption issue, not a duration one).
   // Hand-rolling the same detection at `PointerEventPass.Initial` — Compose's first, top-down pass
   // — observes the down event BEFORE it reaches MapLibre's view, without ever calling `consume()`,
-  // so normal pan/pinch is completely unaffected (re-verified on device after this fix). Simpler
-  // than the full drag-cancels-long-press logic `detectTapGestures` has (a `withTimeoutOrNull`
-  // around `waitForUpOrCancellation` can't perfectly distinguish "timed out" from "cancelled" —
-  // both land on `null`) — an acceptable simplification for a debug-only verification hook, not a
-  // production gesture: worst case a rare cancellation also fires the inject, which is harmless.
+  // so normal pan/pinch is completely unaffected (re-verified on device after this fix).
+  //
+  // FIX ROUND 1 (Critical 1, device-verified regression): the original version of this hand-rolled
+  // detector still wrapped `waitForUpOrCancellation(pass = Initial)` in a
+  // `withTimeoutOrNull(longPressTimeoutMillis) { ... }` and treated a `null` result as "long
+  // press fired." That is wrong: `waitForUpOrCancellation` has no touch-slop check of its own
+  // (verified against the foundation 1.7.8 sources) and returns `null` on a plain gesture
+  // cancellation too — which is exactly what an ordinary pan/pinch produces once MapLibre's
+  // embedded view starts consuming the drag. `withTimeoutOrNull` can't tell "the wrapped call
+  // returned null because it was cancelled, well before the timeout" apart from "the timeout
+  // itself fired" — both surface as the same outer `null`. Net effect: any pan or pinch gesture
+  // lasting longer than the system long-press duration (~500ms) silently injected a fake quake.
+  // The previous kdoc here called this "an acceptable simplification... worst case a rare
+  // cancellation also fires the inject, which is harmless" — that was wrong on both counts: it is
+  // not rare (any unhurried pan/pinch triggers it) and not harmless (it pollutes real data with a
+  // fake quake and animates a pin the user never asked for).
+  //
+  // Rewritten to track the gesture by hand instead of trusting `waitForUpOrCancellation`'s own
+  // ambiguous null: capture the down position, then loop reading raw pointer events at the same
+  // `Initial` pass. The loop returns (a non-null `Unit`, via the bare `return@withTimeoutOrNull`)
+  // on every disqualifying condition — the tracked pointer lifting, or moving past
+  // `viewConfiguration.touchSlop` — and otherwise just keeps waiting. Because the loop never
+  // returns on its own, the ONLY way `withTimeoutOrNull` comes back `null` is for the timeout
+  // itself to elapse while the loop is still running unaborted: finger still down, still within
+  // slop, for the full long-press duration. That is a real, stationary long press.
   //
   // BUG FIX (device-verified): `pointerInput(onDebugLongPress)` used [onDebugLongPress] itself as
   // the restart key — but that lambda is a fresh instance every HomeScreen recomposition (it
@@ -254,11 +274,21 @@ actual fun QuakeMap(
   val mapModifier = if (debuggableBuild) {
     modifier.pointerInput(Unit) {
       awaitEachGesture {
-        awaitFirstDown(pass = PointerEventPass.Initial)
-        val releasedOrCancelled = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
-          waitForUpOrCancellation(pass = PointerEventPass.Initial)
+        val down = awaitFirstDown(pass = PointerEventPass.Initial)
+        val downPosition = down.position
+        val pointerId = down.id
+        val abortedEarly = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+          while (true) {
+            val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+            val change = event.changes.firstOrNull { it.id == pointerId }
+                ?: return@withTimeoutOrNull // pointer vanished from the stream entirely
+            if (!change.pressed) return@withTimeoutOrNull // lifted before the timeout elapsed
+            val movedPastSlop =
+                (change.position - downPosition).getDistance() > viewConfiguration.touchSlop
+            if (movedPastSlop) return@withTimeoutOrNull // panning/pinching, not holding still
+          }
         }
-        if (releasedOrCancelled == null) {
+        if (abortedEarly == null) {
           val target = cameraState.position.target
           currentOnDebugLongPress.value(target.latitude, target.longitude)
         }
@@ -380,15 +410,26 @@ private fun QuakeBandCircleLayer(band: MagnitudeBand, pins: List<QuakePin>, onPi
  * `point_count.convertToString()` (`StringValue extends FormattedValue`, confirmed in
  * `expressions/value/values.kt`'s compiled interface hierarchy, so it should satisfy
  * `textField`'s `Expression<out FormattedValue>` parameter) — SKIPPED, per the brief's own
- * "<30min else plain circles" allowance: the real Kotlin compiler (not just javap) rejects the
- * call with `Cannot access 'class SymbolLayer : FeatureLayer': it is internal in file` — this
- * library's `layers` package apparently has an internal `SymbolLayer` class name-clashing with the
- * public `SymbolLayer(...)` composable function (the same pattern `CircleLayer` uses without
- * incident elsewhere in this file — the class backing that one evidently isn't similarly
- * restricted, or the resolver picks the function first when there's no clash). Plain, unlabeled
- * cluster bubbles ship instead; a count label is a real follow-up, not a dead end — this needs
- * either a workaround for the resolution clash or a look at whether a differently-shaped call
- * avoids triggering it, neither of which fits this task's time budget for a secondary feature.
+ * "<30min else plain circles" allowance: the original attempt hit a real Kotlin-compiler error,
+ * `Cannot access 'class SymbolLayer : FeatureLayer': it is internal in file`. Plain, unlabeled
+ * cluster bubbles ship instead.
+ *
+ * FIX ROUND 1 CORRECTION (I3): the paragraph that used to sit here claimed `CircleLayer`'s backing
+ * class is NOT internal (unlike `SymbolLayer`'s), as the explanation for that compiler error — an
+ * inference, stated as settled fact without being checked. It was checked during this fix round
+ * and is FALSE: `CircleLayer` and `SymbolLayer` share the identical shape (an internal backing
+ * class plus a public composable facade function of the same name), and the exact call this kdoc
+ * quotes above — `SymbolLayer(textField = feature["point_count"].convertToString())` — actually
+ * COMPILES cleanly in isolation. So the real cause of the original failure is NOT a
+ * SymbolLayer-vs-CircleLayer asymmetry; it remains unknown, but is most likely a different,
+ * separately-invalid argument elsewhere in the original attempted call, which made Kotlin's
+ * overload resolution fall through to the inaccessible internal constructor instead of the public
+ * composable function (this exact misleading "it is internal" error shape is a known symptom of
+ * that failure mode, not proof the symbol is categorically unreachable). Labels stay skipped for
+ * this fix round — re-deriving the original call's precise failing shape is itself real follow-up
+ * work — but the next attempt should start from the confirmed-compiling shape above rather than
+ * assuming `SymbolLayer` can't be called here. Full correction record: task-10-report.md, "Fix
+ * Round 1".
  *
  * Cluster bubble radius is a fixed [CLUSTER_BUBBLE_RADIUS_DP] (not scaled by point_count) — a
  * deliberate v1 simplification, doubly justified now that there's no count label to make "how

@@ -22,10 +22,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.yugma.terrawatch.model.Quake
@@ -115,16 +115,34 @@ private fun FeedSheetHeader(isLive: Boolean, newCount: Int, modifier: Modifier =
  * [com.yugma.terrawatch.data.QuakeRepository.liveConnected] (the real WebSocket state), so this
  * always renders one of two honest faces instead of the old "STATIC dot, only shown when the
  * (always-true) placeholder said live": a pulsing green dot while the socket is actually open, or
- * a static gray dot while it isn't (paired with the "OFFLINE" label above). The pulse itself
- * (alpha 0.35 -> 1, reversing, non-stopping) is skipped under [LocalReducedMotion] — a steady
- * fully-on dot substitutes so "live" still reads instantly at a glance without motion.
+ * a static, translucent ink dot while it isn't (paired with the "OFFLINE" label above). The pulse
+ * itself (alpha 0.35 -> 1, reversing, non-stopping) is skipped under [LocalReducedMotion] — a
+ * steady fully-on dot substitutes so "live" still reads instantly at a glance without motion.
+ *
+ * Fix Round 1 (entangled minors):
+ * - The pulsing alpha used to be read directly in this composable function's body (a `by`-delegated
+ *   `State<Float>` feeding a `Color.copy(alpha = ...)` argument passed to `Modifier.background()`).
+ *   That is a composition-phase read: Compose must recompose this whole function on every animation
+ *   frame (60fps) just to re-derive that `Color` argument. `Modifier.graphicsLayer { alpha = ... }`
+ *   defers the same read to the draw phase instead — only this node's compositing layer redraws
+ *   each frame; the composable itself never recomposes for the pulse. (Kept as a plain `State`
+ *   reference, not a `by`-delegated local, specifically so nothing in this function's own body
+ *   reads `.value` outside the `graphicsLayer` lambda.)
+ * - The not-live dot used a hardcoded `Color.Gray` — an ad-hoc, off-palette color this codebase's
+ *   own token rule (core:ui's `TerraColors` kdoc: "every screen sources color from here... never
+ *   ad-hoc `Color(0x...)` literals") forbids. Replaced with `TerraColors.Ink.copy(alpha = 0.35f)`,
+ *   which (unlike the old code's structure) now actually renders translucent: the old version's
+ *   outer `.copy(alpha = alpha)` — with `alpha` hardcoded to `1f` on this branch — unconditionally
+ *   overwrote any alpha baked into the base color, so the intended translucency could never have
+ *   shown up even if the base color itself had carried one.
  */
 @Composable
 private fun LiveDot(isLive: Boolean, modifier: Modifier = Modifier) {
     val reducedMotion = LocalReducedMotion.current
-    val alpha = if (isLive && !reducedMotion) {
+    val baseColor = if (isLive) TerraColors.Safe else TerraColors.Ink.copy(alpha = 0.35f)
+    if (isLive && !reducedMotion) {
         val transition = rememberInfiniteTransition(label = "live-dot-pulse")
-        val animatedAlpha by transition.animateFloat(
+        val animatedAlpha = transition.animateFloat(
             initialValue = 0.35f,
             targetValue = 1f,
             animationSpec = infiniteRepeatable(
@@ -133,16 +151,17 @@ private fun LiveDot(isLive: Boolean, modifier: Modifier = Modifier) {
             ),
             label = "live-dot-alpha",
         )
-        animatedAlpha
+        Box(
+            modifier
+                .size(8.dp)
+                .graphicsLayer { alpha = animatedAlpha.value }
+                .background(color = baseColor, shape = CircleShape),
+        )
     } else {
-        1f
+        Box(
+            modifier
+                .size(8.dp)
+                .background(color = baseColor, shape = CircleShape),
+        )
     }
-    Box(
-        modifier
-            .size(8.dp)
-            .background(
-                color = (if (isLive) TerraColors.Safe else Color.Gray).copy(alpha = alpha),
-                shape = CircleShape,
-            ),
-    )
 }

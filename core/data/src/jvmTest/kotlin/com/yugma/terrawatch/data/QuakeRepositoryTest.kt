@@ -19,6 +19,7 @@ import com.yugma.terrawatch.network.EmscLiveSource
 import com.yugma.terrawatch.network.UsgsApi
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.BeforeTest
 
 class QuakeRepositoryTest {
@@ -249,5 +250,58 @@ class QuakeRepositoryTest {
         val stored = dao.byId("Y")
         assertEquals("e1", stored?.sources?.get(Source.EMSC))
         assertEquals("Y", stored?.sources?.get(Source.USGS))
+    }
+
+    // Fix Round 1 (I2, review finding): the debug long-press hook used to write its fake quakes
+    // through ingest() itself, so a fake landing within DedupeEngine's match window/radius of a
+    // REAL quake could merge INTO it under the real quake's id, corrupting stored data for an
+    // event that actually happened. ingestDebugBypassingDedupe must never merge — it writes
+    // unconditionally under its own id (QuakeDao.replace), leaving any nearby real row untouched.
+    // Added alongside the fix (not strict red/green TDD, unlike QuakeDaoTest's deleteByIdPrefix
+    // test, which the brief specifically called out as TDD-first) — see task-10-report.md's Fix
+    // Round 1 for that distinction.
+    @Test fun `ingestDebugBypassingDedupe never merges into a nearby real quake`() = runTest {
+        val r = repoNoop(2_000_000)
+        r.ingest(quake("us1", Source.USGS, 5.5, t = 1_950_000))   // a real quake already stored
+        // Same place, same timestamp — squarely inside DedupeEngine's 90s/100km match window;
+        // ingest() would merge this into "us1". ingestDebugBypassingDedupe must not.
+        r.ingestDebugBypassingDedupe(
+            quake("debug-1", Source.USGS, 6.0, t = 1_950_000).copy(place = "[DEBUG] Injected M6.0"),
+        )
+        assertEquals(2, dao.countAll(), "the fake must not merge into the real row")
+        assertEquals(5.5, dao.byId("us1")?.mag, "the real quake's stored data must be untouched")
+        assertEquals(6.0, dao.byId("debug-1")?.mag)
+    }
+
+    // Fix Round 1 (I2, review finding): ingest() runs AlertRuleEngine against DEFAULT_RULES — a
+    // fake M6.0 debug quake would trip the "world" rule (minMag 6.0, no radius, fires on ANY new
+    // quake at or above it) and raise a real, user-visible AlertEvent purely from a debug tap.
+    // ingestDebugBypassingDedupe must never evaluate alerts, while still emitting on
+    // insertedQuakeIds — the same signal the pin-drop animation and the feed sheet's "N NEW" chip
+    // key off of, so the debug hook still exercises that half of the pipeline honestly.
+    @Test fun `ingestDebugBypassingDedupe emits insertedQuakeIds but never evaluates alerts`() = runTest {
+        val r = repoNoop(2_000_000)
+        r.alertEvents.test {
+            r.insertedQuakeIds.test {
+                r.ingestDebugBypassingDedupe(quake("debug-1", Source.USGS, 6.0, t = 1_950_000))
+                assertEquals("debug-1", awaitItem())
+                cancelAndIgnoreRemainingEvents()
+            }
+            expectNoEvents() // the "world" rule (minMag 6.0) would otherwise fire here
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    // Fix Round 1 (I2): purgeDebugQuakes is the repository-level wrapper HomeViewModel's init
+    // calls unconditionally — this pins that its hardcoded prefix constant actually matches
+    // HomeViewModel.injectDebugQuake's "debug-" id prefix (the two aren't derived from one shared
+    // constant, so a typo in either would otherwise only surface as silent non-cleanup on device).
+    @Test fun `purgeDebugQuakes removes only debug-prefixed rows, real quakes untouched`() = runTest {
+        val r = repoNoop(2_000_000)
+        r.ingestDebugBypassingDedupe(quake("debug-1", Source.USGS, 6.0, t = 1_950_000))
+        r.ingest(quake("us1", Source.USGS, 5.5, t = 1_000_000))
+        r.purgeDebugQuakes()
+        assertEquals(1, dao.countAll())
+        assertNotNull(dao.byId("us1"))
     }
 }

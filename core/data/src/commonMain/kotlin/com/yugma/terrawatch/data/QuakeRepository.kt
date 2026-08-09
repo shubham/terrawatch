@@ -86,6 +86,45 @@ class QuakeRepository(
         scope.launch { live.events().collect { ingest(it) } }
     }
 
+    /**
+     * Fix Round 1 (I2): the debug long-press hook's ONLY write path — never [ingest]. [ingest]
+     * runs [quake] through [DedupeEngine] against whatever real quakes already sit in its
+     * window-query; a fake, hardcoded-location debug quake landing within [DedupeEngine]'s match
+     * radius/window of a genuine one can get merged INTO that real row (adopting its id), which
+     * both corrupts the real quake's stored data and means the pin-drop animation/"N NEW" chip
+     * fire for the wrong id (or not at all, if the merge resolves to an id already on screen). It
+     * also used to run [AlertRuleEngine] against the fake quake's magnitude, which can fire a real
+     * [AlertEvent] (e.g. the world M6.0 rule) purely from a debug tap — a debug-only verification
+     * hook must never be able to trigger production alerting.
+     *
+     * Bypasses both: writes [quake] directly via [QuakeDao.replace] (unconditional, no dedupe
+     * match/merge) and emits its id on [insertedQuakeIds] directly (still the same signal the
+     * pin-drop animation and the feed sheet's "N NEW" chip key off of, so the debug hook still
+     * exercises that whole path honestly) — but never touches [AlertRuleEngine]. Guarded by the
+     * same [ingestMutex] as [ingest] so a debug inject can't race a real concurrent ingest's
+     * read-reconcile-write section.
+     */
+    suspend fun ingestDebugBypassingDedupe(quake: Quake) {
+        withContext(ioDispatcher) {
+            ingestMutex.withLock {
+                dao.replace(quake)
+                _insertedQuakeIds.tryEmit(quake.id)
+            }
+        }
+    }
+
+    /**
+     * Fix Round 1 (I2): sweeps up every quake [ingestDebugBypassingDedupe] has ever written on
+     * this device (identified by HomeViewModel's "debug-" id prefix — see
+     * [QuakeDao.deleteByIdPrefix]) — called unconditionally from HomeViewModel's init so a
+     * debuggable build never accumulates fake rows across sessions. Harmless to call on a release
+     * build/device that has never used the debug hook: zero rows ever match the prefix, so this is
+     * a no-op delete.
+     */
+    suspend fun purgeDebugQuakes() = withContext(ioDispatcher) {
+        dao.deleteByIdPrefix(DEBUG_QUAKE_ID_PREFIX)
+    }
+
     suspend fun loadArchivePage(beforeMillis: Long, minMag: Double? = null): Int = withContext(ioDispatcher) {
         val page = api.queryArchive(endTimeMillis = beforeMillis, minMagnitude = minMag)
         page.forEach { ingest(it) }
@@ -141,5 +180,8 @@ class QuakeRepository(
     private companion object {
         const val FEED_ETAG_KEY = "feed_etag"
         const val WINDOW_MS = 90_000L
+        // Fix Round 1 (I2): must match HomeViewModel.injectDebugQuake's id prefix exactly —
+        // see [purgeDebugQuakes]/[QuakeDao.deleteByIdPrefix].
+        const val DEBUG_QUAKE_ID_PREFIX = "debug-"
     }
 }

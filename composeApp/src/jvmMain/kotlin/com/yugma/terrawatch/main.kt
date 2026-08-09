@@ -16,7 +16,9 @@ import org.koin.core.context.startKoin
 @OptIn(kotlin.time.ExperimentalTime::class)
 fun main() {
     val dao = QuakeDao(createDatabase(DriverFactory()), clock = { Clock.System.now().toEpochMilliseconds() })
-    val http = HttpClient(CIO) { install(WebSockets) }
+    // Fix Round 1 (I1): see MainActivity.kt's matching change / EmscLiveSource.kt's kdoc for why
+    // a WS ping is required to detect a dead socket that never delivers a TCP-level close.
+    val http = HttpClient(CIO) { install(WebSockets) { pingIntervalMillis = 30_000 } }
     startKoin { modules(appModule(http, dao, LocationProvider())) }
     application {
         Window(onCloseRequest = ::exitApplication, title = "TerraWatch") { App() }
