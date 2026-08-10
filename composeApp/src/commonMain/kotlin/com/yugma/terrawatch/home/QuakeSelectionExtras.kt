@@ -31,11 +31,12 @@ import androidx.lifecycle.viewmodel.CreationExtras
  * doesn't crash — not to reproduce genuine cross-reload persistence, which nothing on this
  * platform provides yet.
  *
- * Returns `null` on every platform except wasmJs (Android/jvm keep the EXACT existing behavior,
- * unchanged, unverified-but-untouched by this task for jvm/desktop — see the jvm actual's own
- * note): `App()` below only overrides `koinViewModel`'s own `extras` argument when this returns
- * non-null, so Android's real Activity-backed extras (and whatever jvm/desktop's own default
- * already is) are never touched.
+ * Returns `null` only on Android (its `ComponentActivity` already supplies a real
+ * `SavedStateRegistryOwner`, so this is a deliberate no-op there — see that actual's own note).
+ * wasmJs (this task) and jvm/desktop (a later hotfix — see Concern 1 in `task-9-report.md` and the
+ * jvm actual's own kdoc for the crash it fixes) both build their own synthetic owner and return
+ * non-null: `App()` below only overrides `koinViewModel`'s own `extras` argument when this returns
+ * non-null, so Android's real Activity-backed extras are the only ones ever left untouched.
  */
 @Composable
 expect fun rememberQuakeSelectionExtras(): CreationExtras?

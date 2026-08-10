@@ -59,12 +59,12 @@ import org.koin.compose.viewmodel.koinViewModel
 @Composable
 fun App() {
     val homeViewModel = koinViewModel<HomeViewModel>()
-    // Task 9 (Plan 3): rememberQuakeSelectionExtras() is null on every platform except wasmJs —
+    // Task 9 (Plan 3) + desktop hotfix: rememberQuakeSelectionExtras() is null only on Android —
     // see that function's own kdoc (QuakeSelectionExtras.kt) for the real crash this works around
-    // (Koin's SavedStateHandle auto-injection needs a SavedStateRegistryOwner that wasmJs's
-    // ComposeViewport doesn't supply by default; Android's ComponentActivity already does, so this
-    // branch is a pure no-op there — koinViewModel<QuakeSelectionViewModel>()'s own default
-    // `extras` is untouched on every platform but wasmJs).
+    // (Koin's SavedStateHandle auto-injection needs a SavedStateRegistryOwner that neither wasmJs's
+    // ComposeViewport nor desktop's Window {} supply by default; Android's ComponentActivity
+    // already does, so this branch is a pure no-op there — koinViewModel<QuakeSelectionViewModel>()'s
+    // own default `extras` is untouched on Android only).
     val quakeSelectionExtras = rememberQuakeSelectionExtras()
     val selectionViewModel = if (quakeSelectionExtras != null) {
         koinViewModel<QuakeSelectionViewModel>(extras = quakeSelectionExtras)
