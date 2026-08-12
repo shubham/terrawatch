@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -73,7 +74,22 @@ internal fun closestRadiusStepIndex(radiusKm: Double): Int =
  * exact 0.5 increments for a 3.0..6.0 range) rather than a load-bearing computation of its own. */
 internal fun snapToHalfMagnitude(value: Double): Double = round(value * 2.0) / 2.0
 
+// Task 12 (Plan 3), release hygiene subset: hardcoded, not read from any BuildConfig-equivalent —
+// composeApp is a KMP commonMain source set (this file compiles for android/jvm/wasmJs alike), and
+// Android's generated BuildConfig class is androidMain-only, unreachable from here without an
+// expect/actual seam this task's own dispatch judged out of scope for a "subset" pass (Plan 4:
+// revisit if/when a real per-platform build-info surface is worth adding for more than one string).
+// KEEP IN SYNC BY HAND with composeApp/build.gradle.kts's `versionName` — the two are independently
+// literal today; SettingsScreenTest (jvmTest) pins this exact string but cannot cross-check it
+// against the Android Gradle config from a jvmTest source set, so nothing currently fails loudly if
+// they drift apart on a future version bump.
 private const val APP_VERSION = "0.3.0"
+
+/** Task 13: `testTag` for [SettingsHeader]'s back chevron — `NavRoundTripTest`
+ * (androidInstrumentedTest) taps this to complete the Home->History->Insights->Settings->Home leg
+ * back to Home. Same "internal, so a test can pin it" convention as [APP_VERSION]'s neighbors
+ * elsewhere in this codebase. */
+internal const val SETTINGS_BACK_TAG = "settings-back"
 
 /**
  * Task 7 (Plan 3): the Settings screen — replaces `AppNav.kt`'s `PlaceholderScreen("Settings —
@@ -145,7 +161,7 @@ private fun SettingsHeader(onBack: () -> Unit, modifier: Modifier = Modifier) {
         modifier = modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = onBack) {
+        IconButton(onClick = onBack, modifier = Modifier.testTag(SETTINGS_BACK_TAG)) {
             BackChevronGlyph(
                 tint = MaterialTheme.colorScheme.onBackground,
                 modifier = Modifier.width(24.dp).height(24.dp),

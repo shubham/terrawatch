@@ -41,6 +41,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
@@ -161,6 +162,18 @@ private val TWO_PANE_RIGHT_PANEL_WIDTH = 360.dp
  * keep compiling unchanged against their existing 2-arg call sites. `AppNav`'s real call site
  * overrides it to `navController.navigate(Routes.SETTINGS)`.
  */
+/**
+ * Task 13: two `testTag`s `NavRoundTripTest` (androidInstrumentedTest) pins directly — same
+ * "internal, so a test can pin it" convention as `HistoryScreen.HISTORY_SUBTITLE`. [HOME_MAP_CONTAINER_TAG]
+ * marks the `Box` that wraps [com.yugma.terrawatch.map.QuakeMap] in BOTH [PhoneLayout] and
+ * [TwoPaneLayout] — this is the literal node THE white-screen regression (Task 4's own kdoc) is
+ * about: it existing after a Home->History->Insights->Settings->Home round trip is the actual
+ * assertion, not a proxy for it. [SETTINGS_GEAR_TAG] marks the gear chip that round trip's own
+ * Settings leg taps through, since `AppNav`'s real Settings route has no tab-bar entry of its own.
+ */
+internal const val HOME_MAP_CONTAINER_TAG = "home-map-container"
+internal const val SETTINGS_GEAR_TAG = "settings-gear"
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
@@ -240,7 +253,8 @@ fun HomeScreen(
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .windowInsetsPadding(WindowInsets.statusBars)
-                .padding(16.dp),
+                .padding(16.dp)
+                .testTag(SETTINGS_GEAR_TAG),
         )
         // Task 11: the quake detail sheet — a second, independent, on-demand ModalBottomSheet
         // layered above everything else in this BoxWithConstraints (whichever of PhoneLayout's
@@ -338,7 +352,7 @@ private fun PhoneLayout(
         // read/network refresh instead of waiting behind the spinner. The PaddingValues this
         // lambda receives (M3's own convention for "leave room for the peeking sheet") is
         // deliberately unused — the map is meant to run full-bleed under the sheet.
-        Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().testTag(HOME_MAP_CONTAINER_TAG)) {
             QuakeMap(
                 pins = content?.pins.orEmpty(),
                 newQuakeId = newQuakeId,
@@ -447,7 +461,7 @@ private fun TwoPaneLayout(
     // quakes/pins lists `state` carries), so the counter never has a chance to accumulate visibly.
     LaunchedEffect(state) { viewModel.markSheetExpanded() }
     Row(Modifier.fillMaxSize()) {
-        Box(Modifier.weight(1f).fillMaxHeight()) {
+        Box(Modifier.weight(1f).fillMaxHeight().testTag(HOME_MAP_CONTAINER_TAG)) {
             QuakeMap(
                 pins = content?.pins.orEmpty(),
                 newQuakeId = newQuakeId,

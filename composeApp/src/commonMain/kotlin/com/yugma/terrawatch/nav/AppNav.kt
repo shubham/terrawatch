@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -63,6 +64,18 @@ object Routes {
 private val TAB_ROUTES = setOf(Routes.HOME, Routes.HISTORY, Routes.INSIGHTS)
 
 /**
+ * Task 13: `testTag`s for [AppBottomBar]/[AppNavigationRail]'s three tab items — `internal`, same
+ * "so a test can pin it" convention `HistoryScreen.HISTORY_SUBTITLE`/`InsightsScreen.
+ * INSIGHTS_SUBTITLE` already established, so `NavRoundTripTest` (androidInstrumentedTest) can drive
+ * the Home->History->Insights->Settings->Home regression pin by tag rather than by label text (label
+ * text doubles as both the tab's visible copy AND, before this, the only way to find it — a tag
+ * keeps the test decoupled from a future copy change).
+ */
+internal const val NAV_HOME_TAG = "nav-home"
+internal const val NAV_HISTORY_TAG = "nav-history"
+internal const val NAV_INSIGHTS_TAG = "nav-insights"
+
+/**
  * Task 4 (Plan 3) root nav composable — `App.kt` calls this instead of `HomeScreen` directly now.
  * Owns the [NavHost] plus whichever tab-switcher chrome fits the available width ([layoutMode],
  * reused verbatim from `home/LayoutMode.kt` — the exact same 900dp breakpoint `HomeScreen`'s own
@@ -85,10 +98,21 @@ private val TAB_ROUTES = setOf(Routes.HOME, Routes.HISTORY, Routes.INSIGHTS)
  * blanking. That claim is only as good as the device screenshot after a real 3x round-trip proves
  * it is — see task-4-report.md's Device section for that evidence; this kdoc intentionally does
  * NOT assert a stronger guarantee than what was actually watched happen on 98bc1cd8.
+ *
+ * Task 13: [onboardingStore] defaults to `koinInject()` — same "defaulted Koin-resolved param a
+ * test can override directly" shape `HomeScreen`'s own `selectionViewModel: QuakeSelectionViewModel
+ * = koinViewModel()` already established — rather than the un-overridable `val onboardingStore =
+ * koinInject<OnboardingStore>()` this body used to open with. `App.kt`'s real call site doesn't pass
+ * it, so production behavior is byte-for-byte unchanged; `OnboardingGateTest`
+ * (androidInstrumentedTest) passes a directly-constructed, Koin-free `OnboardingStore` instead, so
+ * pinning "fresh install -> onboarding shown, onboarded -> home" needs no `startKoin{}` at all.
  */
 @Composable
-fun AppNav(homeViewModel: HomeViewModel, selectionViewModel: QuakeSelectionViewModel) {
-    val onboardingStore = koinInject<OnboardingStore>()
+fun AppNav(
+    homeViewModel: HomeViewModel,
+    selectionViewModel: QuakeSelectionViewModel,
+    onboardingStore: OnboardingStore = koinInject(),
+) {
     // One-shot, read exactly once for this composable's whole lifetime (remember, no key) --
     // deliberately NOT re-read on every recomposition: "onboarded" only ever flips false -> true
     // once per install (OnboardingStore's own kdoc), and NavHost's own `startDestination` is only
@@ -269,6 +293,7 @@ private fun AppBottomBar(currentRoute: String?, navController: NavHostController
                 onClick = { navigateToTab(navController, item.route) },
                 icon = item.icon,
                 label = { Text(item.label) },
+                modifier = Modifier.testTag(item.testTag),
             )
         }
     }
@@ -285,15 +310,16 @@ private fun AppNavigationRail(currentRoute: String?, navController: NavHostContr
                 onClick = { navigateToTab(navController, item.route) },
                 icon = item.icon,
                 label = { Text(item.label) },
+                modifier = Modifier.testTag(item.testTag),
             )
         }
     }
 }
 
-private class TabItem(val route: String, val label: String, val icon: @Composable () -> Unit)
+private class TabItem(val route: String, val label: String, val testTag: String, val icon: @Composable () -> Unit)
 
 private val TAB_ITEMS = listOf(
-    TabItem(Routes.HOME, "Home") { HomeTabIcon() },
-    TabItem(Routes.HISTORY, "History") { HistoryTabIcon() },
-    TabItem(Routes.INSIGHTS, "Insights") { InsightsTabIcon() },
+    TabItem(Routes.HOME, "Home", NAV_HOME_TAG) { HomeTabIcon() },
+    TabItem(Routes.HISTORY, "History", NAV_HISTORY_TAG) { HistoryTabIcon() },
+    TabItem(Routes.INSIGHTS, "Insights", NAV_INSIGHTS_TAG) { InsightsTabIcon() },
 )
