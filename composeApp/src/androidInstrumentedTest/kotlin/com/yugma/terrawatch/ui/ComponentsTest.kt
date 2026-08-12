@@ -5,6 +5,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.captureToImage
@@ -346,6 +347,53 @@ class ComponentsTest {
             }
         }
         composeTestRule.onNodeWithTag("pill-under-test").assertHeightIsAtLeast(48.dp)
+    }
+
+    @Test
+    fun statusShield_alertVariant_contentDescriptionIsExactlyOneSentence_noDuplicateMagnitudeFromTheNestedBadge() {
+        // Fix round 1 (code review, Important): the ALERT pill nests a MagnitudeBadge, and
+        // StatusShield's own Surface merges descendant semantics (mergeDescendants = true) - before
+        // this fix, the badge's OWN "Magnitude 6.1" contentDescription rode along into the pill's
+        // merged list ON TOP OF pillContentDescription's already-complete sentence, producing a
+        // double-read TalkBack would announce as two magnitudes back to back. A presence-style
+        // `onNodeWithContentDescription(...).assertExists()` query (as used by the CALM variant test
+        // above) CANNOT catch this: it only checks the intended string is somewhere in the merged
+        // list, not that the list has no other entries. `assertContentDescriptionEquals` (exact-list)
+        // is the query shape that catches it - run on-device (98bc1cd8) against the unfixed code
+        // first: RED, actual list `[..."10.0 km deep", "Magnitude 6.1"]` (the exact duplicate
+        // predicted, verbatim from the device failure - see task-10-report.md's Fix Round 1), then
+        // GREEN again after restoring `Modifier.clearAndSetSemantics {}` on AlertContent's
+        // MagnitudeBadge call site.
+        //
+        // `testTag` goes directly on StatusShield's own `modifier` param (NOT a wrapping Box, unlike
+        // the touch-target test above): `assertHeightIsAtLeast` reads layout bounds, which a tightly-
+        // wrapping Box happens to share with its one child, but `assertContentDescriptionEquals`
+        // reads a semantics PROPERTY, which does NOT propagate from a merging child up to a
+        // non-merging parent Box - tagging the wrapper would silently match an empty-semantics node
+        // instead of the pill's own merged one (caught turning this test on for the first time).
+        val quake = Quake(
+            id = "q1", timeMillis = 1_000_000L, lat = 7.1, lon = 126.5, depthKm = 10.0, mag = 6.1,
+            magType = "mw", place = "Mindanao, Philippines", tsunami = false, felt = null,
+            status = QuakeStatus.AUTOMATIC, sources = mapOf(Source.USGS to "q1"),
+            revisions = listOf(MagRevision(6.1, "mw", 1_000_000L, Source.USGS)), updatedAtMillis = 1_000_000L,
+        )
+        composeTestRule.setContent {
+            TerraTheme {
+                StatusShield(
+                    status = PillStatus(PillStatus.Kind.ALERT, quake),
+                    nowMillis = 1_000_000L,
+                    onClick = {},
+                    modifier = Modifier.testTag("alert-pill-under-test"),
+                )
+            }
+        }
+        // Same exact string StatusShieldTest (core:ui jvmTest) pins for pillContentDescription's
+        // ALERT branch against this identical fixture - one source of truth for what the sentence
+        // should say, this test's own job is proving it's the ONLY thing announced.
+        composeTestRule.onNodeWithTag("alert-pill-under-test")
+            .assertContentDescriptionEquals(
+                "Alert. Magnitude 6.1, Mindanao, Philippines, just now, 10.0 km deep",
+            )
     }
 
     @Test

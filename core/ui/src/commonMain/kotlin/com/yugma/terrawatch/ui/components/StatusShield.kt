@@ -25,6 +25,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -203,7 +204,21 @@ private fun CalmContent(radiusKm: Double) {
 @Composable
 private fun AlertContent(status: PillStatus, nowMillis: Long) {
     val quake = status.quake
-    MagnitudeBadge(mag = quake?.mag, band = magnitudeBand(quake?.mag), size = BadgeSize.Small)
+    // Fix round 1 (code review, Important): StatusShield's own Surface merges descendant
+    // semantics (mergeDescendants = true, see this file's kdoc) - without this, MagnitudeBadge's
+    // OWN contentDescription ("Magnitude 6.1") gets swept into the pill's merged announcement
+    // ON TOP OF pillContentDescription's already-complete ALERT sentence (which restates the same
+    // magnitude itself), producing a double-read ("...10.0 km deep, Magnitude 6.1"). Confirmed
+    // against Compose's semantics-merge behavior: MagnitudeBadge's own `clearAndSetSemantics` only
+    // blocks ITS children from being collected — it does NOT stop the badge's own node from being
+    // pulled into an ANCESTOR's merge. `Modifier.clearAndSetSemantics {}` here (empty block) is the
+    // fix: it removes this call site's contribution entirely, same technique, applied one level up.
+    MagnitudeBadge(
+        mag = quake?.mag,
+        band = magnitudeBand(quake?.mag),
+        size = BadgeSize.Small,
+        modifier = Modifier.clearAndSetSemantics {},
+    )
     val text = if (quake == null) {
         "Alert"
     } else {
