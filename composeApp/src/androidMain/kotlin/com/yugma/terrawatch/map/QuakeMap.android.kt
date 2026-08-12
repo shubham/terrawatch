@@ -15,6 +15,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -41,12 +42,14 @@ import org.maplibre.compose.camera.rememberCameraState
 import org.maplibre.compose.expressions.dsl.asString
 import org.maplibre.compose.expressions.dsl.case
 import org.maplibre.compose.expressions.dsl.const
+import org.maplibre.compose.expressions.dsl.convertToString
 import org.maplibre.compose.expressions.dsl.feature
 import org.maplibre.compose.expressions.dsl.not
 import org.maplibre.compose.expressions.dsl.switch
 import org.maplibre.compose.layers.CircleLayer
 import org.maplibre.compose.layers.FillLayer
 import org.maplibre.compose.layers.LineLayer
+import org.maplibre.compose.layers.SymbolLayer
 import org.maplibre.compose.map.MaplibreMap
 import org.maplibre.compose.sources.GeoJsonData
 import org.maplibre.compose.sources.GeoJsonOptions
@@ -88,6 +91,9 @@ private const val CLUSTER_RADIUS_PX = 50
 private const val CLUSTER_MAX_ZOOM = 3
 private const val CLUSTER_MIN_POINTS = 3
 private const val CLUSTER_BUBBLE_RADIUS_DP = 14f
+
+// Task 11: cluster tap-to-zoom — the brief's own literal "camera zoom+1.5 centered on cluster".
+private const val CLUSTER_TAP_ZOOM_INCREMENT = 1.5
 
 // Task 7 (Plan 3), USER REQUIREMENT: the home-radius ring — Safe green, ~25% fill opacity, 1.5dp
 // outline, per the plan's own spec. 64 vertices matches circlePolygon's own default (smooth enough
@@ -161,7 +167,8 @@ private val UNCLUSTERED_BANDS = listOf(MagnitudeBand.STRONG, MagnitudeBand.MAJOR
  *   unclear whether a Compose overlay would even receive the map's own pan gestures cleanly
  *   underneath it) and reuses the exact same `GeoJsonSource`/`CircleLayer` idiom already proven
  *   stable in this file rather than introducing a second rendering mechanism for one feature.
- * - **Clustering** (validated + implemented, see [ClusteredLowModerateLayer]).
+ * - **Clustering** (validated + implemented, see [ClusteredLowModerateLayer]) — Task 11 (Plan 3)
+ *   later added that composable's own count label + tap-to-zoom on top of this; see its kdoc.
  * - **Debug long-press inject hook** (device verification only, debug builds): see
  *   [isDebuggableBuild] and the `pointerInput` wiring below.
  *
@@ -235,6 +242,10 @@ actual fun QuakeMap(
   // [pins] does.
   val pinsState = rememberUpdatedState(pins)
   val reducedMotion = LocalReducedMotion.current
+  // Task 11: cluster tap-to-zoom needs a coroutine to drive CameraState.animateTo (a suspend fun,
+  // confirmed via the resolved sources jar - see ClusteredLowModerateLayer's own kdoc) from inside
+  // a plain, non-suspend FeaturesClickHandler lambda.
+  val coroutineScope = rememberCoroutineScope()
   var activePin by remember { mutableStateOf<QuakePin?>(null) }
   val scale = remember { Animatable(0f) }
   val ring1Progress = remember { Animatable(0f) }
@@ -384,6 +395,16 @@ actual fun QuakeMap(
     ClusteredLowModerateLayer(
         pins = pinsByBand[MagnitudeBand.LOW].orEmpty() + pinsByBand[MagnitudeBand.MODERATE].orEmpty(),
         onPinTap = onPinTap,
+        onClusterTap = { clusterCenter ->
+          coroutineScope.launch {
+            cameraState.animateTo(
+                CameraPosition(
+                    target = clusterCenter,
+                    zoom = cameraState.position.zoom + CLUSTER_TAP_ZOOM_INCREMENT,
+                ),
+            )
+          }
+        },
     )
     // Fixed order preserved from Task 8 (see UNCLUSTERED_BANDS) so MAJOR/STRONG pins' CircleLayers
     // are added — and therefore drawn — after LOW/MODERATE's: more severe quakes stay visually on
@@ -583,13 +604,65 @@ private fun QuakeBandCircleLayer(band: MagnitudeBand, pins: List<QuakePin>, onPi
  * assuming `SymbolLayer` can't be called here. Full correction record: task-10-report.md, "Fix
  * Round 1".
  *
- * Cluster bubble radius is a fixed [CLUSTER_BUBBLE_RADIUS_DP] (not scaled by point_count) — a
- * deliberate v1 simplification, doubly justified now that there's no count label to make "how
- * many" legible any other way than glancing at relative bubble sizes, which a fixed radius doesn't
- * do — noted as a natural next improvement alongside the label itself.
+ * TASK 11 RESOLUTION — labels now ship. Retried per Task 7's carried-forward hint (progress.md:
+ * "SymbolLayer mystery root cause = guessed param name, not library limitation"). Re-verified from
+ * scratch rather than trusting the Fix Round 1 paragraph's "compiles in isolation" claim blindly:
+ * `javap -v` against this exact resolved artifact's `SymbolLayerKt.class` decoded its
+ * Compose-compiler `sourceInformation` string (same technique [HomeRadiusRingLayer]'s own kdoc
+ * already documents for `FillLayer`/`LineLayer`) and confirmed the FULL real parameter list, in
+ * order: `id, source, sourceLayer, minZoom, maxZoom, filter, visible, sortKey, placement, spacing,
+ * avoidEdges, zOrder, icon* (×21), textField, textOpacity, textColor, textHaloColor, ..., textFont,
+ * textSize, ..., onClick, onLongClick` — `textField`/`textColor`/`textFont` are exactly where the
+ * original spike doc and Fix Round 1's own correction both predicted. Cross-checked directly
+ * against the library's commonMain source (resolved sources jar, not paraphrased): the public
+ * composable's `textField: Expression<FormattedValue>` parameter accepts
+ * `feature["point_count"].convertToString()` (an `Expression<StringValue>`) with NO cast —
+ * `Expression<out T : ExpressionValue>` is declaration-site covariant (`Expression.kt`) and
+ * `StringValue : ..., FormattedValue` (`values.kt`), both confirmed by reading the interface
+ * declarations directly, so the "should satisfy" from the original kdoc paragraph above was
+ * correctly reasoned, just never actually wired up. The precise separately-invalid argument that
+ * broke the ORIGINAL attempt was never re-derived (Fix Round 1 already flagged that as its own
+ * follow-up, not a blocker) — it no longer matters now that a known-good, real-compiling full call
+ * exists (`:composeApp:compileDebugKotlinAndroid` green with this file's change).
+ *
+ * "White bold text" (brief's own ask): `textColor = const(Color.White)` is direct; bold is
+ * `textFont = const(listOf("Noto Sans Bold"))` — not a guessed font name, this app's OWN basemap
+ * style JSON (`https://tiles.openfreemap.org/styles/liberty`, fetched fresh and grepped for
+ * `"text-font"`) already uses exactly this stack for its own place-label layers, so the glyph is
+ * proven present in OpenFreeMap's served glyph set rather than assumed to exist. "Centered" is free
+ * — `SymbolLayer`'s own defaults already put `textAnchor`/`textJustify` at `Center`, so nothing
+ * extra needs setting for that part. The label shares the cluster bubble's own `source` and the
+ * same [isCluster] filter already built for the bubble/leaf circle split above, so it only ever
+ * decorates a real cluster representative point, never an unclustered leaf pin.
+ *
+ * Cluster TAP-TO-ZOOM (Task 11): the bubble's own `onClick` uses the identical `FeaturesClickHandler`
+ * shape every other layer in this file already uses for `onPinTap` (validated back in Task 8) —
+ * extracts the clicked cluster representative point's coordinates
+ * (`(features.firstOrNull()?.geometry as? Point)?.coordinates` — a cluster representative is always
+ * a `Point` feature by MapLibre's own clustering contract, confirmed directly against
+ * `org.maplibre.spatialk.geojson.Point`'s source: `coordinates: Position`) and forwards them via
+ * [onClusterTap] rather than touching the camera in this composable directly — `CameraState`/
+ * `rememberCoroutineScope()` live one level up, in [QuakeMap]'s own body, which is where the actual
+ * `cameraState.animateTo(...)` call lands. `CameraState.animateTo` (a real public `suspend fun`) and
+ * `CameraPosition.zoom` (a real `Double`) were both confirmed directly against the resolved sources
+ * jar, not guessed — the "+1.5" the brief asks for is [CLUSTER_TAP_ZOOM_INCREMENT] added to
+ * whatever `cameraState.position.zoom` reads AT CLICK TIME (not a value captured at composition
+ * time), so repeated cluster taps keep zooming in further each time rather than snapping back to a
+ * fixed level. `ClickResult.Pass` when no feature/geometry resolves, matching this file's own
+ * established "let an inconclusive hit fall through" convention (see [QuakeBandCircleLayer]'s own
+ * `onClick`).
+ *
+ * Cluster bubble radius is still a fixed [CLUSTER_BUBBLE_RADIUS_DP] (not scaled by point_count) — a
+ * v1 simplification kept even now that the count label above makes "how many" legible directly
+ * rather than only via relative bubble size; scaling radius by point_count remains a natural next
+ * improvement, just no longer the legibility gap it was before the label existed.
  */
 @Composable
-private fun ClusteredLowModerateLayer(pins: List<QuakePin>, onPinTap: (String) -> Unit) {
+private fun ClusteredLowModerateLayer(
+    pins: List<QuakePin>,
+    onPinTap: (String) -> Unit,
+    onClusterTap: (Position) -> Unit,
+) {
   val geoJsonData = remember(pins) { GeoJsonData.Features(pins.toFeatureCollection()) }
   val source = rememberGeoJsonSource(
       geoJsonData,
@@ -611,6 +684,28 @@ private fun ClusteredLowModerateLayer(pins: List<QuakePin>, onPinTap: (String) -
       radius = const(CLUSTER_BUBBLE_RADIUS_DP.dp),
       strokeColor = const(Color.White),
       strokeWidth = const(PIN_STROKE_WIDTH_DP.dp),
+      onClick = { features ->
+        val clusterCenter = (features.firstOrNull()?.geometry as? Point)?.coordinates
+        if (clusterCenter == null) {
+          ClickResult.Pass
+        } else {
+          onClusterTap(clusterCenter)
+          ClickResult.Consume
+        }
+      },
+  )
+  // Task 11: the cluster's own point_count, rendered as white bold centered text directly over the
+  // bubble above — same source, same isCluster filter, added AFTER the bubble so the digits paint
+  // on top of its fill rather than being covered by it (this file's own established "later-added
+  // layer draws on top" ordering — see the UNCLUSTERED_BANDS draw-order comment at this file's own
+  // call site for the same rule applied to STRONG/MAJOR/UNKNOWN).
+  SymbolLayer(
+      id = "quake-cluster-count",
+      source = source,
+      filter = isCluster,
+      textField = feature["point_count"].convertToString(),
+      textColor = const(Color.White),
+      textFont = const(listOf("Noto Sans Bold")),
   )
   CircleLayer(
       id = "quake-pins-low-moderate",

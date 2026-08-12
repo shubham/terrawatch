@@ -17,9 +17,14 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.unit.dp
 import com.yugma.terrawatch.data.PillStatus
 import com.yugma.terrawatch.detail.DetailSheet
+import com.yugma.terrawatch.history.HISTORY_SUBTITLE
+import com.yugma.terrawatch.history.HistoryHeader
 import com.yugma.terrawatch.home.FeedList
 import com.yugma.terrawatch.home.FeedSheet
 import com.yugma.terrawatch.home.LiveStatusRow
+import com.yugma.terrawatch.insights.INSIGHTS_SUBTITLE
+import com.yugma.terrawatch.insights.InsightsHeader
+import com.yugma.terrawatch.insights.InsightsPeriod
 import com.yugma.terrawatch.model.MagRevision
 import com.yugma.terrawatch.model.Quake
 import com.yugma.terrawatch.model.QuakeStatus
@@ -437,6 +442,37 @@ class ComponentsTest {
         }
         composeTestRule.onNodeWithText("Quiet right now — no quakes in the last 24 h").assertExists()
         composeTestRule.onNodeWithText("Data updates every minute").assertExists()
+    }
+
+    // Screen headers (Task 11, external review: History-title + History-vs-Insights-clarity) ------
+    // Direct composable content only, same convention as every test above (no ViewModel/DI) - both
+    // HistoryHeader/InsightsHeader are `internal` specifically so this works.
+
+    @Test
+    fun historyHeader_showsTheTitleAndTheReviewClaritySubtitle() {
+        composeTestRule.setContent {
+            TerraTheme {
+                HistoryHeader()
+            }
+        }
+        composeTestRule.onNodeWithText("History").assertExists()
+        // Exact string grepped from HistoryScreen.kt's own HISTORY_SUBTITLE - not paraphrased.
+        composeTestRule.onNodeWithText(HISTORY_SUBTITLE).assertExists()
+    }
+
+    @Test
+    fun insightsHeader_showsTheTitleAndTheReviewClaritySubtitle() {
+        composeTestRule.setContent {
+            TerraTheme {
+                InsightsHeader(period = InsightsPeriod.SEVEN_DAYS, onPeriodChange = {})
+            }
+        }
+        composeTestRule.onNodeWithText("Insights").assertExists()
+        // Exact string grepped from InsightsScreen.kt's own INSIGHTS_SUBTITLE - not paraphrased.
+        composeTestRule.onNodeWithText(INSIGHTS_SUBTITLE).assertExists()
+        // The period toggle itself is pre-existing (Task 6), unaffected by this task's header
+        // change - one spot-check that adding the subtitle Column didn't silently break it.
+        composeTestRule.onNodeWithText("7d").assertExists()
     }
 
     private fun assertColorsClose(expected: Color, actual: Color, tolerance: Float = 0.06f) {

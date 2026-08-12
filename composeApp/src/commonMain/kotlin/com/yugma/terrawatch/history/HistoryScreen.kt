@@ -94,6 +94,7 @@ fun HistoryScreen(
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Box(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize()) {
+                HistoryHeader()
                 HistoryFilterChips(filter = filter, onFilterChange = viewModel::setFilter)
                 when (val s = state) {
                     HistoryUiState.LoadingFirst -> HistorySkeletonList(modifier = Modifier.weight(1f))
@@ -122,6 +123,39 @@ fun HistoryScreen(
                 )
             }
         }
+    }
+}
+
+/**
+ * Task 11 (external review): History had NO screen header at all before this — filter chips sat
+ * directly under the status bar with nothing naming the screen, unlike every other tab
+ * ([com.yugma.terrawatch.insights.InsightsScreen]'s own `InsightsHeader`, threaded through
+ * unchanged from Task 6). [HistoryHeader] matches that exact title treatment (headlineSmall, Bold,
+ * onBackground, same 16dp/12dp padding) minus the period-toggle row Insights has and History has no
+ * equivalent of. [HISTORY_SUBTITLE] is the REVIEW-CLARITY half of the same finding: title-only,
+ * History and Insights didn't visibly say what told them apart — "archive" (raw, browsable, every
+ * quake ever) vs. Insights' own "trends" (computed/aggregated) — see
+ * [com.yugma.terrawatch.insights.INSIGHTS_SUBTITLE] for the matching half. `internal`, so an
+ * instrumented test can render [HistoryHeader] directly with no ViewModel/DI in the loop, same
+ * "direct composable content only" convention `ComponentsTest` already documents for itself.
+ */
+internal const val HISTORY_SUBTITLE = "Browse the full quake archive"
+
+@Composable
+internal fun HistoryHeader(modifier: Modifier = Modifier) {
+    Column(modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+        Text(
+            text = "History",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onBackground,
+        )
+        // Small - same quiet register as InsightsHeader's own subtitle (bodySmall/onSurfaceVariant).
+        Text(
+            text = HISTORY_SUBTITLE,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

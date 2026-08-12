@@ -94,19 +94,41 @@ fun InsightsScreen(
     }
 }
 
+/**
+ * Task 11 (external review, REVIEW-CLARITY): [INSIGHTS_SUBTITLE] was added so Insights and
+ * [com.yugma.terrawatch.history.HistoryScreen]'s own [com.yugma.terrawatch.history.HISTORY_SUBTITLE]
+ * read as two distinct promises at a glance (the review's own complaint was that, title-only, the
+ * two tabs didn't visibly say what told them apart) — "trends" (computed/aggregated) vs. "archive"
+ * (raw/browsable), matching what each screen actually shows below its header. `internal`, not
+ * `private` (this file's own established "so a test can pin it" convention — see [dayCountLabels]
+ * above), so [InsightsHeader] itself can be rendered directly, no DI, in an instrumented test.
+ */
+internal const val INSIGHTS_SUBTITLE = "Trends from recent activity"
+
 @Composable
-private fun InsightsHeader(period: InsightsPeriod, onPeriodChange: (InsightsPeriod) -> Unit, modifier: Modifier = Modifier) {
+internal fun InsightsHeader(period: InsightsPeriod, onPeriodChange: (InsightsPeriod) -> Unit, modifier: Modifier = Modifier) {
     Row(
         modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = "Insights",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onBackground,
-        )
+        Column {
+            Text(
+                text = "Insights",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+            // Task 11: small, matches the mockup's own title treatment (the mockup itself has no
+            // literal subtitle line - this is the review's own ask - so "small" is read as "the
+            // same quiet register CalmContent's own subtitle already uses elsewhere in this app,"
+            // i.e. bodySmall/onSurfaceVariant, not a second competing headline.
+            Text(
+                text = INSIGHTS_SUBTITLE,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         // Two FilterChips, not an ExperimentalMaterial3Api SegmentedButton (the brief's own
         // explicitly offered alternative) - matches HistoryScreen's already-established chip
         // pattern (mag/year filter rows) with zero new OptIn surface, close enough to the mockup's
