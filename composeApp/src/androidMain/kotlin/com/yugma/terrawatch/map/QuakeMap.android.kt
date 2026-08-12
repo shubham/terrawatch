@@ -396,14 +396,13 @@ actual fun QuakeMap(
         pins = pinsByBand[MagnitudeBand.LOW].orEmpty() + pinsByBand[MagnitudeBand.MODERATE].orEmpty(),
         onPinTap = onPinTap,
         onClusterTap = { clusterCenter ->
-          coroutineScope.launch {
-            cameraState.animateTo(
-                CameraPosition(
-                    target = clusterCenter,
-                    zoom = cameraState.position.zoom + CLUSTER_TAP_ZOOM_INCREMENT,
-                ),
-            )
-          }
+          val target = CameraPosition(
+              target = clusterCenter,
+              zoom = cameraState.position.zoom + CLUSTER_TAP_ZOOM_INCREMENT,
+          )
+          // reduced motion: snap instead of 300ms animate (codebase convention)
+          if (reducedMotion) cameraState.position = target
+          else coroutineScope.launch { cameraState.animateTo(target) }
         },
     )
     // Fixed order preserved from Task 8 (see UNCLUSTERED_BANDS) so MAJOR/STRONG pins' CircleLayers
@@ -699,6 +698,8 @@ private fun ClusteredLowModerateLayer(
   // on top of its fill rather than being covered by it (this file's own established "later-added
   // layer draws on top" ordering — see the UNCLUSTERED_BANDS draw-order comment at this file's own
   // call site for the same rule applied to STRONG/MAJOR/UNKNOWN).
+  // STANDING RISK: font name depends on the live unpinned OpenFreeMap style glyph set; SymbolLayer
+  // text fails silently if the style's fonts change.
   SymbolLayer(
       id = "quake-cluster-count",
       source = source,
