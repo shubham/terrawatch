@@ -17,6 +17,7 @@ import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.unit.dp
 import com.yugma.terrawatch.ui.theme.TerraColors
+import com.yugma.terrawatch.ui.theme.tabularFigures
 
 private val CHART_HEIGHT = 80.dp
 private val BAR_GAP = 4.dp
@@ -76,8 +77,11 @@ fun BarChart(values: List<Long>, labels: Pair<String, String>, modifier: Modifie
             }
         }
         Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(labels.first, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(labels.second, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            // Task 10 (item f): chart labels - tabularFigures so the day-of-month digits don't
+            // shift width as the period's start/end dates change.
+            val labelStyle = MaterialTheme.typography.labelSmall.tabularFigures()
+            Text(labels.first, style = labelStyle, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(labels.second, style = labelStyle, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

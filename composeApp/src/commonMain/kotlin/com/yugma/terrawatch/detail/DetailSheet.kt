@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import com.yugma.terrawatch.model.Quake
 import com.yugma.terrawatch.model.Source
 import com.yugma.terrawatch.model.magnitudeBand
+import com.yugma.terrawatch.motion.LocalReducedMotion
 import com.yugma.terrawatch.ui.components.BadgeSize
 import com.yugma.terrawatch.ui.components.MagnitudeBadge
 import com.yugma.terrawatch.ui.components.RevisionBadge
@@ -39,6 +40,7 @@ import com.yugma.terrawatch.ui.format.formatRelativeTime
 import com.yugma.terrawatch.ui.format.revisionNote
 import com.yugma.terrawatch.ui.theme.TerraColors
 import com.yugma.terrawatch.ui.theme.TerraRadii
+import com.yugma.terrawatch.ui.theme.tabularFigures
 import kotlinx.coroutines.launch
 
 /**
@@ -141,7 +143,10 @@ private fun MagnitudeHero(quake: Quake, nowMillis: Long) {
             val note = revisionNote(quake.revisions, nowMillis)
             if (note != null) {
                 Spacer(Modifier.height(4.dp))
-                RevisionBadge(text = note)
+                // Task 10 (item a): threads the real reduced-motion signal into core:ui's
+                // RevisionBadge - see that composable's own kdoc for why it can't read
+                // LocalReducedMotion itself (module boundary: core:ui can't depend on composeApp).
+                RevisionBadge(text = note, reducedMotion = LocalReducedMotion.current)
             }
         }
     }
@@ -183,7 +188,8 @@ private fun StatTrioCard(value: String, label: String, modifier: Modifier = Modi
         ) {
             Text(
                 text = value,
-                style = MaterialTheme.typography.titleMedium,
+                // Task 10 (item f): one of the brief's named "stat values" (depth/distance/felt).
+                style = MaterialTheme.typography.titleMedium.tabularFigures(),
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(

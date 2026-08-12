@@ -31,6 +31,7 @@ import com.yugma.terrawatch.common.rememberNowMillisTicker
 import com.yugma.terrawatch.detail.DetailSheet
 import com.yugma.terrawatch.home.QuakeSelectionViewModel
 import com.yugma.terrawatch.model.Quake
+import com.yugma.terrawatch.motion.LocalReducedMotion
 import com.yugma.terrawatch.share.shareQuakeText
 import com.yugma.terrawatch.ui.charts.BarChart
 import com.yugma.terrawatch.ui.charts.DistributionBars
@@ -229,8 +230,12 @@ internal fun dayCountLabels(bucketCount: Int, nowBucketAtCompute: Long): Pair<St
  * task only needs a minimal, consistent placeholder to exist, not a bespoke chart-shaped one. */
 @Composable
 private fun InsightsSkeleton(modifier: Modifier = Modifier) {
+    // Task 10 (item b): real reduced-motion signal for SkeletonCard's shimmer - see that
+    // composable's own kdoc for why it takes a plain parameter instead of reading
+    // LocalReducedMotion itself.
+    val reducedMotion = LocalReducedMotion.current
     Column(modifier.fillMaxWidth().padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        repeat(3) { SkeletonCard() }
+        repeat(3) { SkeletonCard(reducedMotion = reducedMotion) }
     }
 }
 

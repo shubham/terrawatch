@@ -5,14 +5,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.unit.dp
 import com.yugma.terrawatch.data.PillStatus
 import com.yugma.terrawatch.detail.DetailSheet
 import com.yugma.terrawatch.home.FeedList
+import com.yugma.terrawatch.home.FeedSheet
+import com.yugma.terrawatch.home.LiveStatusRow
 import com.yugma.terrawatch.model.MagRevision
 import com.yugma.terrawatch.model.Quake
 import com.yugma.terrawatch.model.QuakeStatus
@@ -63,7 +69,16 @@ class ComponentsTest {
         }
         // The number half of the "color never appears without the number" pairing (spec Global
         // Constraints, enforced structurally by MagnitudeBadge — see its own kdoc).
-        composeTestRule.onNodeWithText("6.1").assertExists()
+        //
+        // Task 10 (item g) fix: MagnitudeBadge now wraps its content in `clearAndSetSemantics`
+        // (contentDescription = "Magnitude 6.1") so TalkBack reads one clean sentence instead of a
+        // bare "6.1" - which removes the raw "6.1" Text node from the MERGED semantics tree this
+        // query used to find it in (confirmed via the real device failure this fix responds to:
+        // "Expected exactly '1' node... However, the unmerged tree contains '1' node that matches").
+        // `useUnmergedTree = true` reaches the actual rendered Text glyph directly, unaffected by
+        // the parent's semantics override - still proving the number is genuinely ON SCREEN (not
+        // just present in some contentDescription string), which is this assertion's whole point.
+        composeTestRule.onNodeWithText("6.1", useUnmergedTree = true).assertExists()
 
         // The color half: sample the rendered badge's own bounds at dead center (inside the rounded
         // rect's flat fill, away from the corner radius's anti-aliased edge) and compare against
@@ -273,6 +288,107 @@ class ComponentsTest {
         val allPlaceNodes = composeTestRule.onAllNodesWithText("Feed Place", substring = true)
             .fetchSemanticsNodes()
         assert(allPlaceNodes.size == 3) { "expected 3 distinct feed cards, found ${allPlaceNodes.size}" }
+    }
+
+    // Task 10 (item g, a11y) --------------------------------------------------------------------
+
+    @Test
+    fun magnitudeBadge_exposesAContentDescriptionInsteadOfABareNumber() {
+        composeTestRule.setContent {
+            TerraTheme {
+                MagnitudeBadge(mag = 6.1, band = magnitudeBand(6.1), size = BadgeSize.Large)
+            }
+        }
+        // clearAndSetSemantics (MagnitudeBadge.kt) replaces the bare "6.1" node text with this -
+        // querying by content description (not text) proves the override actually took effect,
+        // not just that the visible number still happens to be findable some other way.
+        composeTestRule.onNodeWithContentDescription("Magnitude 6.1").assertExists()
+    }
+
+    @Test
+    fun magnitudeBadge_nullMagnitudeReadsAsUnknownNotAsAnEmDash() {
+        composeTestRule.setContent {
+            TerraTheme {
+                MagnitudeBadge(mag = null, band = magnitudeBand(null), size = BadgeSize.Small)
+            }
+        }
+        composeTestRule.onNodeWithContentDescription("Magnitude unknown").assertExists()
+    }
+
+    @Test
+    fun statusShield_calmVariant_hasTheDynamicPillContentDescription() {
+        composeTestRule.setContent {
+            TerraTheme {
+                StatusShield(status = PillStatus(PillStatus.Kind.CALM, null), nowMillis = 0L, onClick = {}, radiusKm = 100.0)
+            }
+        }
+        // Exact string from StatusShield.kt's pillContentDescription() - also pinned without
+        // Compose in StatusShieldTest (core:ui jvmTest); this proves the semantics wiring itself
+        // (mergeDescendants + contentDescription) actually reaches a real accessibility node.
+        composeTestRule.onNodeWithContentDescription("All calm near you, nothing within 100 kilometers").assertExists()
+    }
+
+    @Test
+    fun statusShield_pillMeetsThe48dpMinimumTouchTarget() {
+        composeTestRule.setContent {
+            TerraTheme {
+                Box(Modifier.testTag("pill-under-test")) {
+                    // ALERT's content (badge + one text line) is this pill's SHORTEST face - the
+                    // one most at risk of measuring under 48dp before defaultMinSize was added.
+                    val quake = Quake(
+                        id = "q1", timeMillis = 0L, lat = 0.0, lon = 0.0, depthKm = 1.0, mag = 5.0,
+                        magType = "mw", place = "Testville", tsunami = false, felt = null,
+                        status = QuakeStatus.AUTOMATIC, sources = mapOf(Source.USGS to "q1"),
+                        revisions = listOf(MagRevision(5.0, "mw", 0L, Source.USGS)), updatedAtMillis = 0L,
+                    )
+                    StatusShield(status = PillStatus(PillStatus.Kind.ALERT, quake), nowMillis = 0L, onClick = {})
+                }
+            }
+        }
+        composeTestRule.onNodeWithTag("pill-under-test").assertHeightIsAtLeast(48.dp)
+    }
+
+    @Test
+    fun liveStatusRow_exposesOneCleanConnectionSentence() {
+        composeTestRule.setContent {
+            TerraTheme {
+                LiveStatusRow(isLive = true)
+            }
+        }
+        composeTestRule.onNodeWithContentDescription("Live connection active").assertExists()
+        // The bare "LIVE" text must NOT also be independently reachable - clearAndSetSemantics
+        // should have replaced it, not merely added to it (a double-read regression).
+        composeTestRule.onAllNodesWithText("LIVE").assertCountEquals(0)
+    }
+
+    // FeedSheet empty state (Task 10, item c) ----------------------------------------------------
+
+    @Test
+    fun feedSheet_emptyContentShowsTheQuietCopy() {
+        // The LIVE feed realistically never reaches zero quakes worldwide in a 24h window - this
+        // is the honest way to exercise the exact shipped empty-state code path at all (a
+        // synthetic empty list, not a claim that the world is quiet). Deliberately NOT a
+        // screenshot/evidence capture: per this task's own dispatch instructions the feed-empty
+        // device screenshot is only ever taken if the world is genuinely quiet (never, in
+        // practice) and must otherwise be SKIPPED rather than manufactured here — this test's job
+        // is behavioral coverage of FeedEmptyState only.
+        composeTestRule.setContent {
+            TerraTheme {
+                Box(Modifier.testTag("feed-empty-under-test")) {
+                    FeedSheet(
+                        quakes = emptyList(),
+                        isLive = true,
+                        newCount = 0,
+                        nowMillis = 0L,
+                        distanceKm = { null },
+                        onQuakeClick = {},
+                        isLoading = false,
+                    )
+                }
+            }
+        }
+        composeTestRule.onNodeWithText("Quiet right now — no quakes in the last 24 h").assertExists()
+        composeTestRule.onNodeWithText("Data updates every minute").assertExists()
     }
 
     private fun assertColorsClose(expected: Color, actual: Color, tolerance: Float = 0.06f) {

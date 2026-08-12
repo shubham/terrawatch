@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.yugma.terrawatch.ui.theme.tabularFigures
 
 /**
  * Task 11: one label/value line in the detail sheet's coordinates/source/felt list (per mockup:
@@ -20,6 +21,9 @@ import androidx.compose.ui.unit.dp
  * its own: the caller (DetailSheet) groups consecutive [StatRow]s inside one shared [
  * androidx.compose.material3.Surface] with `HorizontalDivider`s between them, matching the
  * mockup's single bordered list rather than each row drawing its own card.
+ *
+ * Task 10 (item f): [value] is one of this brief's named "stat values" - rendered through
+ * [tabularFigures] so a coordinate/count column lines up digit-for-digit.
  */
 @Composable
 fun StatRow(label: String, value: String, modifier: Modifier = Modifier) {
@@ -37,7 +41,7 @@ fun StatRow(label: String, value: String, modifier: Modifier = Modifier) {
         )
         Text(
             text = value,
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodyMedium.tabularFigures(),
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurface,
             textAlign = TextAlign.End,

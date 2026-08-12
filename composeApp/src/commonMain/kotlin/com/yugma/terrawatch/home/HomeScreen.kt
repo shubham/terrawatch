@@ -53,6 +53,7 @@ import com.yugma.terrawatch.location.LocationAskDialog
 import com.yugma.terrawatch.map.QuakeMap
 import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.model.haversineKm
+import com.yugma.terrawatch.motion.LocalReducedMotion
 import com.yugma.terrawatch.share.shareQuakeText
 import com.yugma.terrawatch.ui.components.StatusShield
 import com.yugma.terrawatch.ui.format.formatRelativeTime
@@ -294,6 +295,13 @@ private fun PhoneLayout(
     onAskLocation: () -> Unit,
 ) {
     val content = state as? HomeUiState.Content
+    // Task 10 (item e): the banner's freshness-only verdict — see shouldShowStalenessBanner's own
+    // kdoc for the full rule (LIVE row below owns the connection signal separately). Computed once
+    // per recomposition rather than inlined into the `if` below, so the banner's guard and any
+    // future second consumer can never read two different answers.
+    val offline = content?.let {
+        shouldShowStalenessBanner(it.refreshFailed, isStale(it.lastUpdatedMillis, nowMillis), it.isLive)
+    } ?: false
     val scaffoldState = rememberBottomSheetScaffoldState()
     // Task 9: the sheet's "N NEW" chip clears the moment the user actually drags the sheet
     // open — SheetValue.Expanded is M3's own name for "fully open" (as opposed to peeking).
@@ -317,6 +325,11 @@ private fun PhoneLayout(
                     homeLocation?.let { haversineKm(it, GeoPoint(quake.lat, quake.lon)) }
                 },
                 onQuakeClick = { id -> selectionViewModel.select(id) },
+                // Task 10 (item b): the sheet previously showed neither a spinner nor a skeleton
+                // during Loading, just an empty list (content was null pre-Content, see FeedSheet's
+                // own kdoc) — this closes that gap with the same shimmer skeleton every other
+                // Loading state in this plan now uses.
+                isLoading = state is HomeUiState.Loading,
             )
         },
     ) {
@@ -364,10 +377,13 @@ private fun PhoneLayout(
                             onClick = { onPillClick(pill, selectionViewModel, onAskLocation) },
                             modifier = Modifier.fillMaxWidth().padding(end = GEAR_CHIP_CLEARANCE),
                             radiusKm = nearbyRadiusKm,
+                            reducedMotion = LocalReducedMotion.current,
                         )
-                        // Banner moves below the pill when both are showing (Task 9 brief:
-                        // "above banner if both — banner moves below pill").
-                        if (s.refreshFailed || isStale(s.lastUpdatedMillis, nowMillis)) {
+                        // Task 10 (item e), LIVE/staleness vocabulary rule: banner = data freshness
+                        // only when stale/failed; LIVE row = connection only. Banner moves below the
+                        // pill when both are showing (Task 9 brief: "above banner if both — banner
+                        // moves below pill").
+                        if (offline) {
                             Spacer(Modifier.height(8.dp))
                             StalenessBanner(
                                 lastUpdatedMillis = s.lastUpdatedMillis,
@@ -421,6 +437,11 @@ private fun TwoPaneLayout(
     onAskLocation: () -> Unit,
 ) {
     val content = state as? HomeUiState.Content
+    // Task 10 (item e): same banner freshness-only verdict PhoneLayout computes - see
+    // shouldShowStalenessBanner's own kdoc.
+    val offline = content?.let {
+        shouldShowStalenessBanner(it.refreshFailed, isStale(it.lastUpdatedMillis, nowMillis), it.isLive)
+    } ?: false
     // Fix 1 (see kdoc above): re-fires on every `state` emission, i.e. every genuinely new arrival
     // (HomeViewModel.insertedQuakeIds is exactly what both bumps newSinceExpand AND changes the
     // quakes/pins lists `state` carries), so the counter never has a chance to accumulate visibly.
@@ -460,8 +481,11 @@ private fun TwoPaneLayout(
                         onClick = { onPillClick(pill, selectionViewModel, onAskLocation) },
                         modifier = Modifier.fillMaxWidth().padding(end = GEAR_CHIP_CLEARANCE),
                         radiusKm = nearbyRadiusKm,
+                        reducedMotion = LocalReducedMotion.current,
                     )
-                    if (state.refreshFailed || isStale(state.lastUpdatedMillis, nowMillis)) {
+                    // Task 10 (item e), LIVE/staleness vocabulary rule: banner = data freshness
+                    // only when stale/failed; LIVE row = connection only.
+                    if (offline) {
                         Spacer(Modifier.height(8.dp))
                         StalenessBanner(
                             lastUpdatedMillis = state.lastUpdatedMillis,
@@ -483,15 +507,23 @@ private fun TwoPaneLayout(
                 isLive = content?.isLive ?: false,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
-            FeedList(
-                quakes = content?.quakes.orEmpty(),
-                nowMillis = nowMillis,
-                distanceKm = { quake ->
-                    homeLocation?.let { haversineKm(it, GeoPoint(quake.lat, quake.lon)) }
-                },
-                onQuakeClick = { id -> selectionViewModel.select(id) },
-                modifier = Modifier.fillMaxWidth().weight(1f),
-            )
+            // Task 10 (items b/c): the phone sheet's FeedSheet now distinguishes Loading (skeleton)
+            // / empty (calm copy) / Content (the real list) - this panel reuses the same two
+            // composables so the desktop/tablet layout doesn't stay a permanently-blank list during
+            // either a first load or a genuinely quiet 24h window.
+            when {
+                state is HomeUiState.Loading -> FeedSkeletonList(modifier = Modifier.fillMaxWidth().weight(1f))
+                content != null && content.quakes.isEmpty() -> FeedEmptyState(modifier = Modifier.fillMaxWidth().weight(1f))
+                else -> FeedList(
+                    quakes = content?.quakes.orEmpty(),
+                    nowMillis = nowMillis,
+                    distanceKm = { quake ->
+                        homeLocation?.let { haversineKm(it, GeoPoint(quake.lat, quake.lon)) }
+                    },
+                    onQuakeClick = { id -> selectionViewModel.select(id) },
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                )
+            }
         }
     }
 }
@@ -519,8 +551,34 @@ private fun rememberExpiringNewQuakeId(newQuakeIds: SharedFlow<String>): State<S
     return state
 }
 
-private fun isStale(lastUpdatedMillis: Long?, nowMillis: Long): Boolean =
+internal fun isStale(lastUpdatedMillis: Long?, nowMillis: Long): Boolean =
     lastUpdatedMillis != null && nowMillis - lastUpdatedMillis > STALE_AFTER_MILLIS
+
+/**
+ * Task 10 (item e): the LIVE/staleness vocabulary rule, made real. **Banner = data freshness only,
+ * shown when stale or failed. LIVE row = connection only** ([FeedSheet]'s `LiveStatusRow`/`LiveDot`
+ * own that signal exclusively) — the two must never contradict each other on screen.
+ *
+ * Before this fix, both [PhoneLayout] and [TwoPaneLayout] gated their [StalenessBanner] on plain
+ * `refreshFailed || isStale(...)`, with no reference to [isLive] at all — so a perfectly healthy,
+ * actively-connected feed that simply hadn't seen a NEW quake in over [STALE_AFTER_MILLIS] (a quiet
+ * period, not a broken one) would show "You're offline"/"Updated N min ago" chrome directly beside
+ * a pulsing green LIVE dot, the exact contradictory-chrome failure mode this rule exists to
+ * prevent. [refreshFailed] alone still always wins regardless of [isLive] — a failed refresh is
+ * worth surfacing even while the socket happens to still be open (the poll loop and the WebSocket
+ * are independent connections; one can fail while the other stays up).
+ *
+ * Pure `Boolean`-in/`Boolean`-out on purpose — [isStale] is a caller-computed argument here rather
+ * than this function re-deriving it from `lastUpdatedMillis`/`nowMillis` itself, so the full
+ * decision is a plain 3-input truth table with no time/clock concern folded in (both call sites
+ * below compute `isStale(...)` explicitly, right next to this call). `internal` so
+ * `HomeScreenBannerTest` can pin every row of that table directly.
+ */
+internal fun shouldShowStalenessBanner(
+    refreshFailed: Boolean,
+    isStale: Boolean,
+    isLive: Boolean,
+): Boolean = refreshFailed || (isStale && !isLive)
 
 /**
  * Task 12: the pill's three-way tap behavior, shared between [PhoneLayout] and [TwoPaneLayout] now

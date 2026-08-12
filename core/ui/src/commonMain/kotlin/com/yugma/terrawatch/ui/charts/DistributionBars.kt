@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import com.yugma.terrawatch.model.MagnitudeBand
 import com.yugma.terrawatch.ui.format.formatCount
 import com.yugma.terrawatch.ui.theme.magnitudeColor
+import com.yugma.terrawatch.ui.theme.tabularFigures
 
 private val BAR_HEIGHT = 9.dp
 private const val TRACK_ALPHA = 0.10f
@@ -68,7 +69,9 @@ private fun DistributionRow(band: MagnitudeBand, count: Long, maxCount: Long, mo
         }
         Text(
             text = formatCount(count),
-            style = MaterialTheme.typography.labelMedium,
+            // Task 10 (item f): chart label - tabularFigures so a stacked LOW/MODERATE/STRONG/
+            // MAJOR count column aligns digit-for-digit instead of each row's width drifting.
+            style = MaterialTheme.typography.labelMedium.tabularFigures(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.width(36.dp),
         )

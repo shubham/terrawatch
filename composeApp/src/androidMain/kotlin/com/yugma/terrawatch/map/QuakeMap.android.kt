@@ -179,6 +179,35 @@ private val UNCLUSTERED_BANDS = listOf(MagnitudeBand.STRONG, MagnitudeBand.MAJOR
  * public composable facade of the same name" shape) renders it, matching the pattern this file
  * already established for the pin-drop rings ([NewQuakeRingLayer]) and cluster bubbles
  * ([ClusteredLowModerateLayer]).
+ *
+ * Task 10 (Plan 3, item d — spec §4.4's Offline row, "Map desaturates"): investigated whether this
+ * live map can desaturate itself while offline, time-boxed (~20 min) and validated against the
+ * library's real compiled classes rather than assumed. `javap`/sources inspection of the resolved
+ * `maplibre-compose-android-0.14.0.aar` confirms `org.maplibre.compose.layers.RasterLayer` is a
+ * real, public composable with a real `saturation: Expression<FloatValue>` paint parameter (range
+ * `[-1..1]`, alongside `brightnessMin`/`brightnessMax`/`contrast`/`hueRotate`) — but it paints a
+ * `RasterSource`/`RasterDemSource`, and this map's basemap (`OPENFREEMAP_LIBERTY_STYLE_URL`,
+ * OpenFreeMap's "liberty" style) is VECTOR-tiled with no raster source anywhere in this
+ * composition, so `RasterLayer.saturation` has nothing here to attach to. A `classes.jar`-wide scan
+ * for `colorFilter`/`colorMatrix`/`grayscale`/`desaturate`-shaped symbols across the whole artifact
+ * returned nothing — there is no style-wide/vector desaturation hook in this library's public API.
+ * A Compose-level `graphicsLayer`/color-matrix wrapper around the whole [MaplibreMap] composable
+ * was also considered as a maplibre-independent alternative, but this file's own
+ * `AndroidMapView`/`RenderOptions` sources confirm the map is backed by a Surface/Texture/GL-
+ * rendered native view — exactly the class of Android content a Compose draw-phase color filter is
+ * known not to reliably reach (a SurfaceView/GL surface composites outside the normal View
+ * `Canvas` pipeline that trick relies on) — and with neither the real device nor this
+ * environment's emulator able to render this style correctly at investigation time (the
+ * emulator's own documented "map renders black" Zscaler issue — see this plan's own progress
+ * ledger), there was no way to visually confirm such a wrapper would actually desaturate the tiles
+ * rather than silently do nothing. Per the brief's own allowance ("implement if clean, else SKIP
+ * with honest note"): **SKIPPED for Android** — no `offline`/desaturation parameter was added to
+ * this composable at all (unlike the jvm/wasmJs fallback pane, a plain `Canvas` draw with no such
+ * rendering-surface constraint — desaturation there is out of THIS dispatch's scope, deferred
+ * platform). The offline banner (`HomeScreen`'s `StalenessBanner`, gated on the same
+ * `shouldShowStalenessBanner(...)` verdict) already communicates the same "you're offline"
+ * information textually on every layout that hosts this map, so no alert-relevant information is
+ * lost — only this map's own visual treatment stays unchanged while offline.
  */
 @Composable
 actual fun QuakeMap(

@@ -38,6 +38,7 @@ import com.yugma.terrawatch.common.rememberNowMillisTicker
 import com.yugma.terrawatch.data.HistoryFilter
 import com.yugma.terrawatch.detail.DetailSheet
 import com.yugma.terrawatch.home.QuakeSelectionViewModel
+import com.yugma.terrawatch.motion.LocalReducedMotion
 import com.yugma.terrawatch.share.shareQuakeText
 import com.yugma.terrawatch.ui.components.QuakeCard
 import com.yugma.terrawatch.ui.components.SkeletonCard
@@ -241,11 +242,14 @@ private fun HistoryFooter(content: HistoryUiState.Content, onRetry: () -> Unit, 
 
 @Composable
 private fun HistorySkeletonList(modifier: Modifier = Modifier) {
+    // Task 10 (item b): SkeletonCard's own shimmer now needs the real reduced-motion signal -
+    // see that composable's kdoc for why it can't read LocalReducedMotion itself.
+    val reducedMotion = LocalReducedMotion.current
     Column(
         modifier = modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        repeat(6) { SkeletonCard() }
+        repeat(6) { SkeletonCard(reducedMotion = reducedMotion) }
     }
 }
 
