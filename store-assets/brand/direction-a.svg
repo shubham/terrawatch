@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TerraWatch logo direction A - "Shield + Ring, evolved" (Plan 5 Task 4).
+
+  Same DNA as the currently shipped mark (store-assets/icon-source.svg: Safe-green shield inside a
+  ring on a Water-blue disc), evolved rather than replaced, per research.md's finding that most
+  competitor marks stack 2-3 devices into one icon and read as visually busy / interchangeable at
+  48dp. This evolution goes the other way - fewer elements, not more:
+
+    1. The shield silhouette is tightened (crisper shoulders, a flatter near-point base instead of
+       the original's sharper taper) for a more confident, geometric read at small size.
+    2. The separate MagStrong-orange "quake-dot" accent is REMOVED. In its place, the ring itself
+       carries a single deliberate gap (negative space, not an added shape) at the upper-right,
+       in the same position the old dot occupied. This does two things the dot couldn't: it drops
+       the mark from 3 colors to 2 (background + shield; the ring is a neutral line), and a gap
+       can't turn to a muddy speck at 48dp the way a small filled dot can.
+    3. The ring is recolored white -> Ink (#17222E). The shipped mark's white-on-Water-blue ring is
+       fairly low-contrast (light line on pale blue); Ink against Water-blue is unambiguous at any
+       size, which matters more once the mark has one fewer element to lean on.
+
+  Geometry: 108x108 viewBox, matching the adaptive-icon convention documented in the shipped
+  icon-source.svg (safe zone = r33 circle centered at (54,54); every foreground element here stays
+  well inside it - shield max extent from center ~22.1 (margin ~4.9 under the ring's own r27 inner
+  edge, comparable to the shipped mark's own ~4-unit margin), ring outer edge r32 (margin 1, same
+  as shipped).
+
+  Ring gap: centered on angle -45 deg (up-right, same clock position the old accent dot sat at),
+  spanning 40 degrees (-65 deg to -25 deg), stroke-linecap round so both open ends read as
+  intentional, not a rendering glitch.
+
+  Monochrome-able: both remaining shapes (ring-with-gap, shield) are simple closed/open silhouettes
+  with no gradients or fine internal detail - collapses cleanly to a single flat color the same way
+  the shipped ic_launcher_monochrome.xml does for the current mark.
+
+  Light/dark background variant check is a render-time concern (this file carries its own
+  Water-blue background disc, unchanged regardless of surrounding context) - see
+  store-assets/brand/logo-directions.png for the actual light-canvas/dark-canvas comparison and
+  rationale.md for what that check found.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <title>TerraWatch logo direction A - shield in a gapped ring</title>
+  <desc>Safe-green shield inside an Ink ring with a single negative-space gap, on a Water-blue field.</desc>
+
+  <!-- Background: Water-blue, full 108x108 bleed (matches shipped icon-source.svg convention). -->
+  <rect x="0" y="0" width="108" height="108" fill="#D9E9F4"/>
+
+  <!-- Ring: Ink, centerline r=29.5, stroke 5 (outer edge 32, inner edge 27), 40deg gap at upper-right. -->
+  <path
+      d="M80.74,41.53 A29.5,29.5 0 1,1 66.47,27.26"
+      fill="none" stroke="#17222E" stroke-width="5" stroke-linecap="round"/>
+
+  <!-- Shield: Safe green. Tightened silhouette vs. the shipped mark - crisper shoulders, flatter base. -->
+  <path
+      d="M54,33 C61,33 68,36 71,40 L71,57 C71,66 65,72 56,76 L52,76 C43,72 37,66 37,57 L37,40 C40,36 47,33 54,33 Z"
+      fill="#2FA36B"/>
+</svg>

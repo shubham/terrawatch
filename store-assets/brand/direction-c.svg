@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TerraWatch logo direction C - "Abstract fault-line forming a calm horizon" (Plan 5 Task 4).
+
+  Deliberately the most abstract and minimal of the three directions, and the only one with no
+  circular/badge framing at all - a plain two-tone horizon (Water-blue sky over Safe-green ground),
+  where the dividing line isn't perfectly flat: it steps up into a single raised, symmetric block
+  at center, like a geology-textbook fault-block (a "horst" between two level stretches) rather than
+  the "cracked ground"/spiderweb-fracture cliché research.md named. The line is one clean, orderly
+  shift with exactly two right-angle jogs, not chaotic multi-angle cracking - the ground moved, but
+  it settled back level on both sides. None of the 5 competitor marks actually inspected in
+  research.md use a horizon/landscape motif at all (they're uniformly circular badges), so this is
+  the direction furthest from anything researched.
+
+  This is also the one direction that ties directly back to the app's own existing voice rather
+  than to any researched competitor: "Know the ground beneath you" is the app's real onboarding
+  step-1 copy (reused verbatim in store-assets/feature-graphic.png per listing.md) - this mark is
+  a literal picture of that line.
+
+  Geometry / adaptive-icon safe zone: per the shipped icon-source.svg's own convention, only
+  FOREGROUND content must stay inside the r=33 safe-zone circle at (54,54) - a full-bleed
+  background may touch every edge, since the OS masks it together with the foreground and a
+  straight edge just continues past the mask boundary invisibly. Here the flat far-left/far-right
+  stretches of the horizon (which carry no distinctive shape, just solid color) are treated as
+  background-safe and run edge-to-edge; the actual distinctive fault-block step is centered and
+  fully inside the safe zone (its corners sit at ~22-23 units from center, well under 33). If this
+  direction is ever split into separate adaptive-icon layers, the flat two-tone fill becomes the
+  background layer and the stepped seam line becomes the foreground layer - noted here, not
+  implemented (out of scope for this task).
+
+  Monochrome-able, with a caveat worth stating plainly rather than glossing over: a naive single-
+  color pass would collapse sky and ground into the same flat color and lose the horizon entirely.
+  The monochrome/themed-icon version of this direction should carry ONLY the seam line (the stepped
+  accent stroke below), with both fills omitted - i.e. it degrades to a simple line-icon of the
+  fault-step, not a silhouette of the whole two-tone shape. See rationale.md for the full note.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <title>TerraWatch logo direction C - a fault-step horizon</title>
+  <desc>Water-blue sky over Safe-green ground, split by a level horizon with one centered, symmetric fault-block step.</desc>
+
+  <!-- Sky: Water-blue, full bleed. -->
+  <rect x="0" y="0" width="108" height="108" fill="#D9E9F4"/>
+
+  <!-- Ground: Safe green. Top edge is the horizon - flat at y=65 on both far sides, stepping up
+       to a raised, symmetric block (y=53) between x=42 and x=66. -->
+  <path
+      d="M0,65 L42,65 L42,53 L66,53 L66,65 L108,65 L108,108 L0,108 Z"
+      fill="#2FA36B"/>
+
+  <!-- Seam accent: Ink, traces only the distinctive stepped portion (not the flat full-bleed
+       stretches), so the fault-step reads clearly even at small size. -->
+  <path
+      d="M42,65 L42,53 L66,53 L66,65"
+      fill="none" stroke="#17222E" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
