@@ -51,6 +51,14 @@ These are ordinary public API requests (the same kind any web browser makes). Th
 your location, your name, or any identifier tied to you individually — TerraWatch has no user
 accounts to tie a request to in the first place.
 
+## Notifications
+
+TerraWatch can send you digest notifications for earthquakes matching your alert rules — a periodic
+check (not instant), under your control. You grant the `POST_NOTIFICATIONS` permission during
+onboarding, and you can toggle alerts on or off at any time in Settings. Notifications are
+generated entirely on your device; no notification data is sent to a TerraWatch server or any
+external service. Your notification history and alert rules are stored only on your device.
+
 ## Ads
 
 TerraWatch shows banner ads via Google AdMob to support the free version of the app (ads are never
@@ -61,8 +69,16 @@ data with Google. This is governed by Google's own policies:
 - [Google Privacy Policy](https://policies.google.com/privacy)
 - [How Google uses information from sites or apps that use Google services](https://policies.google.com/technologies/partner-sites)
 
-TerraWatch Plus, an optional in-app purchase, removes ads (in addition to unlocking unlimited
-saved places and custom alert rules).
+### Advertising identifier
+
+TerraWatch's manifest includes `com.google.android.gms.permission.AD_ID` (and
+`android.permission.ACCESS_ADSERVICES_AD_ID`), which are merged in transitively by the Google
+Mobile Ads SDK. The advertising identifier is collected by Google AdMob whenever an ad is displayed
+in the app. This is standard for any Android app carrying Google's ads library and is how ad networks
+measure and serve targeted ads. You can reset or opt out of personalized advertising via your
+device's advertising settings.
+
+TerraWatch Plus, an optional in-app purchase, removes ads. More Plus features are in development.
 
 ## What TerraWatch does not do
 

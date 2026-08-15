@@ -63,8 +63,7 @@ Built on public data: USGS and EMSC for quake feeds, OpenFreeMap/OpenStreetMap f
 GDELT for related news links.
 
 TerraWatch is free, supported by ads (Google AdMob) shown between screens — never over the map,
-and never during onboarding. TerraWatch Plus removes ads and unlocks unlimited saved places and
-custom alert rules.
+and never during onboarding. TerraWatch Plus removes ads. More Plus features are in development.
 ```
 
 Every claim above traces to real code, checked while drafting this file (not asserted from
@@ -95,8 +94,9 @@ memory):
 - "ads (Google AdMob) ... never over the map, and never during onboarding": Plan 4 Task 6's
   `adSlotVisible` rule (TDD'd full 2³ truth table) and its own device verification
   (`docs/qa/plan-4-device-matrix/task6-*.png`).
-- "TerraWatch Plus removes ads and unlocks unlimited saved places and custom alert rules": the
-  exact 3-item `PLUS_BENEFITS` list pinned by `PaywallScreenTest` (Task 6).
+- "TerraWatch Plus removes ads. More Plus features are in development": matches the paywall's
+  honest `PLUS_BENEFITS` display — "Remove ads", plus items 2–3 marked "(coming soon)" per
+  `PaywallScreenTest` (Task 7 fix round).
 
 ## Category
 
@@ -178,7 +178,7 @@ captures (98bc1cd8), 1080×2400.
 
 | File | Source | Why this one |
 |---|---|---|
-| `01-home-map.png` | `plan-3-device-matrix/task13-home-after-onboarding-tokyo.png` | The core "live map" pitch: world map, 2 real magnitude-colored pins, "All calm near you" reassurance pill, live feed list underneath with real quake rows and a "269 NEW" badge — the single best one-shot summary of what the app does. Other home candidates were rejected: `plan-4-device-matrix/task4-home-after-onboarding.png` has a black/unrendered map tile area (a real capture glitch, not representative); `task6-home-after-insights-roundtrip.png`'s map has an odd dark cluster marker near Turkey that reads as a rendering artifact at thumbnail size. |
+| `01-home-map.png` | `plan-3-device-matrix/task13-home-after-onboarding-tokyo.png` | The core "live map" pitch: world map, 2 real magnitude-colored pins, "All calm near you" reassurance pill, live feed list underneath with real quake rows and a "269 NEW" badge — the single best one-shot summary of what the app does. Other home candidates were rejected: `plan-4-device-matrix/task4-home-after-onboarding.png` has a black/unrendered map tile area (a real capture glitch, not representative); `plan-3-device-matrix/task6-home-after-insights-roundtrip.png`'s map has an odd dark cluster marker near Turkey that reads as a rendering artifact at thumbnail size. |
 | `02-detail-sheet.png` | `plan-3-device-matrix/task13-detail-sheet-from-feed-card.png` | Shows the detail sheet's real depth: magnitude, "how long ago", depth/distance/felt-it stat row, the honest "Tsunami not expected" line, Share/Dismiss actions — demonstrates the app goes well beyond a bare pin on a map. |
 | `03-insights.png` | `plan-3-device-matrix/task13-insights-30d.png` | Clean, information-dense: quakes-per-day chart, magnitude breakdown bars, a real "STRONGEST" card (M7.4). Chosen over the 7-day variant since 30 days gives the chart more visible shape. |
 | `04-settings-radius-ring.png` | `plan-3-device-matrix/task7-ring-500km.png` | The one screenshot that visually explains "nearby" — a translucent green 500 km ring around a home location, with a quake marker inside it and the matching "All calm near you · Nothing within 500 km" pill. Directly supports the description's "nearby radius" bullet. |

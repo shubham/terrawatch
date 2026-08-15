@@ -143,13 +143,14 @@ private fun BackChevronGlyph(tint: Color, modifier: Modifier = Modifier) {
     }
 }
 
-/** Spec §8's own 3-item Plus benefits list, verbatim: "removes ads, multiple saved places... custom
- * alert rules." `internal` so [PaywallScreenTest][com.yugma.terrawatch.paywall.PaywallScreenTest]
- * can pin the exact copy without a Compose runtime. */
+/** Spec §8's own 3-item Plus benefits list: ad removal (live), plus features under development.
+ * Items 2–3 marked "(coming soon)" per Task 7 fix round honesty audit. `internal` so
+ * [PaywallScreenTest][com.yugma.terrawatch.paywall.PaywallScreenTest] can pin the exact copy
+ * without a Compose runtime. */
 internal val PLUS_BENEFITS = listOf(
     "Remove ads",
-    "Unlimited saved places",
-    "Custom alert rules",
+    "Unlimited saved places (coming soon)",
+    "Custom alert rules (coming soon)",
 )
 
 @Composable

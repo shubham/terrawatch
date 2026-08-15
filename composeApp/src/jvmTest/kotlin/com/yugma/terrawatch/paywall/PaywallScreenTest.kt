@@ -12,9 +12,13 @@ import kotlin.test.assertEquals
  * established "pure logic gets a unit test, rendered UI gets a device pass" split.
  */
 class PaywallScreenTest {
-    @Test fun `PLUS_BENEFITS lists exactly spec section 8's 3 benefits, in order`() {
+    @Test fun `PLUS_BENEFITS lists spec section 8's 3 benefits with coming-soon markers`() {
         assertEquals(
-            listOf("Remove ads", "Unlimited saved places", "Custom alert rules"),
+            listOf(
+                "Remove ads",
+                "Unlimited saved places (coming soon)",
+                "Custom alert rules (coming soon)",
+            ),
             PLUS_BENEFITS,
         )
     }
