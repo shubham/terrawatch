@@ -700,6 +700,27 @@ class HomeViewModelTest {
         }
     }
 
+    // Task 3b: pins the exact ViewModel-level fact that makes FeedSheet.kt's own reveal wiring need
+    // its OWN baseline tracking (a remembered "previous top id", null until the first real
+    // emission — see FeedSheet's kdoc) rather than trusting newCount == 0 to mean "nothing to
+    // reveal yet." fakeRepositoryWithOneQuake() (not …AlwaysFailing(), which every OTHER test above
+    // deliberately uses instead) is the point here: its refreshFeed() genuinely ingests "us1234" as
+    // a brand-new row on the very first call, and insertedQuakeIds' own contract (no first-load
+    // special case — see HomeViewModel.init's kdoc) means that cold-start insert counts exactly
+    // like a live arrival would. Red (pre-existing behavior, not something this task changes):
+    // asserting `0` here instead would time out, since the counter never actually settles on 0 once
+    // the feed has anything to ingest at all.
+    @Test fun `newSinceExpand already reflects quakes ingested by the very first refresh, not just later arrivals`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val vm = createVm(fakeRepositoryWithOneQuake())
+        vm.newSinceExpand.test {
+            var v = awaitItem()
+            while (v == 0) v = awaitItem()
+            assertEquals(1, v, "the cold-start ingest of us1234 must count, exactly like a live arrival would")
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
     // Task 9: homeLocation. Seeds the store via HomeLocationStore.set() (the same dao-backed path
     // HomeViewModel itself reads through), then asserts the ViewModel's own flow eventually
     // reflects it — proving the init{} load actually reads from the injected store rather than,

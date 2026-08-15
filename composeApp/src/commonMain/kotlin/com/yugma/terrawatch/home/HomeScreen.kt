@@ -338,6 +338,10 @@ fun HomeScreen(
                 locationPermissionGranted = locationPermissionGranted,
                 favorites = favorites,
                 focusTarget = focusTarget,
+                // Task 3b: the feed sheet's reveal wiring must not churn a scroll animation/chip
+                // pop-in while DetailSheet (below, same HomeScreen composition) sits layered on top
+                // of it — see FeedSheet.kt's own kdoc for the full "no animation churn" rule.
+                isDetailOpen = selectedQuake != null,
             )
         }
         // Task 4 (Plan 3): the settings entry point — a glass chip floating top-right, above
@@ -432,6 +436,10 @@ private fun PhoneLayout(
     // Task 2 (Plan 5): the quick-switch chip row's own data — see PlaceQuickSwitchChips' own kdoc.
     favorites: List<FavoritePlace>,
     focusTarget: GeoPoint?,
+    // Task 3b: HomeScreen's own `selectedQuake != null` — see FeedSheet.kt's kdoc for why its
+    // reveal wiring needs to know this (DetailSheet layers on top of this SAME BottomSheetScaffold,
+    // which stays mounted/composing underneath it).
+    isDetailOpen: Boolean,
 ) {
     val content = state as? HomeUiState.Content
     // Task 10 (item e): the banner's freshness-only verdict — see shouldShowStalenessBanner's own
@@ -452,6 +460,11 @@ private fun PhoneLayout(
         snapshotFlow { scaffoldState.bottomSheetState.currentValue }
             .collect { value -> if (value == SheetValue.Expanded) viewModel.markSheetExpanded() }
     }
+    // Task 3b: a plain property read, not a snapshotFlow — SheetState's currentValue is itself
+    // Compose-State-backed (same reason the LaunchedEffect above needs no polling), so reading it
+    // directly here already recomposes FeedSheet's own isSheetExpanded argument on every genuine
+    // peek<->expanded transition, no separate collection needed.
+    val isSheetExpanded = scaffoldState.bottomSheetState.currentValue == SheetValue.Expanded
     BottomSheetScaffold(
         modifier = Modifier.fillMaxSize(),
         scaffoldState = scaffoldState,
@@ -473,6 +486,8 @@ private fun PhoneLayout(
                 // own kdoc) — this closes that gap with the same shimmer skeleton every other
                 // Loading state in this plan now uses.
                 isLoading = state is HomeUiState.Loading,
+                isSheetExpanded = isSheetExpanded,
+                isDetailOpen = isDetailOpen,
             )
         },
     ) {

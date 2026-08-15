@@ -20,19 +20,29 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -42,6 +52,7 @@ import com.yugma.terrawatch.ui.components.QuakeCard
 import com.yugma.terrawatch.ui.components.SkeletonCard
 import com.yugma.terrawatch.ui.theme.TerraColors
 import com.yugma.terrawatch.ui.theme.TerraRadii
+import kotlinx.coroutines.launch
 
 /**
  * The feed sheet's own content — everything below the grabber handle that
@@ -57,6 +68,35 @@ import com.yugma.terrawatch.ui.theme.TerraRadii
  * two-pane right panel (`HomeScreen.kt`'s `TwoPaneLayout`) has no peek/expanded state for a "seen it
  * yet" count to track, so it doesn't reuse this whole composable. It does reuse the other half,
  * [LiveStatusRow] (Fix 2, below), plus [FeedList] — see both composables' own kdocs.
+ *
+ * Task 3b (user dogfooding report): "count updates but new rows stay hidden above the viewport
+ * until the user scrolls up manually." ROOT CAUSE, confirmed by reading (not guessed): [FeedList]'s
+ * `LazyColumn` items are keyed by `it.id` and [quakes] arrives already time-descending (newest
+ * first — `Quake.sq`'s `recent` query is `ORDER BY timeMillis DESC`, `QuakeRepository.recentQuakes`
+ * does no re-sort of its own), so a new arrival is always a PREPEND at index 0. Compose's own
+ * key-based scroll-position preservation (`LazyListState` re-anchors `firstVisibleItemIndex` to
+ * whichever KEY was on screen, not to a fixed index) then keeps showing that same old item at the
+ * same screen position after the prepend — true even when the user was already sitting at index 0,
+ * since the OLD index-0 item's key just shifts to a higher index and the anchor follows it there.
+ * The pre-existing "N NEW" chip (below) was honestly counting arrivals the whole time; nothing ever
+ * told the LazyColumn to actually move.
+ *
+ * FIX: [listState] is now hoisted here (not left implicit inside [FeedList]) so this composable can
+ * both read it (`atTop`) and drive it (`animateScrollToItem`/`scrollToItem`). [previousTopId] is a
+ * one-shot-per-arrival baseline: null until the first real sight of the list, so neither a cold
+ * start's own already-elevated [newCount] (see HomeViewModelTest's "already reflects quakes ingested
+ * by the very first refresh" test — a real, pre-existing ViewModel-level fact, not new behavior)
+ * nor the Loading→Content transition is ever mistaken for a live "new arrival" needing a reveal
+ * action. [feedVisible] gates the SAME effect on "is the user actually looking at this list right
+ * now" (sheet genuinely dragged open, no [DetailSheet][com.yugma.terrawatch.detail.DetailSheet]
+ * modal layered on top per that composable's own "layered above everything, feed stays mounted
+ * underneath" kdoc) — while false, arrivals still update [topId] tracking is DEFERRED (the `if
+ * (feedVisible) previousTopId = topId` below only commits once actually visible again), so exactly
+ * one reveal action fires for whatever arrived while hidden, not one per arrival (no animation
+ * churn). Peeking (sheet collapsed, [isSheetExpanded] false) is deliberately NOT touched by any of
+ * this — [FeedSheetHeader]'s original, unchanged "N NEW" badge is still the only signal there; see
+ * that composable's own kdoc for why a scroll-position-driven affordance has nothing meaningful to
+ * react to on a sheet nobody has dragged open yet.
  */
 @Composable
 fun FeedSheet(
@@ -68,11 +108,64 @@ fun FeedSheet(
     onQuakeClick: (String) -> Unit,
     modifier: Modifier = Modifier,
     isLoading: Boolean = false,
+    // Task 3b: PhoneLayout's own `scaffoldState.bottomSheetState.currentValue == SheetValue.Expanded`
+    // read — see this file's own kdoc above for why peek vs. expanded matters here. Defaulted so the
+    // pre-existing ComponentsTest.feedSheet_emptyContentShowsTheQuietCopy call site (quakes=emptyList,
+    // never reaches FeedList/this wiring at all) keeps compiling and passing unchanged.
+    isSheetExpanded: Boolean = false,
+    // Task 3b: HomeScreen's `selectedQuake != null` — see this file's own kdoc above for the "no
+    // chip animation churn while DetailSheet is layered on top" rule this gates.
+    isDetailOpen: Boolean = false,
 ) {
+    val listState = rememberLazyListState()
+    val reducedMotion = LocalReducedMotion.current
+    val scope = rememberCoroutineScope()
+    var previousTopId by remember { mutableStateOf<String?>(null) }
+    var chipVisible by remember { mutableStateOf(false) }
+    val topId = quakes.firstOrNull()?.id
+    val feedVisible = isSheetExpanded && !isDetailOpen
+
+    // The arrival-triggered half: fires once per genuine new-item-at-the-front event (topId
+    // changing IS that event, given the sort/prepend contract this kdoc documents above), never on
+    // a mere recomposition that leaves the front id unchanged.
+    LaunchedEffect(topId, feedVisible) {
+        val previous = previousTopId
+        if (feedVisible && previous != null && topId != previous) {
+            val atTop = isAtTopOfFeed(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
+            when (feedRevealAction(atTop, newCount)) {
+                // Guard (task brief): a user actively dragging/flinging must never be fought by a
+                // programmatic scroll — defer to the chip instead of racing the gesture.
+                FeedRevealAction.AUTO_SCROLL -> if (listState.isScrollInProgress) {
+                    chipVisible = true
+                } else if (reducedMotion) {
+                    listState.scrollToItem(0)
+                } else {
+                    listState.animateScrollToItem(0)
+                }
+                FeedRevealAction.SHOW_CHIP -> chipVisible = true
+                FeedRevealAction.NONE -> {}
+            }
+        }
+        if (feedVisible) previousTopId = topId
+    }
+    // The dismiss half: independent of the effect above — this only ever CLEARS chipVisible, never
+    // sets it, so it can't race/flicker against the SHOW_CHIP branch above. Covers BOTH "user
+    // scrolled to top manually" and "our own auto/tap-triggered scroll just landed at the top."
+    LaunchedEffect(listState) {
+        snapshotFlow { isAtTopOfFeed(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset) }
+            .collect { atTop -> if (atTop) chipVisible = false }
+    }
+
     Column(modifier.fillMaxWidth()) {
         FeedSheetHeader(
             isLive = isLive,
             newCount = newCount,
+            isSheetExpanded = isSheetExpanded,
+            showRevealChip = chipVisible && newCount > 0,
+            onRevealChipClick = {
+                chipVisible = false
+                scope.launch { if (reducedMotion) listState.scrollToItem(0) else listState.animateScrollToItem(0) }
+            },
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         )
         // Task 10 (items b/c): this sheet previously had no Loading concept of its own at all -
@@ -88,6 +181,7 @@ fun FeedSheet(
                 distanceKm = distanceKm,
                 onQuakeClick = onQuakeClick,
                 modifier = Modifier.weight(1f),
+                state = listState,
             )
         }
     }
@@ -161,6 +255,13 @@ fun FeedEmptyState(modifier: Modifier = Modifier) {
  * always-reserved gap the way a static `Column`/`Box` needs) is where this list's own last row
  * would otherwise sit right at (or under) the physical navigation bar once this renders inside
  * [FeedSheet]'s fully-expanded phone sheet or [TwoPaneLayout]'s right panel.
+ *
+ * Task 3b: [state] is now an explicit (defaulted) parameter rather than an implicit internal
+ * `rememberLazyListState()` — [FeedSheet] hoists its own instance so its reveal wiring can read
+ * (`firstVisibleItemIndex`/`isScrollInProgress`) and drive (`animateScrollToItem`) the SAME state
+ * this `LazyColumn` actually scrolls, rather than the two silently drifting out of sync. Defaulted
+ * so [TwoPaneLayout]'s own call site — no peek/expand state, no reveal wiring of its own, see this
+ * file's Task 12 kdoc for why — needs no change at all and keeps its own independent scroll state.
  */
 @Composable
 fun FeedList(
@@ -169,9 +270,11 @@ fun FeedList(
     distanceKm: (Quake) -> Double?,
     onQuakeClick: (String) -> Unit,
     modifier: Modifier = Modifier,
+    state: LazyListState = rememberLazyListState(),
 ) {
     val navBarBottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     LazyColumn(
+        state = state,
         modifier = modifier.fillMaxWidth(),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp + navBarBottomInset),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -187,15 +290,102 @@ fun FeedList(
     }
 }
 
+// Task 3b: the reveal wiring's own pure decision logic — colocated with FeedList/FeedSheet (its
+// only consumers), tested independent of Compose in FeedSheetTest.kt, same "pure fn TDD" convention
+// [liveStatusContentDescription]/[HomeScreen]'s `shouldShowStalenessBanner` already establish in
+// this codebase.
+
+/** How far (in raw px, matching [androidx.compose.foundation.lazy.LazyListState]'s own units) the
+ * list may sit below a bit-for-bit `firstVisibleItemScrollOffset == 0` and still count as "at the
+ * top" for [isAtTopOfFeed]'s purposes — see [FeedSheetTest]'s own epsilon test cases for the
+ * decision this constant encodes: absorbs sub-pixel fling-deceleration residue without ever being
+ * large enough to read as "still scrolled" to the eye. */
+internal const val FEED_AT_TOP_EPSILON_PX = 2
+
+/** Epsilon-tolerant "is the feed list genuinely at its top" check — see [FEED_AT_TOP_EPSILON_PX]'s
+ * own kdoc for the tolerance itself. */
+internal fun isAtTopOfFeed(firstVisibleItemIndex: Int, firstVisibleItemScrollOffset: Int): Boolean =
+    firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset <= FEED_AT_TOP_EPSILON_PX
+
+/** What [FeedSheet] should do when [newCount] new quakes have landed at the front of the list since
+ * it last checked, given whether the user is currently [atTop]. */
+internal enum class FeedRevealAction { AUTO_SCROLL, SHOW_CHIP, NONE }
+
+/**
+ * The 3-way truth table: nothing new is always [FeedRevealAction.NONE] regardless of scroll
+ * position; new items with the user already [atTop] silently reveal via
+ * [FeedRevealAction.AUTO_SCROLL] (the row appearing IS the feedback — no badge needed); new items
+ * while scrolled away need [FeedRevealAction.SHOW_CHIP] since nothing else would ever tell the user
+ * they exist.
+ */
+internal fun feedRevealAction(atTop: Boolean, newCount: Int): FeedRevealAction = when {
+    newCount <= 0 -> FeedRevealAction.NONE
+    atTop -> FeedRevealAction.AUTO_SCROLL
+    else -> FeedRevealAction.SHOW_CHIP
+}
+
+/** The reveal chip's short, glanceable visible label — deliberately different register from
+ * [feedRevealChipContentDescription]'s full TalkBack sentence, same "sighted vs. spoken register"
+ * split [core.ui.components.pillContentDescription] already establishes for this app's other pills. */
+internal fun feedRevealChipText(newCount: Int): String = "$newCount new quakes ↑"
+
+/** Task 3b (a11y, per brief): the reveal chip's TalkBack sentence — names both the count and the
+ * action a tap performs, so a screen-reader user gets the same "there's something new, here's what
+ * tapping does" information a sighted user reads off the arrow glyph. */
+internal fun feedRevealChipContentDescription(newCount: Int): String = "$newCount new earthquakes, scroll to top"
+
+// Task 3b: [isSheetExpanded]/[showRevealChip]/[onRevealChipClick] are additive — the peeking
+// (`!isSheetExpanded`) branch below is BYTE-FOR-BYTE the original Task 9 "N NEW" badge (same text,
+// same non-interactive Surface), untouched: a sheet nobody has dragged open yet has no meaningful
+// scroll position for a reveal action to react to, so that signal stays exactly as it always was.
+// The NEW tappable reveal chip only ever applies to the expanded branch, where [FeedSheet]'s own
+// LazyListState-driven wiring (see that composable's kdoc) has something real to act on.
 @Composable
-private fun FeedSheetHeader(isLive: Boolean, newCount: Int, modifier: Modifier = Modifier) {
+private fun FeedSheetHeader(
+    isLive: Boolean,
+    newCount: Int,
+    isSheetExpanded: Boolean,
+    showRevealChip: Boolean,
+    onRevealChipClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Row(
         modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         LiveStatusRow(isLive)
-        if (newCount > 0) {
+        if (isSheetExpanded) {
+            if (showRevealChip) {
+                Surface(
+                    onClick = onRevealChipClick,
+                    shape = RoundedCornerShape(TerraRadii.pill),
+                    color = TerraColors.InfoBlue,
+                    // mergeDescendants (not clearAndSetSemantics) - same StatusShield.kt precedent
+                    // this file's own kdoc points to: clearAndSetSemantics on this OUTER modifier
+                    // would discard the click action Surface's own internal `clickable` contributes
+                    // (chained after this parameter), silently making the chip untappable via
+                    // TalkBack's activate gesture.
+                    modifier = Modifier.semantics(mergeDescendants = true) {
+                        contentDescription = feedRevealChipContentDescription(newCount)
+                    },
+                ) {
+                    Text(
+                        text = feedRevealChipText(newCount),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        modifier = Modifier
+                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                            // Blocks this Text's own implicit "read the literal string" semantics
+                            // from ALSO riding along into the Surface's merged node on top of the
+                            // contentDescription above - same double-read fix StatusShield.kt's own
+                            // AlertContent/MagnitudeBadge precedent applies for the identical reason.
+                            .clearAndSetSemantics {},
+                    )
+                }
+            }
+        } else if (newCount > 0) {
             Surface(shape = RoundedCornerShape(TerraRadii.pill), color = TerraColors.InfoBlue) {
                 Text(
                     text = "$newCount NEW",
