@@ -18,8 +18,8 @@ Note: corporate TLS-intercepting proxies require the proxy root CA in the JVM tr
 
 - **Live map:** Real-time earthquake pins color-coded by magnitude (CALM/ALERT colors). Clustering for crowded regions. Tap pins to detail sheet.
 - **Status pill:** Live connection indicator (LIVE/Offline). Safety status based on nearby alerts (default 100km, configurable 50–1000km).
-- **Feed sheet:** Recent earthquakes with magnitude, distance, and timestamps. Pull-to-refresh. Infinite scroll through USGS archive.
-- **History archive:** Full searchable archive with filters (magnitude ≥4.5, year select). Browse all quakes with month-group headers.
+- **Feed sheet:** Recent earthquakes with magnitude, distance, and timestamps.
+- **History archive:** Filterable archive (magnitude, year) with infinite scroll through the USGS/FDSN archive. Browse all quakes with month-group headers.
 - **Insights:** Trends from recent activity (7d/30d views). Daily event count chart, magnitude distribution, strongest quake link-to-detail.
 - **Settings:** Adjust nearby radius 50–1000km (live ring on map). Theme switcher (System/Light/Dusk). Launch permission flow.
 - **Onboarding:** 3-step walkthrough (earthquake intro, location opt-in with city picker, default alert rule explanation). Skip anytime.
