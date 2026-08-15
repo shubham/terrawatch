@@ -132,4 +132,17 @@ class SettingsViewModelTest {
             cancelAndIgnoreRemainingEvents()
         }
     }
+
+    @Test fun `sequential setNearbyRadius calls persist last-call-wins through the store`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val vm = createVm()
+        vm.nearbyRadiusKm.test {
+            assertEquals(100.0, awaitItem())
+            vm.setNearbyRadius(250.0)
+            assertEquals(250.0, awaitItem())
+            vm.setNearbyRadius(500.0)
+            assertEquals(500.0, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
 }

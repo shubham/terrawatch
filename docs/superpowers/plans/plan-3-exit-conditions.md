@@ -29,11 +29,15 @@ closed in full this wave (969e186); not carried below.
    including whatever's already on the 98bc1cd8 device from earlier Plan 2/3 verification passes —
    keeps querying `lastFetchedAt` unindexed until that install is wiped or reinstalled. Accepted
    pre-release: no shipped user base yet, so no real migration is being skipped for anyone.
-3. ✅ **F4: Settings slider main-thread DB writes** (a0452ff) —
-   `SettingsViewModel.setNearbyRadius`/`setMinMag` now
-   `viewModelScope.launch(Dispatchers.Default) { ... }`, matching this same class's own
-   `homeLocationStore.get()` convention in its `init` block. jvmTest count for this module is
-   unchanged (8 `SettingsViewModelTest` cases, all still green).
+3. ✅ **F4: Settings slider race (per-tick coroutine storm)** (a0452ff, fixed this commit) —
+   Original `onValueChange` fired on every drag tick, launching independent coroutines; write
+   completion order was unguaranteed. Fixed via UI-layer pending-state buffering (local
+   `mutableStateOf` in `RadiusSlider`/`MinMagSlider`) — `onValueChange` updates the UI only, and
+   `onValueChangeFinished` persists ONE value per completed gesture to the ViewModel. Caveat: the
+   per-gesture guarantee is composition-scope behavior; the ViewModel still uses `Dispatchers.Default`
+   writes (matching this class's own `homeLocationStore.get()` pattern), but now receives exactly one
+   call per user gesture rather than dozens. SettingsViewModelTest expanded to 9 cases, including
+   sequential-call last-call-wins verification; all green.
 4. **F5: archive ingest must not feed alert evaluation before notifications land** —
    `QuakeRepository.loadArchivePage` (History's deep-scroll backfill) runs every paged-in row
    through the exact same `ingest()` → `AlertRuleEngine.evaluate()` path the live/refresh loop

@@ -222,26 +222,28 @@ private fun SettingsSectionLabel(text: String, modifier: Modifier = Modifier) {
 /**
  * THE flagship control (Task 7 brief, USER REQUIREMENT): 50/100/250/500/1000 km, index-driven (see
  * [closestRadiusStepIndex]'s own kdoc for why) rather than [Slider]'s native evenly-spaced `steps`.
- * The live label updates on every recomposition — [radiusKm] is already a Compose `State` read
- * (via [SettingsScreen]'s own `collectAsState()`), so this re-runs exactly when the stored value
- * itself changes, no separate local drag-state cache needed ([AlertRuleStore]'s writes are
- * synchronous local DB writes, fast enough that binding the slider directly to the persisted value
- * introduces no perceptible lag).
+ * LOCAL DRAG-STATE: [pendingRadiusIndex] caches the user's in-flight slider position during a drag;
+ * [onValueChange] updates it (live label reflects the drag), and [onValueChangeFinished] persists
+ * the final value to the ViewModel — guaranteeing ONE write per completed gesture, not per drag tick.
+ * The persisted [radiusKm] flow from the store reflects back to recompose the slider and label,
+ * same pattern [MinMagSlider] now uses for minMag.
  */
 @Composable
 private fun RadiusSlider(radiusKm: Double, onRadiusChange: (Double) -> Unit, modifier: Modifier = Modifier) {
-    val index = closestRadiusStepIndex(radiusKm)
+    var pendingRadiusIndex by remember { mutableStateOf(closestRadiusStepIndex(radiusKm)) }
     Column(modifier.fillMaxWidth()) {
         Text(
-            text = "Nearby means within ${formatCount(RADIUS_STEPS_KM[index].roundToInt().toLong())} km",
+            text = "Nearby means within ${formatCount(RADIUS_STEPS_KM[pendingRadiusIndex].roundToInt().toLong())} km",
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurface,
         )
         Slider(
-            value = index.toFloat(),
+            value = pendingRadiusIndex.toFloat(),
             onValueChange = { newValue ->
-                val snappedIndex = newValue.roundToInt().coerceIn(RADIUS_STEPS_KM.indices)
-                onRadiusChange(RADIUS_STEPS_KM[snappedIndex])
+                pendingRadiusIndex = newValue.roundToInt().coerceIn(RADIUS_STEPS_KM.indices)
+            },
+            onValueChangeFinished = {
+                onRadiusChange(RADIUS_STEPS_KM[pendingRadiusIndex])
             },
             valueRange = 0f..(RADIUS_STEPS_KM.size - 1).toFloat(),
             // 5 stops = start + 3 intermediate + end.
@@ -252,15 +254,19 @@ private fun RadiusSlider(radiusKm: Double, onRadiusChange: (Double) -> Unit, mod
 
 @Composable
 private fun MinMagSlider(minMag: Double, onMinMagChange: (Double) -> Unit, modifier: Modifier = Modifier) {
+    var pendingMinMag by remember { mutableStateOf(minMag) }
     Column(modifier.fillMaxWidth()) {
         Text(
-            text = "Alerts for magnitude ${formatMagnitude(minMag)}+ nearby",
+            text = "Alerts for magnitude ${formatMagnitude(pendingMinMag)}+ nearby",
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurface,
         )
         Slider(
-            value = minMag.toFloat(),
-            onValueChange = { onMinMagChange(snapToHalfMagnitude(it.toDouble())) },
+            value = pendingMinMag.toFloat(),
+            onValueChange = { pendingMinMag = snapToHalfMagnitude(it.toDouble()) },
+            onValueChangeFinished = {
+                onMinMagChange(pendingMinMag)
+            },
             valueRange = 3.0f..6.0f,
             // 3.0..6.0 in steps of 0.5 = 7 stops = start + 5 intermediate + end.
             steps = 5,
