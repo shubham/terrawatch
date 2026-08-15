@@ -31,7 +31,7 @@ private var controller: NotificationPermissionController? = null
 
 /** Must run before an onboarding step-3/Settings-row tap can plausibly reach
  * [NotificationPermissionRequester] — i.e. before `MainActivity`'s `setContent {}` composes either
- * screen — same ordering guarantee [com.yugma.terrawatch.location.bindLocationRequestLauncher]
+ * screen — same ordering guarantee [com.yugma.terrawatch.location.bindLocationPermissionController]
  * documents for the identical reason. */
 fun bindNotificationPermissionController(
     condition: () -> NotificationPermissionCondition,

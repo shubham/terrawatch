@@ -11,10 +11,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -93,12 +97,18 @@ fun FeedSheet(
  * [SkeletonCard]s (5, not History's 6: this sheet's peek height shows fewer rows at a glance).
  * Public (not `private`) - [com.yugma.terrawatch.home.TwoPaneLayout] (`HomeScreen.kt`, same
  * package) reuses it verbatim for the desktop/tablet right panel, same "shared, not duplicated"
- * shape [FeedList]/[LiveStatusRow] already established for that panel. */
+ * shape [FeedList]/[LiveStatusRow] already established for that panel.
+ *
+ * Plan 4 Task 4 (a), SDK-36 edge-to-edge sweep: `windowInsetsPadding(WindowInsets.navigationBars)`
+ * added before the fixed padding — when this renders inside [FeedSheet]'s phone sheet fully
+ * expanded (or [TwoPaneLayout]'s right panel), its own bottom edge can reach the physical screen
+ * bottom with nothing else below it to reserve navigation-bar space, unlike History/Insights (see
+ * those screens' own kdocs), which always have `AppNav`'s `AppBottomBar` doing that job for them. */
 @Composable
 fun FeedSkeletonList(modifier: Modifier = Modifier) {
     val reducedMotion = LocalReducedMotion.current
     Column(
-        modifier = modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp),
+        modifier = modifier.fillMaxSize().windowInsetsPadding(WindowInsets.navigationBars).padding(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         repeat(5) { SkeletonCard(reducedMotion = reducedMotion) }
@@ -111,10 +121,12 @@ fun FeedSkeletonList(modifier: Modifier = Modifier) {
  * the brief: a calm, non-alarming statement rather than a bare "No results" - this app's whole
  * personality is "a weather app's warmth applied to a scary subject" (spec §4.1), and "no quakes"
  * is good news, not an error. Public for the same [TwoPaneLayout]-reuse reason as
- * [FeedSkeletonList]. */
+ * [FeedSkeletonList].
+ *
+ * Plan 4 Task 4 (a): same navigation-bar gap/fix as [FeedSkeletonList]'s own kdoc. */
 @Composable
 fun FeedEmptyState(modifier: Modifier = Modifier) {
-    Box(modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
+    Box(modifier.fillMaxSize().windowInsetsPadding(WindowInsets.navigationBars).padding(32.dp), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 text = "Quiet right now — no quakes in the last 24 h",
@@ -140,6 +152,15 @@ fun FeedEmptyState(modifier: Modifier = Modifier) {
  * [HomeViewModel]'s `recentQuakes()`/DAO query) — no re-sort here. [distanceKm] is a per-quake
  * lookup rather than a pre-computed list because the distance depends on the home location, which
  * can resolve (or change) independently of the quake list itself.
+ *
+ * Plan 4 Task 4 (a), SDK-36 edge-to-edge sweep: [navBarBottomInset] (added to the fixed 16dp
+ * `bottom` below, not replacing it) is the same navigation-bar gap [FeedSkeletonList]'s own kdoc
+ * documents — this `LazyColumn`'s own `contentPadding` (not a `Modifier.windowInsetsPadding`, since
+ * a `LazyColumn`'s scrollable content needs the inset baked into its content padding to keep the
+ * LAST item clear of the bar while still letting the list scroll fully behind it, not a fixed
+ * always-reserved gap the way a static `Column`/`Box` needs) is where this list's own last row
+ * would otherwise sit right at (or under) the physical navigation bar once this renders inside
+ * [FeedSheet]'s fully-expanded phone sheet or [TwoPaneLayout]'s right panel.
  */
 @Composable
 fun FeedList(
@@ -149,9 +170,10 @@ fun FeedList(
     onQuakeClick: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val navBarBottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     LazyColumn(
         modifier = modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp + navBarBottomInset),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         items(quakes, key = { it.id }) { quake ->

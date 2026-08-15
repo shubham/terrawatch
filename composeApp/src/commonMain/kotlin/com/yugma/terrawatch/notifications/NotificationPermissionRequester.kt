@@ -8,8 +8,8 @@ package com.yugma.terrawatch.notifications
  * in the shared `AppModule.kt`, so it must be constructible the same way on every target.
  *
  * - android: reads live state via a process-lifetime holder `MainActivity` rebinds on every
- *   `onCreate` (mirrors [com.yugma.terrawatch.location.bindLocationRequestLauncher]'s own shape —
- *   see `NotificationPermissionRequester.android.kt`).
+ *   `onCreate` (mirrors [com.yugma.terrawatch.location.bindLocationPermissionController]'s own
+ *   shape — see `NotificationPermissionRequester.android.kt`).
  * - jvm/wasmJs: [currentCondition] always answers [NotificationPermissionCondition.PRE_33] —
  *   neither platform has a POST_NOTIFICATIONS concept at all (spec §7: notifications are
  *   Android-only in v1), so "nothing to gate" is the accurate answer, not a stand-in for "denied."

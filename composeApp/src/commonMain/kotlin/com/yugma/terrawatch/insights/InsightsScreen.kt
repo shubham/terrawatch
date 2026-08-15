@@ -6,10 +6,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -53,6 +56,12 @@ import org.koin.compose.viewmodel.koinViewModel
  * Activity-scoped instance every tab shares (resolved once in `App()`, threaded down through
  * `AppNav`), so tapping the STRONGEST card opens the identical detail sheet a map pin or a
  * History row would.
+ *
+ * Plan 4 Task 4 (a), SDK-36 edge-to-edge sweep: same gap/fix as `HistoryScreen`'s own kdoc —
+ * [InsightsHeader] had no status-bar awareness at all (Insights, like History, is a `TAB_ROUTES`
+ * member with nothing else above it); `windowInsetsPadding(WindowInsets.statusBars)` on this outer
+ * `Column` fixes it. No bottom fix needed for the identical reason — `AppNav`'s own `AppBottomBar`
+ * always renders below this whole `Column` and already reserves navigation-bar space itself.
  */
 @Composable
 fun InsightsScreen(
@@ -66,7 +75,12 @@ fun InsightsScreen(
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Box(Modifier.fillMaxSize()) {
-            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .windowInsetsPadding(WindowInsets.statusBars)
+                    .verticalScroll(rememberScrollState()),
+            ) {
                 InsightsHeader(period = period, onPeriodChange = viewModel::setPeriod)
                 when (val s = state) {
                     InsightsUiState.Loading -> InsightsSkeleton(modifier = Modifier.padding(horizontal = 16.dp))

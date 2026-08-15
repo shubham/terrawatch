@@ -5,6 +5,12 @@ package com.yugma.terrawatch.location
 // LocationRequester.jvm.kt.
 actual class LocationRequester {
     actual fun request() {}
+
+    actual fun currentCondition(): LocationPermissionCondition = LocationPermissionCondition.NOT_APPLICABLE
+
+    actual fun shouldShowRationale(): Boolean = false
+
+    actual fun openSettings() {}
 }
 
 actual fun canRequestLocation(): Boolean = false

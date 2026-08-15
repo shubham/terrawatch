@@ -6,7 +6,23 @@
          (auto-granted, no runtime gate at all) below API 33, see NotificationPermissionCondition
          .PRE_33's own kdoc. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <application android:label="TerraWatch" android:theme="@android:style/Theme.Material.Light.NoActionBar">
+    <!-- Plan 4 Task 4 (b): opts into the OS predictive-back gesture (system-driven swipe preview +
+         animation) instead of the legacy onBackPressed()/KEYCODE_BACK dispatch. Declared at the
+         <application> level (not per-activity) since MainActivity is this app's only activity — one
+         declaration covers it. Android 15+ already enables predictive-back system animations by
+         default for apps that set this flag; Android 16 (API 36, this app's targetSdk) goes further
+         and enables them by default REGARDLESS, per developer.android.com/about/versions/16/
+         behavior-changes-16 ("Predictive back system animations enabled by default; onBackPressed
+         not called and KeyEvent.KEYCODE_BACK not dispatched") — this app never overrides
+         onBackPressed()/dispatches KEYCODE_BACK manually (grep-verified against androidMain), so
+         there is no legacy back-handling code this flag could silently break. Explicit here rather
+         than relying on the API-36 default alone: minSdk is 26, and this flag is what makes the
+         predictive-back gesture (not just the plain back-stack pop) available on every API level
+         that supports it (33+), not only once running ON API 36+. -->
+    <application
+        android:label="TerraWatch"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar"
+        android:enableOnBackInvokedCallback="true">
         <!-- Plan 4 Task 3: singleTask, a digest notification's PendingIntent (FLAG_ACTIVITY_NEW_TASK,
              AlertDigestWorker.android.kt) must re-front the SAME existing MainActivity instance via
              onNewIntent when the app is already running, rather than stacking a second instance on

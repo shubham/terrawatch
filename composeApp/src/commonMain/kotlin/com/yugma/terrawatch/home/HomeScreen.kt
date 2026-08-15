@@ -25,6 +25,7 @@ import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
 import androidx.compose.material3.rememberBottomSheetScaffoldState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -108,8 +109,9 @@ private const val NEW_QUAKE_HIGHLIGHT_EXPIRY_MILLIS = 2_500L
 private val GEAR_CHIP_CLEARANCE = 72.dp
 
 // Task 12: the desktop/tablet two-pane right panel's fixed width — see layoutMode()'s own kdoc for
-// the paired 900dp breakpoint this is designed against (panel + a still-usable map pane needs the
-// headroom that breakpoint leaves).
+// the paired breakpoint this is designed against (panel + a still-usable map pane needs the
+// headroom that breakpoint leaves — 840dp as of Plan 4 Task 4 (c)'s material3-adaptive
+// EXPANDED-width cutover, was a raw 900dp before it).
 private val TWO_PANE_RIGHT_PANEL_WIDTH = 360.dp
 
 /**
@@ -137,12 +139,17 @@ private val TWO_PANE_RIGHT_PANEL_WIDTH = 360.dp
  * sheet exactly like the approved mockup (map-home-layout.html, option 1).
  *
  * Task 12 (spike decision — see `docs/superpowers/plans/2026-08-08-terrawatch-plan-2-ui-shell.md`'s
- * Task 12 section): this single [BoxWithConstraints] now measures itself once and routes to one of
- * two whole-screen chrome arrangements via [layoutMode] — [PhoneLayout] (unchanged from Task 9/10/11
- * behavior) below 900dp, [TwoPaneLayout] (map + a fixed-width list/pill panel, both always visible,
- * no peek/expand sheet) at or above it. [DetailSheet] is a THIRD, independent layer on top of
- * whichever of the two is active — its own on-demand [ModalBottomSheet][androidx.compose.material3.ModalBottomSheet]
- * is unaffected by which layout is showing underneath it.
+ * Task 12 section): routes to one of two whole-screen chrome arrangements via [layoutMode] —
+ * [PhoneLayout] (unchanged from Task 9/10/11 behavior) below the expanded-width breakpoint,
+ * [TwoPaneLayout] (map + a fixed-width list/pill panel, both always visible, no peek/expand sheet)
+ * at or above it. Plan 4 Task 4 (c): that breakpoint decision itself now comes from
+ * `currentWindowAdaptiveInfo().windowSizeClass` (840dp, material3-adaptive's own EXPANDED lower
+ * bound — see `layoutMode`'s own kdoc), computed once above this [BoxWithConstraints] rather than
+ * measured BY it — the `BoxWithConstraints` below stays only because [PhoneLayout] still needs
+ * [maxHeight] for its sheet-peek fraction, a completely separate concern from which of the two
+ * layouts gets chosen. [DetailSheet] is a THIRD, independent layer on top of whichever of the two is
+ * active — its own on-demand [ModalBottomSheet][androidx.compose.material3.ModalBottomSheet] is
+ * unaffected by which layout is showing underneath it.
  *
  * Task 3 (Plan 3): [selectionViewModel] used to be [HomeViewModel]'s own `selectedQuake`/`select`/
  * `dismissSelection` — split into [QuakeSelectionViewModel] because HomeViewModel was serving
@@ -212,9 +219,16 @@ fun HomeScreen(
     // against the sheet-visibility question below (that one IS VM state, because it also carries
     // which quake to render — this one carries nothing beyond "is the ask dialog showing").
     var showLocationAsk by remember { mutableStateOf(false) }
+    // Plan 4 Task 4 (c): ONE shared source of truth with AppNav.kt's own identical call — see
+    // layoutMode()'s own kdoc (home/LayoutMode.kt) for the "900-980dp dead zone" bug this closes.
+    // Read OUTSIDE the BoxWithConstraints below (unlike the old maxWidth-based version, which HAD
+    // to be read from inside it): currentWindowAdaptiveInfo() reports the window's actual size
+    // regardless of where in the tree it's called, so this line's placement is a style choice, not
+    // a correctness requirement the way the deleted maxWidth read was.
+    val windowSizeClass = currentWindowAdaptiveInfo().windowSizeClass
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        if (layoutMode(maxWidth.value.toInt()) == LayoutMode.TWO_PANE) {
+        if (layoutMode(windowSizeClass) == LayoutMode.TWO_PANE) {
             TwoPaneLayout(
                 state = state,
                 homeLocation = homeLocation,
@@ -286,12 +300,14 @@ fun HomeScreen(
 }
 
 /**
- * Phone layout ([LayoutMode.PHONE], < 900dp) — the Task 9/10/11 design, unchanged in behavior by
- * Task 12: full-bleed map with a draggable [FeedSheet] anchored to the bottom and the status pill/
- * staleness banner floating over the map's top edge. Extracted out of [HomeScreen] only so that
- * function can route between this and [TwoPaneLayout] on a single `BoxWithConstraints`
- * measurement — [maxHeight] is passed in because `BoxWithConstraintsScope.maxHeight` is only
- * available inside that scope, not inside a separately-declared composable.
+ * Phone layout ([LayoutMode.PHONE], width below material3-adaptive's 840dp EXPANDED lower bound —
+ * see `layoutMode`'s own kdoc) — the Task 9/10/11 design, unchanged in behavior by Task 12 or by
+ * Plan 4 Task 4 (c)'s breakpoint-source cutover: full-bleed map with a draggable [FeedSheet]
+ * anchored to the bottom and the status pill/staleness banner floating over the map's top edge.
+ * Extracted out of [HomeScreen] only so that function can route between this and [TwoPaneLayout] —
+ * [maxHeight] is passed in because `BoxWithConstraintsScope.maxHeight` is only available inside that
+ * scope, not inside a separately-declared composable (unlike the layout CHOICE itself, [maxHeight]
+ * genuinely does still need [HomeScreen]'s own `BoxWithConstraints`).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -416,7 +432,8 @@ private fun PhoneLayout(
 }
 
 /**
- * Desktop/tablet two-pane layout ([LayoutMode.TWO_PANE], >= 900dp) — the Task 12 spike decision's
+ * Desktop/tablet two-pane layout ([LayoutMode.TWO_PANE], width at/above material3-adaptive's 840dp
+ * EXPANDED lower bound — see `layoutMode`'s own kdoc) — the Task 12 spike decision's
  * other half (see `FallbackMapPane.kt`'s kdoc for the maplibre-compose constraint that makes jvm/
  * wasmJs's [QuakeMap] actual a static pane rather than a live tile map there). The map/fallback
  * fills whatever width remains after a fixed [TWO_PANE_RIGHT_PANEL_WIDTH] right panel, which holds

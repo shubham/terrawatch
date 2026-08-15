@@ -10,11 +10,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -46,8 +49,11 @@ import androidx.compose.ui.unit.sp
 import com.yugma.terrawatch.alerts.AlertDigestScheduler
 import com.yugma.terrawatch.data.ThemeSetting
 import com.yugma.terrawatch.location.CityPickerDialog
+import com.yugma.terrawatch.location.LocationAskUiState
 import com.yugma.terrawatch.location.LocationRequester
 import com.yugma.terrawatch.location.canRequestLocation
+import com.yugma.terrawatch.location.reduceLocationPermissionState
+import com.yugma.terrawatch.location.rememberLocationCondition
 import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.notifications.NotificationAlertsUiState
 import com.yugma.terrawatch.notifications.NotificationPermissionRequester
@@ -136,6 +142,15 @@ internal const val SETTINGS_BACK_TAG = "settings-back"
  * `navController::popBackStack`) — defaulted to a no-op so this composable stays callable without a
  * NavController in scope, same "defaulted no-op, not a required param" shape `HomeScreen`'s own
  * `onSettingsClick` uses for the identical reason.
+ *
+ * Plan 4 Task 4 (a), SDK-36 edge-to-edge sweep: unlike Home/Onboarding (already inset-aware before
+ * this task), Settings is a stack-only, chrome-less full screen — no `AppBottomBar`/`NavigationRail`
+ * sits above or below it the way it does for the HOME/HISTORY/INSIGHTS tabs (see `AppNav.kt`'s own
+ * `TAB_ROUTES`), so nothing else was reserving system-bar space on either edge. `windowInsetsPadding(
+ * WindowInsets.systemBars)` on this outermost `Column` (before `.verticalScroll`, so the space is
+ * reserved first and the now-smaller remaining area is what scrolls) fixes BOTH the header's
+ * back-chevron/title (top, under the status bar) and the final bottom `Spacer` (under the
+ * navigation bar) in one change, rather than patching each edge separately.
  */
 @Composable
 fun SettingsScreen(
@@ -147,10 +162,14 @@ fun SettingsScreen(
     val theme by viewModel.theme.collectAsState()
     val homeLocation by viewModel.homeLocation.collectAsState()
     var showCityPicker by remember { mutableStateOf(false) }
-    val locationRequester = koinInject<LocationRequester>()
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.systemBars)
+                .verticalScroll(rememberScrollState()),
+        ) {
             SettingsHeader(onBack = onBack)
             Column(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -168,9 +187,7 @@ fun SettingsScreen(
                     SettingsSectionLabel("PLACE")
                     PlaceRow(
                         homeLocation = homeLocation,
-                        canUseMyLocation = canRequestLocation(),
                         onChangeClick = { showCityPicker = true },
-                        onUseMyLocationClick = { locationRequester.request() },
                     )
                 }
                 SettingsCard {
@@ -396,13 +413,16 @@ private fun AlertsPermissionRow(modifier: Modifier = Modifier) {
  * second two-decimal formatter: it renders the identical precision the brief asks for, with a
  * nicer N/E/S/W hemisphere convention instead of a bare signed pair — the same function
  * `DetailSheet`'s own "Coordinates" row already uses for a quake's location.
+ *
+ * Plan 4 Task 4 (d): the "Use my location" button itself moved into [UseMyLocationAction] — a
+ * self-contained sub-composable (own [koinInject], mirrors [AlertsPermissionRow]'s identical shape)
+ * instead of a plain threaded `onUseMyLocationClick` callback, so it can carry its own
+ * rationale/permanently-denied state without widening this function's parameter list.
  */
 @Composable
 private fun PlaceRow(
     homeLocation: GeoPoint?,
-    canUseMyLocation: Boolean,
     onChangeClick: () -> Unit,
-    onUseMyLocationClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier.fillMaxWidth()) {
@@ -416,11 +436,79 @@ private fun PlaceRow(
             TextButton(onClick = onChangeClick) { Text("Change") }
         }
         // canRequestLocation() is android-only (see LocationRequester.kt's own kdoc) — matches
-        // LocationAskDialog's identical "Use my location" gating, so this button never renders
+        // LocationAskDialog's identical "Use my location" gating, so this row never renders
         // somewhere it couldn't possibly do anything.
-        if (canUseMyLocation) {
-            TextButton(onClick = onUseMyLocationClick, modifier = Modifier.padding(top = 4.dp)) {
-                Text("Use my location")
+        if (canRequestLocation()) {
+            UseMyLocationAction(modifier = Modifier.padding(top = 4.dp))
+        }
+    }
+}
+
+/**
+ * Plan 4 Task 4 (d): the "Use my location" half of [PlaceRow] — self-contained (own [koinInject],
+ * mirrors [AlertsPermissionRow]'s identical shape) so it can carry its own rationale state without
+ * threading permission plumbing through [PlaceRow]'s otherwise-plain parameter list.
+ *
+ * Deliberately asymmetric with onboarding's own `LocationStep`
+ * ([com.yugma.terrawatch.onboarding.OnboardingScreen]) for [LocationAskUiState.GRANTED]: onboarding
+ * shows a disabled "Location enabled" confirmation there (a one-time setup step, never meaningfully
+ * revisited in the ordinary flow), where this row keeps the SAME plain, always-tappable
+ * "Use my location" button a granted user already had before this task — tapping it re-resolves a
+ * fresh fix (useful after physically moving), and re-invoking an already-granted permission request
+ * is a harmless, silent no-op-then-immediate-callback on the OS side, not a redundant prompt.
+ * [LocationAskUiState.CAN_ASK]/[LocationAskUiState.NEEDS_SETTINGS] mirror onboarding's identical
+ * rationale-then-ask / explain-then-deep-link shapes — per this task's own dispatch ("wire into
+ * both ask sites"), Settings gets the SAME rationale path notifications' own Settings row
+ * deliberately does NOT (see [AlertsPermissionRow]'s own kdoc for that different, notification-
+ * specific controller ruling — this task's brief draws the line differently for location).
+ */
+@Composable
+private fun UseMyLocationAction(modifier: Modifier = Modifier) {
+    val locationRequester = koinInject<LocationRequester>()
+    val condition = rememberLocationCondition(locationRequester)
+    var showRationale by remember { mutableStateOf(false) }
+
+    Column(modifier) {
+        when (reduceLocationPermissionState(condition)) {
+            LocationAskUiState.GRANTED -> {
+                TextButton(onClick = { locationRequester.request() }) {
+                    Text("Use my location")
+                }
+            }
+            LocationAskUiState.CAN_ASK -> {
+                if (showRationale) {
+                    Text(
+                        text = "TerraWatch only uses your location to compare it against nearby " +
+                            "earthquakes — it never leaves this device.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    TextButton(onClick = { showRationale = false; locationRequester.request() }) {
+                        Text("Continue")
+                    }
+                } else {
+                    TextButton(
+                        onClick = {
+                            if (locationRequester.shouldShowRationale()) {
+                                showRationale = true
+                            } else {
+                                locationRequester.request()
+                            }
+                        },
+                    ) {
+                        Text("Use my location")
+                    }
+                }
+            }
+            LocationAskUiState.NEEDS_SETTINGS -> {
+                Text(
+                    text = "Location is off — enable it in system Settings.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(onClick = { locationRequester.openSettings() }) {
+                    Text("Open Settings")
+                }
             }
         }
     }

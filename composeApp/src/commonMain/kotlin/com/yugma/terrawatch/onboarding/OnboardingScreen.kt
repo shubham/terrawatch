@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -41,8 +42,11 @@ import androidx.compose.ui.unit.dp
 import com.yugma.terrawatch.data.AlertRuleStore
 import com.yugma.terrawatch.data.PillStatus
 import com.yugma.terrawatch.location.CityPickerDialog
+import com.yugma.terrawatch.location.LocationAskUiState
 import com.yugma.terrawatch.location.LocationRequester
 import com.yugma.terrawatch.location.canRequestLocation
+import com.yugma.terrawatch.location.reduceLocationPermissionState
+import com.yugma.terrawatch.location.rememberLocationCondition
 import com.yugma.terrawatch.notifications.NotificationAlertsUiState
 import com.yugma.terrawatch.notifications.NotificationPermissionRequester
 import com.yugma.terrawatch.notifications.reduceNotificationPermissionState
@@ -245,20 +249,40 @@ private fun WhatItDoesStep(modifier: Modifier = Modifier) {
  * opens [CityPickerDialog] itself as a real dialog — that one is a picker sub-flow, not "the ask,"
  * the same distinction Settings' own `PlaceRow` already draws for its identical "Change" button.
  *
- * [onAdvance] moves the pager forward one page without finishing onboarding — wired to BOTH "Use
- * my location" (fired immediately after [LocationRequester.request], not after any grant result:
- * the request is async and this screen has no way to wait on it, matching
- * `LocationAskDialog.kt`'s own dismissButton, which does the identical "request(); onDismiss()"
- * pair) and the explicit "Not now" link the brief calls for ("skippable ('Not now')"). Deliberately
- * NOT wired to "Choose city": [CityPickerDialog]'s own `onDismiss` fires for BOTH a picked city and
- * a cancelled dialog, and auto-advancing on a cancel would skip the step out from under a user who
- * changed their mind.
+ * [onAdvance] moves the pager forward one page without finishing onboarding — wired to the HAPPY
+ * PATH of "Use my location" (a never-asked-before tap: fired immediately after
+ * [LocationRequester.request], not after any grant result — the request is async and this screen
+ * has no way to wait on it, matching `LocationAskDialog.kt`'s own dismissButton, which does the
+ * identical "request(); onAdvance()" pair) and the explicit "Not now" link the brief calls for
+ * ("skippable ('Not now')"). Deliberately NOT wired to "Choose city": [CityPickerDialog]'s own
+ * `onDismiss` fires for BOTH a picked city and a cancelled dialog, and auto-advancing on a cancel
+ * would skip the step out from under a user who changed their mind.
+ *
+ * Plan 4 Task 4 (d): the "Use my location" button is now a [LocationAskUiState]-driven state
+ * machine, mirroring [NotificationsAskStep]'s identical shape (see that composable's own kdoc) —
+ * `OnboardingBottomBar`'s own always-present "Next" button (below the pager, not part of this step)
+ * is what makes it safe for the rationale/needs-settings branches below to NOT auto-advance the way
+ * the happy path still does: a user who lingers on this step (the pager supports swiping backward)
+ * and denies/permanently-denies can still move on via "Next"/"Not now" regardless of which branch
+ * is showing.
+ *  - [LocationAskUiState.GRANTED] (real grant, or [com.yugma.terrawatch.location.
+ *    LocationPermissionCondition.NOT_APPLICABLE] on jvm/wasmJs — never reached here in practice
+ *    since `canRequestLocation()` gates this whole branch to android only): a disabled button
+ *    reading "Location enabled".
+ *  - [LocationAskUiState.CAN_ASK]: "Use my location", gated by [LocationRequester.shouldShowRationale]
+ *    — a recoverable prior denial shows a one-line explainer FIRST, with a second tap ("Continue")
+ *    actually launching the OS dialog; a never-asked-yet tap launches it directly (the original,
+ *    unchanged happy path) and immediately advances, exactly as before this task.
+ *  - [LocationAskUiState.NEEDS_SETTINGS]: an explainer plus a Settings deep-link — re-asking in-app
+ *    would silently no-op once the OS itself refuses to show the dialog again.
  */
 @Composable
 private fun LocationStep(onAdvance: () -> Unit, modifier: Modifier = Modifier) {
     val step = ONBOARDING_STEPS[1]
     var showCityPicker by remember { mutableStateOf(false) }
+    var showRationale by remember { mutableStateOf(false) }
     val locationRequester = koinInject<LocationRequester>()
+    val condition = rememberLocationCondition(locationRequester)
 
     Column(
         modifier = modifier.verticalScroll(rememberScrollState()).padding(horizontal = 24.dp),
@@ -284,11 +308,59 @@ private fun LocationStep(onAdvance: () -> Unit, modifier: Modifier = Modifier) {
         // onboarding offers ONLY "Choose city", same gating LocationAskDialog/Settings' PlaceRow
         // already apply for the identical reason.
         if (canRequestLocation()) {
-            Button(
-                onClick = { locationRequester.request(); onAdvance() },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Use my location")
+            when (reduceLocationPermissionState(condition)) {
+                LocationAskUiState.GRANTED -> {
+                    Button(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) {
+                        Text("Location enabled")
+                    }
+                }
+                LocationAskUiState.CAN_ASK -> {
+                    if (showRationale) {
+                        Text(
+                            text = "TerraWatch only uses your location to compare it against nearby " +
+                                "earthquakes — it never leaves this device.",
+                            style = MaterialTheme.typography.bodySmall,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Button(
+                            onClick = { showRationale = false; locationRequester.request(); onAdvance() },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Continue")
+                        }
+                    } else {
+                        Button(
+                            onClick = {
+                                if (locationRequester.shouldShowRationale()) {
+                                    showRationale = true
+                                } else {
+                                    locationRequester.request()
+                                    onAdvance()
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Use my location")
+                        }
+                    }
+                }
+                LocationAskUiState.NEEDS_SETTINGS -> {
+                    Text(
+                        text = "Location is off. Enable it in system Settings to use your position.",
+                        style = MaterialTheme.typography.bodySmall,
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedButton(
+                        onClick = { locationRequester.openSettings() },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Open Settings")
+                    }
+                }
             }
             Spacer(Modifier.height(12.dp))
         }
@@ -430,11 +502,20 @@ private fun NotificationsAskStep(modifier: Modifier = Modifier) {
 
 /** Page dots + the shared "Next"/"Done" primary action — [currentPage] alone decides the label
  * (`"Done"` only on the final page), the same contextual-label shape [SettingsScreen]'s "Change"/
- * "Use my location" pair doesn't need but plenty of standard onboarding pagers do. */
+ * "Use my location" pair doesn't need but plenty of standard onboarding pagers do.
+ *
+ * Plan 4 Task 4 (a), SDK-36 edge-to-edge sweep: `windowInsetsPadding(WindowInsets.navigationBars)`
+ * added before the fixed padding — this is the LAST row on screen (below the pager, at the bottom
+ * of [OnboardingScreen]'s own outer `Column`), with nothing else reserving navigation-bar space
+ * beneath it, unlike Home's bottom sheet (whose scaffold sits above `AppNav`'s own bottom bar) or
+ * History/Insights (whose tab chrome already handles it — see those screens' own kdocs). */
 @Composable
 private fun OnboardingBottomBar(currentPage: Int, onPrimaryClick: () -> Unit, modifier: Modifier = Modifier) {
     Row(
-        modifier = modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .windowInsetsPadding(WindowInsets.navigationBars)
+            .padding(horizontal = 24.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         PageDots(currentPage = currentPage, modifier = Modifier.weight(1f))

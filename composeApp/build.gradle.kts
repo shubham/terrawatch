@@ -49,6 +49,12 @@ kotlin {
             // restarted) via LocalLifecycleOwner + a Lifecycle.Event observer — see
             // notifications/NotificationPermissionState.kt's callers.
             implementation(libs.androidx.lifecycle.runtime.compose)
+            // Plan 4 Task 4 (c): AppNav.kt/HomeScreen.kt's ONE shared adaptive-layout source of
+            // truth (currentWindowAdaptiveInfo().windowSizeClass) — replaces the two independent
+            // BoxWithConstraints-measured raw-width breakpoints that used to disagree in the
+            // 900-980dp band (see home/LayoutMode.kt's own kdoc for the dead zone this closes). See
+            // libs.versions.toml's material3Adaptive entry for the version-pin verification.
+            implementation(libs.material3.adaptive)
         }
         commonTest.dependencies {
             implementation(kotlin("test"))

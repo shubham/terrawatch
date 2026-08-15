@@ -5,6 +5,13 @@ package com.yugma.terrawatch.location
  * button ([com.yugma.terrawatch.location.LocationAskDialog], composeApp/home) — commonMain has no
  * Activity and no Composable-scoped permission API of its own to call directly.
  *
+ * Plan 4 Task 4 (d) grew this beyond a bare [request]: [currentCondition]/[shouldShowRationale]/
+ * [openSettings] give onboarding step 2 and Settings' PLACE-section "Use my location" row the same
+ * rationale-then-ask / permanently-denied-then-Settings-deep-link state machine Task 3 already built
+ * for notifications ([com.yugma.terrawatch.notifications.NotificationPermissionRequester]) — see that
+ * class's own kdoc for the shape being mirrored here.
+ *
+
  * Unlike [LocationProvider]/[com.yugma.terrawatch.database.DriverFactory] (each actual takes its
  * own platform-specific constructor — see [LocationProvider]'s own kdoc — because each is built
  * once, directly, at its platform's entry point and handed to Koin as an already-constructed
@@ -26,6 +33,26 @@ package com.yugma.terrawatch.location
  */
 expect class LocationRequester() {
     fun request()
+
+    /** Resolves the current [LocationPermissionCondition] — Plan 4 Task 4 (d), mirrors
+     * [com.yugma.terrawatch.notifications.NotificationPermissionRequester.currentCondition] exactly
+     * (see that method's own kdoc for how the android actual disambiguates [LocationPermissionCondition
+     * .DENIED] from [LocationPermissionCondition.PERMANENTLY_DENIED]). */
+    fun currentCondition(): LocationPermissionCondition
+
+    /** Whether the OS wants a rationale shown before asking again right now (Android's own
+     * `shouldShowRequestPermissionRationale`) — queried at the moment onboarding step 2's/Settings'
+     * "Use my location" is tapped, not folded into the steady-state [currentCondition], same
+     * one-shot-question reasoning [com.yugma.terrawatch.notifications.NotificationPermissionRequester
+     * .shouldShowRationale]'s own kdoc gives. */
+    fun shouldShowRationale(): Boolean
+
+    /** Deep-links to this app's own details page in the system Settings app —
+     * `Settings.ACTION_APPLICATION_DETAILS_SETTINGS` on android; a no-op elsewhere. The only recovery
+     * path once [LocationPermissionCondition.PERMANENTLY_DENIED] — there is no location-specific
+     * settings intent action the way notifications have `ACTION_APP_NOTIFICATION_SETTINGS`, so the
+     * general app-details page (which lists this app's own Permissions row) is the standard target. */
+    fun openSettings()
 }
 
 /**

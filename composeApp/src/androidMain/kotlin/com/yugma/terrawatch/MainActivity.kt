@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -18,7 +19,11 @@ import com.yugma.terrawatch.alerts.enqueueAlertDigestWorker
 import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.di.ensureKoinStarted
 import com.yugma.terrawatch.location.LocationProvider
-import com.yugma.terrawatch.location.bindLocationRequestLauncher
+import com.yugma.terrawatch.location.bindLocationPermissionController
+import com.yugma.terrawatch.location.computeLocationPermissionCondition
+import com.yugma.terrawatch.location.currentLocationPermissionRationale
+import com.yugma.terrawatch.location.markLocationPermissionAsked
+import com.yugma.terrawatch.location.openLocationSettings
 import com.yugma.terrawatch.notifications.bindNotificationPermissionController
 import com.yugma.terrawatch.notifications.computeNotificationPermissionCondition
 import com.yugma.terrawatch.notifications.currentNotificationRationale
@@ -27,20 +32,6 @@ import com.yugma.terrawatch.notifications.openNotificationSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.koin.core.context.GlobalContext
-
-// Fix Round 1 (C1, review Critical): a SEPARATE process-lifetime flag from Koin's own
-// GlobalContext state — see ensureKoinStarted's own kdoc for why GlobalContext.getOrNull() alone
-// is no longer a safe proxy for "has MainActivity ever run in this process" now that
-// AlertDigestWorker.doWork() can start Koin from a headless, WorkManager-only process start with
-// MainActivity never created at all. If that headless run happens first and the OS keeps the
-// process alive long enough for the user to then open the app, GlobalContext.getOrNull() would
-// already read non-null on MainActivity's own very first onCreate — the OLD single-guard code
-// would have silently skipped the one-shot location-permission ask below for what is, from THIS
-// Activity's point of view, genuinely its first launch. A top-level var (not an instance field),
-// same reasoning as the original GlobalContext check: a config-change recreate constructs a
-// brand-new MainActivity instance whose own fields would silently reset, but this must stay true
-// for the rest of the process's lifetime once set.
-private var mainActivityBootstrappedThisProcess = false
 
 class MainActivity : ComponentActivity() {
     // Built once per Activity instance (not per onCreate/Koin-guard branch — applicationContext is
@@ -123,17 +114,38 @@ class MainActivity : ComponentActivity() {
 
     @OptIn(kotlin.time.ExperimentalTime::class)
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Plan 4 Task 4 (a): must run before super.onCreate() (Google's own documented ordering —
+        // see developer.android.com/develop/ui/compose/system/edge-to-edge) so the very first frame
+        // this Activity ever draws is already edge-to-edge, not a legacy-inset frame that then jumps
+        // once this call lands. Makes this app draw edge-to-edge on EVERY supported API level
+        // (minSdk 26+), not only once targetSdk 36 + a 35+ device FORCES it regardless (see
+        // developer.android.com/about/versions/16/behavior-changes-16: "Edge-to-edge opt-out
+        // disabled" — this app never set that opt-out flag to begin with, so the only actual change
+        // here is making the behavior uniform and deliberate across API 26-35 too, instead of
+        // OS-version-dependent). Every screen's top/bottom content is threaded through
+        // windowInsetsPadding(...) precisely because of this call — see task-4-report.md's SDK-36
+        // audit table for the per-screen sweep.
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        // Task 2 (Plan 3): rebind on EVERY onCreate, NOT gated behind mainActivityBootstrappedThisProcess below —
-        // a config-change recreate constructs a brand-new MainActivity instance with its own
-        // brand-new requestLocationPermission launcher, and LocationRequester's holder (see
-        // LocationRequester.android.kt) must always point at the CURRENT instance's launcher, never
-        // a previous (destroyed) Activity's.
-        bindLocationRequestLauncher {
-            requestLocationPermission.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
-        }
+        // Plan 4 Task 4 (d): rebind on EVERY onCreate, same "a config-change recreate constructs a
+        // brand-new Activity instance, and the holder must always point at the CURRENT one" reasoning
+        // bindNotificationPermissionController below already established (mirrored here 1:1 — see
+        // LocationRequester.android.kt's own kdoc). Replaces the old bindLocationRequestLauncher's
+        // bare launch-only closure: the launch-time ask this used to ALSO trigger unconditionally
+        // (see this class's git history) is deleted outright per this task's brief — location is now
+        // asked ONLY from onboarding step 2 and Settings' "Use my location" row, both of which read
+        // condition/rationale live through this same controller rather than firing blind.
+        bindLocationPermissionController(
+            condition = { computeLocationPermissionCondition(this) },
+            rationale = { currentLocationPermissionRationale(this) },
+            launch = {
+                markLocationPermissionAsked(this)
+                requestLocationPermission.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
+            },
+            openSettingsAction = { openLocationSettings(this) },
+        )
         // Plan 4 Task 3: same "rebind every onCreate, not just first launch" reasoning as
-        // bindLocationRequestLauncher above — shouldShowRequestPermissionRationale needs THIS
+        // bindLocationPermissionController above — shouldShowRequestPermissionRationale needs THIS
         // Activity instance, never a previous (destroyed) one's.
         bindNotificationPermissionController(
             condition = { computeNotificationPermissionCondition(this) },
@@ -158,12 +170,6 @@ class MainActivity : ComponentActivity() {
         // for "has bootstrap happened," located inside the idempotent function itself — is strictly
         // more robust than duplicating that condition out here a second time.
         ensureKoinStarted(applicationContext, locationProvider)
-        // A SEPARATE, Koin-independent guard for this Activity's own one-shot behavior below (the
-        // location-permission ask) — see mainActivityBootstrappedThisProcess's own top-of-file
-        // comment for why GlobalContext state can no longer answer "has MainActivity run before in
-        // this process" now that ensureKoinStarted has another possible caller.
-        val firstMainActivityLaunchThisProcess = !mainActivityBootstrappedThisProcess
-        mainActivityBootstrappedThisProcess = true
         pendingQuakeId = intent?.getStringExtra(AlertDigestWorker.EXTRA_QUAKE_ID)
         setContent {
             App(
@@ -171,16 +177,13 @@ class MainActivity : ComponentActivity() {
                 onQuakeIdConsumed = { pendingQuakeId = null },
             )
         }
-        if (firstMainActivityLaunchThisProcess) {
-            // Ask AFTER content is showing, not before — a permission dialog racing the first frame
-            // would otherwise cover a still-blank window. Activity-level by design (not a
-            // LaunchedEffect from App()): the ask is one-shot Activity plumbing, independent of
-            // whatever composable happens to be on screen (currently the Task 6 map spike; see
-            // App.kt).
-            requestLocationPermission.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
-        }
-        // Plan 4 Task 3: unlike the location ask above (one-shot, firstMainActivityLaunchThisProcess
-        // -gated), this runs on EVERY onCreate — ExistingPeriodicWorkPolicy.UPDATE (Fix Round 1, I3
+        // Plan 4 Task 4 (d): the old one-shot, first-launch-only location-permission ask that used
+        // to fire here is DELETED outright, not merely moved — per this task's brief, location is
+        // now asked ONLY from two explicit, user-initiated affordances (onboarding step 2's "Use my
+        // location", Settings' PLACE-section "Use my location" row), never blind at launch. Both
+        // sites call through bindLocationPermissionController above via LocationRequester.request().
+        //
+        // This runs on EVERY onCreate regardless — ExistingPeriodicWorkPolicy.UPDATE (Fix Round 1, I3
         // — see enqueueAlertDigestWorker's own kdoc) makes every call past the first a harmless
         // no-op for anything about the request that hasn't actually changed, and re-checking on
         // every app start (not just first-ever-install) is what picks up a permission grant that

@@ -1,6 +1,6 @@
 package com.yugma.terrawatch.nav
 
-import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,6 +13,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Text
+import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -78,9 +79,12 @@ internal const val NAV_INSIGHTS_TAG = "nav-insights"
 /**
  * Task 4 (Plan 3) root nav composable — `App.kt` calls this instead of `HomeScreen` directly now.
  * Owns the [NavHost] plus whichever tab-switcher chrome fits the available width ([layoutMode],
- * reused verbatim from `home/LayoutMode.kt` — the exact same 900dp breakpoint `HomeScreen`'s own
- * `BoxWithConstraints` already uses for its phone-vs-two-pane split, so "desktop" means the same
- * thing in both places).
+ * reused verbatim from `home/LayoutMode.kt`). Plan 4 Task 4 (c): both this composable and
+ * `HomeScreen`'s own identical call now feed `layoutMode()` the SAME
+ * `currentWindowAdaptiveInfo().windowSizeClass` read (material3-adaptive's expanded-width
+ * breakpoint, 840dp) rather than two independent `BoxWithConstraints` measurements of two different
+ * available widths — see `layoutMode`'s own kdoc for the "900-980dp dead zone" bug this closes, so
+ * "desktop" means the literal same thing, read the same way, in both places now.
  *
  * **THE regression this task exists to guard against** (plan Task 4 brief, quoting the Plan 2
  * lesson): naively tearing down and recreating `QuakeMap`'s composable — for ANY reason, not just
@@ -128,20 +132,17 @@ fun AppNav(
     val currentRoute = backStackEntry?.destination?.route
     val showTabChrome = currentRoute in TAB_ROUTES
 
-    // Judgment call, documented rather than solved: this BoxWithConstraints measures the FULL
-    // window width to decide rail-vs-bottom-bar, but HomeScreen's OWN BoxWithConstraints
-    // (home/HomeScreen.kt) independently re-measures ITS available width -- which, once the rail
-    // is showing, is narrower by the rail's own width (~80dp) -- to decide phone-vs-two-pane for
-    // ITS OWN chrome. Both call the same layoutMode()/900dp breakpoint, so they normally agree,
-    // but in the roughly 900-980dp band the rail can show here while Home still falls back to its
-    // phone (sheet) layout underneath it, rather than the "home two-pane preserved" the brief
-    // describes. Not fixed by threading a layoutMode override into HomeScreen: that would change
-    // a composable three tasks of tests/device-verification already depend on self-measuring, for
-    // a narrow band this plan doesn't gate any test or device screenshot on (Task 4's own device
-    // matrix targets 98bc1cd8, a phone). Accepted as-is; worth a second look whenever a real
-    // desktop pass happens.
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        if (layoutMode(maxWidth.value.toInt()) == LayoutMode.TWO_PANE) {
+    // Plan 4 Task 4 (c): ONE shared source of truth, replacing the former per-call-site
+    // BoxWithConstraints measurement this kdoc used to describe disagreeing with HomeScreen's own
+    // (see layoutMode()'s own kdoc, home/LayoutMode.kt, for the full "900-980dp dead zone" bug this
+    // closes and why it closes it). currentWindowAdaptiveInfo() reads the FULL window's size
+    // regardless of where in the composition tree it's called from — unlike a BoxWithConstraints,
+    // which only ever sees whatever space its own parent handed it — so this and HomeScreen's own
+    // identical call (HomeScreen.kt) can no longer structurally disagree: both resolve the exact
+    // same WindowSizeClass for the exact same frame.
+    val windowSizeClass = currentWindowAdaptiveInfo().windowSizeClass
+    Box(Modifier.fillMaxSize()) {
+        if (layoutMode(windowSizeClass) == LayoutMode.TWO_PANE) {
             Row(Modifier.fillMaxSize()) {
                 if (showTabChrome) {
                     AppNavigationRail(currentRoute = currentRoute, navController = navController)

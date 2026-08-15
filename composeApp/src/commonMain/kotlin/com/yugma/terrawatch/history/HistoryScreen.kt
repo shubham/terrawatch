@@ -7,10 +7,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -76,6 +79,15 @@ private val MAG_CHIPS = listOf("All" to null, "M4.5+" to 4.5, "M6+" to 6.0)
  * `homeViewModel` as a plain Composable parameter here, the same way [selectionViewModel] itself is
  * already threaded — noted for whoever picks this up, not implemented now (out of this task's
  * explicit scope).
+ *
+ * Plan 4 Task 4 (a), SDK-36 edge-to-edge sweep: [HistoryHeader] used to render with no status-bar
+ * awareness at all — the very first screen `AppNav.kt`'s phone-layout `Column` places above THIS
+ * one (History is a `TAB_ROUTES` member, so nothing else sits between it and the physical top of the
+ * screen). `windowInsetsPadding(WindowInsets.statusBars)` on this outer `Column` fixes that; the
+ * BOTTOM edge needs no matching fix — `AppNav`'s own `AppBottomBar` (a real `NavigationBar`, whose
+ * M3 default already reserves navigation-bar space) always renders below this whole `Column` on the
+ * same tab route, so this screen's own content never structurally reaches the physical bottom edge
+ * the way a stack-only, chrome-less screen (e.g. Settings) does.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -93,7 +105,7 @@ fun HistoryScreen(
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Box(Modifier.fillMaxSize()) {
-            Column(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.statusBars)) {
                 HistoryHeader()
                 HistoryFilterChips(filter = filter, onFilterChange = viewModel::setFilter)
                 when (val s = state) {
