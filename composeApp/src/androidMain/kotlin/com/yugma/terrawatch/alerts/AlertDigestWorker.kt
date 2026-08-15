@@ -233,7 +233,9 @@ class AlertDigestWorker(context: Context, params: WorkerParameters) : CoroutineW
     @SuppressLint("MissingPermission")
     private fun notifyIndividual(context: Context, event: AlertEvent, nowMillis: Long) {
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_notification)
+            // Plan 4 Task 7: real brand icon (simplified ring glyph) — was R.drawable.ic_notification
+            // (Task 3's placeholder, deleted this task).
+            .setSmallIcon(R.drawable.ic_stat_terrawatch)
             .setContentTitle(digestNotificationTitle(event, nowMillis))
             .setContentText(digestNotificationBody(event))
             .setAutoCancel(true)
@@ -250,7 +252,8 @@ class AlertDigestWorker(context: Context, params: WorkerParameters) : CoroutineW
     @SuppressLint("MissingPermission")
     private fun notifySummary(context: Context, extraCount: Int) {
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_notification)
+            // Plan 4 Task 7: same real brand icon as notifyIndividual above.
+            .setSmallIcon(R.drawable.ic_stat_terrawatch)
             .setContentTitle("More earthquake alerts")
             .setContentText(summaryNotificationText(extraCount))
             // Fix Round 1 (minor): same reasoning as notifyIndividual above -- the summary uses a

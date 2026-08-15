@@ -1,0 +1,24 @@
+# app-ads.txt for TerraWatch
+#
+# Placeholder — populated at Task 8 with the real AdMob publisher id, once a real AdMob account
+# exists (Task 6/8 USER-GATED prerequisite; Task 6 shipped against Google's own TEST ad unit ids
+# only — see composeApp/monetization.properties.example and Task 6's report).
+#
+# Real entry will look like (per Google's AdMob app-ads.txt guide), with the real pub- id from the
+# AdMob account's own app-ads.txt snippet:
+#
+#   google.com, pub-XXXXXXXXXXXXXXXX, DIRECT, f08c47fec0942fa0
+#
+# This file must be reachable at https://<pages-host>/app-ads.txt (this repo's GitHub Pages root,
+# once enabled — see store-assets/listing.md / task-7-report.md for the one-command enable) for
+# AdMob to verify it against the app's declared developer website.
+#
+# CAVEAT (real, worth checking before relying on this at Task 8): a GitHub Pages PROJECT site
+# (source = this repo's /docs folder) is served at https://<user>.github.io/terrawatch/ — a
+# SUBPATH of github.io, not a domain root. app-ads.txt crawlers conventionally check for the file
+# at the ROOT of the origin (https://<user>.github.io/app-ads.txt), which this repo does not
+# control (that slot belongs to a separate <user>.github.io user/org-pages repo, if one exists).
+# If AdMob's crawler does not accept this project-site subpath, the fix is either (a) a custom
+# domain for this repo's Pages site (a CNAME you control the root of), or (b) hosting this same
+# file from a <user>.github.io root-pages repo instead. Verify against AdMob's own app-ads.txt
+# checker once the real publisher id is in hand, before assuming this placement works.

@@ -34,6 +34,8 @@
          that supports it (33+), not only once running ON API 36+. -->
     <application
         android:label="TerraWatch"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:enableOnBackInvokedCallback="true">
         <!-- Plan 4 Task 6: OS/SDK-mandated — MobileAds throws at initialize time without this

@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TerraWatch launcher/store icon - design source (Plan 4 Task 7).
+
+  Motif: a shield (Safe green) - "TerraWatch watches over you" - centered inside a white ring
+  ("the radius ring", the same nearby-radius visualization drawn on the live map, QuakeMap.android.kt
+  / SettingsScreen.kt's radius control) on a Water-blue disc/background, with a small quake-dot
+  accent (MagStrong orange, the same magnitudeColor(STRONG) used for feed/history/detail chips)
+  pinned at the shield's shoulder, inside the ring, evoking an epicenter marker sitting near the
+  shield the app is watching for you.
+
+  Colors are the literal Calm Guardian hex values from
+  core/ui/src/commonMain/kotlin/com/yugma/terrawatch/ui/theme/Tokens.kt (TerraColors) - this file
+  cannot reference that Kotlin object directly (plain SVG/XML, unreachable from commonMain), so the
+  hex values are copied here deliberately, same precedent as the pre-existing
+  composeApp/src/androidMain/res/drawable/ic_notification.xml.
+
+  Geometry is in a 108x108 unit space matching Android's adaptive-icon viewport convention (108dp
+  canvas, 66dp-diameter/33-radius "safe zone" circle centered at (54,54) that survives every OS mask
+  shape). Every foreground element here stays inside that radius-33 safe zone:
+    - ring outer radius 32 (margin 1)
+    - shield max extent from center ~23
+    - dot max extent from center ~26 (25.6, one decimal of margin under the 27 inner-ring edge)
+
+  This SAME geometry (ring centerline r=29.5 stroke 5, shield bezier path, dot at (67,40) r=6.5) is
+  reproduced in three places, kept numerically identical by hand:
+    1. This SVG (design source / documentation).
+    2. composeApp/src/androidMain/res/drawable/ic_launcher_foreground.xml (+ background/monochrome) -
+       Android VectorDrawable, hand-authored (pathData is a constrained subset of SVG path syntax,
+       so the two arc-circle / cubic-bezier paths below transliterate directly).
+    3. The Pillow rasterizer (scratchpad render_icon.py, not committed) that produced the flattened
+       mipmap-*dpi/ic_launcher*.png legacy rasters and store-assets/icon-1024.png - see task-7-report
+       for why (no rsvg-convert/ImageMagick/inkscape/cairosvg installed on this machine; qlmanage
+       WAS tested and works for flat-color rendering but bakes an opaque white background into every
+       transparent region - confirmed by sampling a test render's corner pixel, (255,255,255,255)
+       instead of alpha 0 - which is disqualifying for a foreground/monochrome/notification layer
+       that MUST carry real alpha transparency, so Pillow, confirmed installed, rasterized this same
+       geometry directly instead).
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <title>TerraWatch icon</title>
+  <desc>Shield in a radius ring on a Water-blue disc, with a quake-dot accent.</desc>
+
+  <!-- Background layer: Water-blue (#D9E9F4), full 108x108 bleed. -->
+  <rect x="0" y="0" width="108" height="108" fill="#D9E9F4"/>
+
+  <!-- Foreground layer starts here: ring + shield + dot, all within the 66dp/r33 safe zone. -->
+
+  <!-- White ring - "the radius ring". Centerline radius 29.5, stroke 5 (outer edge 32, inner edge 27). -->
+  <circle cx="54" cy="54" r="29.5" fill="none" stroke="#FFFFFF" stroke-width="5"/>
+
+  <!-- Shield - Safe green (#2FA36B). Rounded-arch top, tapering to a point at the bottom. -->
+  <path
+      d="M54,33 C62,33 68,36 71,39 L71,56 C71,66 64,72 54,77 C44,72 37,66 37,56 L37,39 C40,36 46,33 54,33 Z"
+      fill="#2FA36B"/>
+
+  <!-- Quake-dot accent - MagStrong orange (#F0663B), same hex as magnitudeColor(STRONG) in Tokens.kt.
+       Pinned at the shield's top-right shoulder, inside the ring. -->
+  <circle cx="67" cy="40" r="6.5" fill="#F0663B"/>
+</svg>

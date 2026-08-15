@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Plan 4 Task 7: adaptive icon background layer. Solid Water-blue (#D9E9F4, TerraColors.Water in
+  core/ui's Tokens.kt - see that file's own kdoc for why the literal hex is copied here rather than
+  referenced: this is a plain Android resource, unreachable from commonMain Compose code, same
+  precedent as the pre-existing ic_notification.xml). Full 108x108dp bleed - the OS applies its own
+  mask shape (circle/squircle/rounded-square/teardrop) on top of background+foreground together, so
+  this layer just needs to fill the whole canvas, not pre-shape itself.
+
+  See store-assets/icon-source.svg for the full design (this file is one piece of that design -
+  the "Water-blue background circle" the icon design brief calls for is what the OS mask crops
+  this into, not something drawn here).
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+  <path
+      android:pathData="M0,0 L108,0 L108,108 L0,108 Z"
+      android:fillColor="#FFD9E9F4" />
+</vector>

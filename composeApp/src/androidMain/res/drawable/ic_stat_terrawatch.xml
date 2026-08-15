@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Plan 4 Task 7: AlertDigestWorker's notification small icon - the real, brand-aligned glyph,
+  replacing Task 3's placeholder (former ic_notification.xml, a generic ring+exclamation shape,
+  deleted by this task now that the real icon exists). A simplified ring glyph - deliberately just
+  the "radius ring" motif alone (no shield, no dot), since Android renders a notification small icon
+  as a flat white silhouette from this shape's ALPHA CHANNEL ONLY (status-bar/shade chrome ignores
+  fillColor entirely - same rule the old ic_notification.xml documented, still true here, literal
+  color below is inert), and small-icon guidance is "simple, bold, no fine detail" at status-bar
+  scale - the full shield+ring+dot launcher composition would not read cleanly that small.
+
+  24x24dp viewport (Android's standard notification icon canvas), ring centered at (12,12),
+  r=7 (centerline), stroke 3dp - outer edge r=8.5, comfortably inside the 24dp canvas with a ~3dp
+  margin per side.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+  <path
+      android:pathData="M19,12 A7,7 0 1,1 5,12 A7,7 0 1,1 19,12 Z"
+      android:fillColor="#00000000"
+      android:strokeColor="#FF000000"
+      android:strokeWidth="3" />
+</vector>

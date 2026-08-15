@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Plan 4 Task 7: adaptive icon foreground layer - shield + ring + quake-dot, Calm Guardian palette
+  (core/ui's Tokens.kt TerraColors; literal hex copied here, same precedent as ic_notification.xml -
+  see ic_launcher_background.xml's own kdoc). Geometry matches store-assets/icon-source.svg exactly
+  (same 108x108 unit space, same coordinates) - see that file's own kdoc for the full design
+  rationale and the safe-zone-margin arithmetic (every shape here stays inside the 66dp/r33 circle
+  that survives every OS adaptive-icon mask shape):
+    - white ring: centerline r=29.5, stroke 5dp (outer edge r=32, margin 1dp under the 33dp safe
+      zone) - "the radius ring", the same nearby-radius visualization drawn on the live map.
+    - shield: Safe green (#2FA36B), TerraColors.Safe - max extent from center ~23dp.
+    - quake-dot accent: MagStrong orange (#F0663B), TerraColors.MagStrong, same hex
+      magnitudeColor(STRONG) resolves to - pinned at the shield's top-right shoulder, inside the
+      ring, max extent from center ~25.6dp (margin 1.4dp under the ring's own 27dp inner edge).
+
+  Ring and dot are both drawn as a single closed path via the standard "two arcs" circle
+  construction (M <cx+r>,<cy> A r,r 0 1,1 <cx-r>,<cy> A r,r 0 1,1 <cx+r>,<cy> Z) - VectorDrawable's
+  pathData arc command (A) takes identical parameters to SVG's.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+  <!-- White ring ("the radius ring"): center (54,54), r=29.5, stroke 5. -->
+  <path
+      android:pathData="M83.5,54 A29.5,29.5 0 1,1 24.5,54 A29.5,29.5 0 1,1 83.5,54 Z"
+      android:fillColor="#00000000"
+      android:strokeColor="#FFFFFFFF"
+      android:strokeWidth="5" />
+  <!-- Shield: Safe green. Rounded-arch top, tapering to a point at the bottom. -->
+  <path
+      android:pathData="M54,33 C62,33 68,36 71,39 L71,56 C71,66 64,72 54,77 C44,72 37,66 37,56 L37,39 C40,36 46,33 54,33 Z"
+      android:fillColor="#FF2FA36B" />
+  <!-- Quake-dot accent: MagStrong orange. Center (67,40), r=6.5. -->
+  <path
+      android:pathData="M73.5,40 A6.5,6.5 0 1,1 60.5,40 A6.5,6.5 0 1,1 73.5,40 Z"
+      android:fillColor="#FFF0663B" />
+</vector>

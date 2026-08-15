@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Plan 4 Task 7: identical content to ic_launcher.xml (same background/foreground/monochrome
+  layers) - standard convention for adaptive icons. The OS derives whatever mask shape it wants
+  (including circular) from the SAME layer pair; this file's separate existence only signals "use
+  this for android:roundIcon call sites", it doesn't need different drawables.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <monochrome android:drawable="@drawable/ic_launcher_monochrome" />
+</adaptive-icon>
