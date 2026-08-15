@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Plan 4 Task 3: AlertDigestWorker's notification small icon. This app has no launcher/brand icon
+  at all yet (no res/mipmap directory exists — confirmed by listing this res/ tree before adding
+  this file; the manifest's own <application> has no android:icon either) — real icon design is
+  Task 7's job ("Adaptive launcher icon (shield + ring motif, Calm Guardian palette)"), out of this
+  task's scope. A notification is unbuildable without SOME small-icon resource though
+  (NotificationCompat.Builder.setSmallIcon is mandatory), so this is a deliberately minimal,
+  functional placeholder — a plain ring-with-exclamation glyph, thematically close to the
+  "ring motif" Task 7's own brief already names for the real icon, not a generic system drawable.
+  Android renders a notification small icon as a flat white silhouette from this shape's alpha
+  channel alone (fillColor is ignored by the status-bar/shade chrome), so the literal color below
+  is inert — only the path's shape matters. Revisit/replace alongside Task 7's real icon work.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+  <path
+      android:fillColor="#FF000000"
+      android:pathData="M12,2 C6.48,2 2,6.48 2,12 C2,17.52 6.48,22 12,22 C17.52,22 22,17.52 22,12 C22,6.48 17.52,2 12,2 Z M12,20 C7.59,20 4,16.41 4,12 C4,7.59 7.59,4 12,4 C16.41,4 20,7.59 20,12 C20,16.41 16.41,20 12,20 Z M11,7 L13,7 L13,14 L11,14 Z M11,16 L13,16 L13,18 L11,18 Z" />
+</vector>

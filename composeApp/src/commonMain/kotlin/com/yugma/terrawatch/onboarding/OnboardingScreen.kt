@@ -43,6 +43,10 @@ import com.yugma.terrawatch.data.PillStatus
 import com.yugma.terrawatch.location.CityPickerDialog
 import com.yugma.terrawatch.location.LocationRequester
 import com.yugma.terrawatch.location.canRequestLocation
+import com.yugma.terrawatch.notifications.NotificationAlertsUiState
+import com.yugma.terrawatch.notifications.NotificationPermissionRequester
+import com.yugma.terrawatch.notifications.reduceNotificationPermissionState
+import com.yugma.terrawatch.notifications.rememberNotificationCondition
 import com.yugma.terrawatch.ui.components.StatusShield
 import com.yugma.terrawatch.ui.format.formatCount
 import com.yugma.terrawatch.ui.format.formatMagnitude
@@ -83,8 +87,12 @@ internal val ONBOARDING_STEPS = listOf(
             "can warn you when one's close. It stays on this device — never uploaded or shared.",
     ),
     OnboardingStepContent(
-        title = "Alerts, coming soon",
-        body = "Here's the default rule that will apply the moment notifications ship:",
+        // Plan 4 Task 3: was "Alerts, coming soon" / "...the moment notifications ship" — stale
+        // the instant this task made the ask (and the alerts it gates) real rather than a preview;
+        // see NotificationsAskStep's own kdoc for the interactive content this heading now sits
+        // above.
+        title = "Stay informed, not alarmed",
+        body = "Here's the default rule for your alerts:",
     ),
 )
 
@@ -148,7 +156,7 @@ fun OnboardingScreen(onFinish: () -> Unit) {
                             onAdvance = { scope.launch { pagerState.animateScrollToPage(2) } },
                             modifier = Modifier.fillMaxSize(),
                         )
-                        else -> NotificationsPreviewStep(modifier = Modifier.fillMaxSize())
+                        else -> NotificationsAskStep(modifier = Modifier.fillMaxSize())
                     }
                 }
                 OnboardingBottomBar(
@@ -298,21 +306,41 @@ private fun LocationStep(onAdvance: () -> Unit, modifier: Modifier = Modifier) {
 }
 
 /**
- * Step 3 (notifications preview) — spec §3.6's "notification permission ask *with the default rule
- * shown*", honestly narrowed to a PREVIEW per this task's own brief: this app does not ask for a
- * real notification permission yet (Plan 4 owns that), so this step only shows what the default
- * rule WILL be and says so plainly, rather than asking for a permission it cannot yet back with
- * real delivery. [defaultRuleSummary] is computed from [AlertRuleStore]'s own compile-time
- * defaults (see that function's own kdoc for why that's the right source here) and `remember`-ed
- * since it's a pure function of two constants — nothing this composable observes can ever change
- * it mid-composition.
+ * Step 3 (notifications ask) — spec §3.6's "notification permission ask *with the default rule
+ * shown*", now a REAL in-context ask (Plan 4 Task 3; superseded the former Plan 3 PREVIEW, which
+ * only showed what the default rule WOULD be and explicitly deferred the real ask — see this
+ * function's git history for that prior copy). [defaultRuleSummary] is computed from
+ * [AlertRuleStore]'s own compile-time defaults (see that function's own kdoc for why that's the
+ * right source here) and `remember`-ed since it's a pure function of two constants — nothing this
+ * composable observes can ever change it mid-composition.
+ *
+ * The "Enable alerts" button's own tap behavior is [NotificationAlertsUiState]-driven
+ * ([reduceNotificationPermissionState] over [rememberNotificationCondition]'s live, resume-aware
+ * read):
+ *  - [NotificationAlertsUiState.ENABLED] (granted, or [com.yugma.terrawatch.notifications.
+ *    NotificationPermissionCondition.PRE_33] — auto-granted below API 33): a disabled button
+ *    reading "Alerts enabled" — this task's own dispatch names that exact copy.
+ *  - [NotificationAlertsUiState.CAN_ASK]: "Enable alerts", gated by [NotificationPermissionRequester.
+ *    shouldShowRationale] — a recoverable prior denial shows a one-line explainer FIRST ("rationale
+ *    path" per the dispatch), with a second tap ("Continue") actually launching the OS dialog; a
+ *    never-asked-yet tap launches it directly, no explainer needed for a first ask.
+ *  - [NotificationAlertsUiState.NEEDS_SETTINGS]: an explainer plus a Settings deep-link — re-asking
+ *    in-app would silently no-op once the OS itself refuses to show the dialog again. Settings'
+ *    OWN ALERTS row (`SettingsScreen.kt`) deliberately uses ONLY this same explain-plus-deep-link
+ *    shape for EVERY non-[NotificationAlertsUiState.ENABLED] state, never the rationale-then-ask
+ *    flow — a controller ruling recorded here: onboarding is the one place a fresh in-context OS
+ *    ask fits Android's own permission-UX conventions; a return visit to Settings, well after
+ *    onboarding, reads better as "go fix it in system Settings" than a re-triggered OS dialog.
  */
 @Composable
-private fun NotificationsPreviewStep(modifier: Modifier = Modifier) {
+private fun NotificationsAskStep(modifier: Modifier = Modifier) {
     val step = ONBOARDING_STEPS[2]
     val ruleSummary = remember {
         defaultRuleSummary(minMag = AlertRuleStore.DEFAULT_MIN_MAG, radiusKm = AlertRuleStore.DEFAULT_RADIUS_KM)
     }
+    val requester = koinInject<NotificationPermissionRequester>()
+    val condition = rememberNotificationCondition(requester)
+    var showRationale by remember { mutableStateOf(false) }
     Column(
         modifier = modifier.verticalScroll(rememberScrollState()).padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -351,13 +379,52 @@ private fun NotificationsPreviewStep(modifier: Modifier = Modifier) {
                 color = MaterialTheme.colorScheme.onSurface,
             )
         }
-        Spacer(Modifier.height(16.dp))
-        Text(
-            text = "You'll be asked for permission when alerts arrive in a future update.",
-            style = MaterialTheme.typography.bodySmall,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Spacer(Modifier.height(20.dp))
+        when (reduceNotificationPermissionState(condition)) {
+            NotificationAlertsUiState.ENABLED -> {
+                Button(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) {
+                    Text("Alerts enabled")
+                }
+            }
+            NotificationAlertsUiState.CAN_ASK -> {
+                if (showRationale) {
+                    Text(
+                        text = "TerraWatch only notifies you for quakes matching the rule above — nothing else.",
+                        style = MaterialTheme.typography.bodySmall,
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Button(
+                        onClick = { showRationale = false; requester.request() },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Continue")
+                    }
+                } else {
+                    Button(
+                        onClick = {
+                            if (requester.shouldShowRationale()) showRationale = true else requester.request()
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Enable alerts")
+                    }
+                }
+            }
+            NotificationAlertsUiState.NEEDS_SETTINGS -> {
+                Text(
+                    text = "Notifications are off. Enable them in system Settings to get alerts.",
+                    style = MaterialTheme.typography.bodySmall,
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+                OutlinedButton(onClick = { requester.openSettings() }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Open Settings")
+                }
+            }
+        }
     }
 }
 

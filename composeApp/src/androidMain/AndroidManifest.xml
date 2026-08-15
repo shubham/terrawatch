@@ -1,8 +1,17 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- Plan 4 Task 3: required to even ASK for POST_NOTIFICATIONS on API 33+, without this
+         declaration requestPermission() would fail/no-op regardless of runtime checks. No-op
+         (auto-granted, no runtime gate at all) below API 33, see NotificationPermissionCondition
+         .PRE_33's own kdoc. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <application android:label="TerraWatch" android:theme="@android:style/Theme.Material.Light.NoActionBar">
-        <activity android:name=".MainActivity" android:exported="true">
+        <!-- Plan 4 Task 3: singleTask, a digest notification's PendingIntent (FLAG_ACTIVITY_NEW_TASK,
+             AlertDigestWorker.android.kt) must re-front the SAME existing MainActivity instance via
+             onNewIntent when the app is already running, rather than stacking a second instance on
+             top of it (the "standard" launch-mode default). -->
+        <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTask">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

@@ -1,28 +1,34 @@
 package com.yugma.terrawatch
 
 import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import com.yugma.terrawatch.alerts.AlertDigestWorker
+import com.yugma.terrawatch.alerts.enqueueAlertDigestWorker
+import com.yugma.terrawatch.alerts.initAlertDigestSchedulerContext
 import com.yugma.terrawatch.data.HomeLocationStore
-import com.yugma.terrawatch.database.DriverFactory
-import com.yugma.terrawatch.database.QuakeDao
-import com.yugma.terrawatch.database.createDatabase
-import com.yugma.terrawatch.di.appModule
+import com.yugma.terrawatch.di.ensureKoinStarted
 import com.yugma.terrawatch.location.LocationProvider
 import com.yugma.terrawatch.location.bindLocationRequestLauncher
+import com.yugma.terrawatch.notifications.bindNotificationPermissionController
+import com.yugma.terrawatch.notifications.computeNotificationPermissionCondition
+import com.yugma.terrawatch.notifications.currentNotificationRationale
+import com.yugma.terrawatch.notifications.markNotificationPermissionAsked
+import com.yugma.terrawatch.notifications.openNotificationSettings
 import com.yugma.terrawatch.share.initShareContext
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.okhttp.OkHttp
-import io.ktor.client.plugins.HttpTimeout
-import io.ktor.client.plugins.websocket.WebSockets
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlin.time.Clock
 import org.koin.core.context.GlobalContext
-import org.koin.core.context.startKoin
 
 class MainActivity : ComponentActivity() {
     // Built once per Activity instance (not per onCreate/Koin-guard branch — applicationContext is
@@ -40,6 +46,14 @@ class MainActivity : ComponentActivity() {
     // permission dialog has been answered, well after onCreate has returned) guarantees startKoin()
     // has always already run by then.
     private val homeLocationStore: HomeLocationStore by lazy { GlobalContext.get().get() }
+
+    // Plan 4 Task 3: the notification tap-through deep link — a non-null id means MainActivity was
+    // opened (cold `onCreate`, or a `singleTask` re-front via `onNewIntent`) from a digest
+    // notification's own PendingIntent. Compose `mutableStateOf`, not a bare `var`: `onNewIntent`
+    // can fire AFTER `setContent {}` has already composed once (the Activity is already showing,
+    // singleTask just re-fronts it with a new Intent) — a plain field mutation wouldn't recompose
+    // anything on its own, but a State write does.
+    private var pendingQuakeId by mutableStateOf<String?>(null)
 
     // Coarse-location runtime permission (Task 7). Per the ActivityResultContracts contract this
     // MUST be registered before the Activity reaches STARTED — a property initializer (running
@@ -77,6 +91,23 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // Plan 4 Task 3: POST_NOTIFICATIONS runtime permission (API 33+ only — see
+    // NotificationPermissionCondition.PRE_33). A grant enqueues the digest worker immediately
+    // (rather than waiting for the next app start) so onboarding's/Settings' own "Enable alerts"
+    // tap is followed by a genuinely scheduled worker in the SAME session, not just a permission
+    // flag that only takes effect after a relaunch.
+    private val requestNotificationPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) enqueueAlertDigestWorker(applicationContext)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingQuakeId = intent.getStringExtra(AlertDigestWorker.EXTRA_QUAKE_ID)
+    }
+
     @OptIn(kotlin.time.ExperimentalTime::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -88,6 +119,18 @@ class MainActivity : ComponentActivity() {
         bindLocationRequestLauncher {
             requestLocationPermission.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
         }
+        // Plan 4 Task 3: same "rebind every onCreate, not just first launch" reasoning as
+        // bindLocationRequestLauncher above — shouldShowRequestPermissionRationale needs THIS
+        // Activity instance, never a previous (destroyed) one's.
+        bindNotificationPermissionController(
+            condition = { computeNotificationPermissionCondition(this) },
+            rationale = { currentNotificationRationale(this) },
+            launch = {
+                markNotificationPermissionAsked(this)
+                requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            },
+            openSettingsAction = { openNotificationSettings(this) },
+        )
         // Guard against a second startKoin() call if the Activity is ever recreated in the same
         // process (e.g. a config change) — Koin throws KoinAppAlreadyStartedException otherwise.
         // Reused below for the permission ask too: "first launch" means once per process, not once
@@ -103,30 +146,23 @@ class MainActivity : ComponentActivity() {
             // Task 11: the Share button's Android actual needs a Context but shareQuakeText's
             // expect/actual signature can't carry one (see Share.kt's kdoc) - this is the one-time
             // wiring that substitutes for it, same "build/wire the platform-specific bit once here"
-            // spirit as the dao/http/locationProvider construction right below.
+            // spirit as ensureKoinStarted's own dao/http/locationProvider construction.
             initShareContext(applicationContext)
-            val dao = QuakeDao(createDatabase(DriverFactory(applicationContext)), clock = { Clock.System.now().toEpochMilliseconds() })
-            // Fix Round 1 (I1): pingIntervalMillis makes ktor send a WS ping frame on this cadence
-            // and expect a pong back — see EmscLiveSource.kt's kdoc for why this is required, not
-            // just tidy: without it, a dead socket that never sends a TCP-level close (silently
-            // dropped by a NAT/carrier/proxy) is invisible to `for (frame in incoming)`, which
-            // simply never receives another frame and never throws — `connected` (and therefore
-            // the LIVE indicator) stays true forever over a socket that is actually gone.
-            // Task 2 (Plan 3), release hygiene (F12): a hung USGS/EMSC request/connect attempt used
-            // to be able to sit forever with no plugin-level ceiling — HttpTimeout gives every
-            // request on this client a hard upper bound so a bad network degrades to a fast, honest
-            // RefreshStatus.FAILED (see UsgsApi.fetchFeed's own failure mapping) instead of a
-            // silently-stuck refresh loop.
-            val http = HttpClient(OkHttp) {
-                install(WebSockets) { pingIntervalMillis = 30_000 }
-                install(HttpTimeout) {
-                    requestTimeoutMillis = 15_000
-                    connectTimeoutMillis = 10_000
-                }
-            }
-            startKoin { modules(appModule(http, dao, locationProvider)) }
+            // Plan 4 Task 3: same one-time wiring shape as initShareContext above — see that
+            // function's own kdoc for the "process-lifetime holder" pattern this mirrors.
+            initAlertDigestSchedulerContext(applicationContext)
+            // Plan 4 Task 3: factored out of this block (was inline dao/http construction +
+            // startKoin call) — see ensureKoinStarted's own kdoc for why AlertDigestWorker.doWork()
+            // needs to be able to call the exact same bootstrap from a headless process start.
+            ensureKoinStarted(applicationContext, locationProvider)
         }
-        setContent { App() }
+        pendingQuakeId = intent?.getStringExtra(AlertDigestWorker.EXTRA_QUAKE_ID)
+        setContent {
+            App(
+                pendingQuakeId = pendingQuakeId,
+                onQuakeIdConsumed = { pendingQuakeId = null },
+            )
+        }
         if (firstLaunchThisProcess) {
             // Ask AFTER content is showing, not before — a permission dialog racing the first frame
             // would otherwise cover a still-blank window. Activity-level by design (not a
@@ -135,5 +171,17 @@ class MainActivity : ComponentActivity() {
             // App.kt).
             requestLocationPermission.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
         }
+        // Plan 4 Task 3: unlike the location ask above (one-shot, firstLaunchThisProcess-gated),
+        // this runs on EVERY onCreate — ExistingPeriodicWorkPolicy.KEEP (see
+        // enqueueAlertDigestWorker's own kdoc) makes every call past the first a harmless no-op, and
+        // re-checking on every app start (not just first-ever-install) is what picks up a
+        // permission grant that happened via system Settings while the app was closed.
+        enqueueDigestWorkerIfPermitted()
+    }
+
+    private fun enqueueDigestWorkerIfPermitted() {
+        val permitted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        if (permitted) enqueueAlertDigestWorker(applicationContext)
     }
 }

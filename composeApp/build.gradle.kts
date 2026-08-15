@@ -44,6 +44,11 @@ kotlin {
             // which compiles for wasmJs too — core:network only exposes ktor-client-core as
             // `implementation`, so it doesn't leak through projects.core.network transitively.
             implementation(libs.ktor.client.core)
+            // Plan 4 Task 3: OnboardingScreen/SettingsScreen re-read notification-permission state
+            // on ON_RESUME (system Settings can change it while this app is merely paused, not
+            // restarted) via LocalLifecycleOwner + a Lifecycle.Event observer — see
+            // notifications/NotificationPermissionState.kt's callers.
+            implementation(libs.androidx.lifecycle.runtime.compose)
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
@@ -59,6 +64,12 @@ kotlin {
             // :composeApp:wasmJsBrowserDistribution (no matching variant) outright. Spike decision
             // is Android-only live map for now; see docs/superpowers/plans/plan-2-spike-maplibre.md.
             implementation(libs.maplibre.compose)
+            // Plan 4 Task 3: AlertDigestWorker + its periodic/one-time enqueue calls — WorkManager
+            // has no jvm/wasmJs equivalent (spec §7's own platform table: background work is
+            // Android-only in v1), so this is androidMain-only, no expect/actual ceremony needed
+            // for the worker class itself (only the thin scheduling/state-query surface UI screens
+            // touch is expect/actual — see AlertDigestScheduler.kt).
+            implementation(libs.androidx.work.runtime.ktx)
         }
         jvmMain.dependencies {
             implementation(compose.desktop.currentOs)

@@ -52,6 +52,9 @@ import kotlinx.coroutines.flow.Flow
  * origin to write next; see [pruneOldRows]'s own kdoc for the bug this closes. Still never reaches
  * [DomainQuake] or any UI-facing read path — the one caller is [QuakeRepository]'s internal
  * bookkeeping, not a new public capability for this data to leak through.
+ *
+ * Task 3 (Plan 4) grows this to 17: [newSince] — `AlertDigestWorker`'s (androidMain) own delta
+ * query, the read-side twin of [pruneOldRows]'s origin filter. See its own kdoc.
  */
 interface QuakeStore {
     fun byId(id: String): DomainQuake?
@@ -164,6 +167,31 @@ interface QuakeStore {
      * an archived/debug row can no longer be silently downgraded into a prunable one.
      */
     fun pruneOldRows(cutoffMillis: Long)
+
+    /**
+     * Task 3 (Plan 4): `AlertDigestWorker`'s (androidMain, `composeApp`) own "what's new since my
+     * last run" query — every row whose `timeMillis` is strictly after [sinceMillis] AND whose
+     * `origin` is [ORIGIN_FEED] or [ORIGIN_LIVE], newest first. The worker reads its own persisted
+     * `alert_last_run` meta value as [sinceMillis], evaluates [com.yugma.terrawatch.data.
+     * AlertRuleEngine] against exactly the rows this returns, then advances that meta value.
+     *
+     * [ORIGIN_ARCHIVE]/[ORIGIN_DEBUG] rows are excluded even when they satisfy the time bound —
+     * this is the SAME F5 guard `QuakeRepository.loadArchivePage`'s own `rules = emptyList()`
+     * already enforces for the live in-session ingest path (plan-3-exit-conditions.md carried
+     * item: "a user deep-scrolling History past old M6+ quakes will notification-storm on events
+     * years old"), applied here to the digest worker's SEPARATE, worker-side re-evaluation instead
+     * of the ingest-time one — a backfilled archive row must never be able to trigger a background
+     * notification either, and a debug-injected row must never leak into real alerting. Mirrors
+     * [pruneOldRows]'s own eligible-origin set exactly (by coincidence of policy, not by shared
+     * code — the two are independent concerns that currently happen to agree on which origins
+     * count; a future origin added to one set should not be assumed to belong in the other without
+     * its own decision).
+     *
+     * Strict `>`, not `>=` — a row exactly AT [sinceMillis] was already considered by whichever
+     * run first recorded that cutoff (mirrors [pruneOldRows]'s own strict `<` on the opposite side
+     * of an identical boundary-value question).
+     */
+    fun newSince(sinceMillis: Long): List<DomainQuake>
 
     companion object {
         const val ORIGIN_FEED = "feed"

@@ -130,6 +130,19 @@ SELECT MAX(fetchedAtMillis) FROM quake;
 originOf:
 SELECT origin FROM quake WHERE id = ?;
 
+-- Task 3 (Plan 4): AlertDigestWorker's own "what's new since my last run" query -- feed/live rows
+-- only (the two origins a live user session or a background poll can ever produce), same eligible
+-- set pruneOldRows already exempts archive/debug FROM (there: protects them from deletion; here:
+-- excludes them from ever reaching a digest notification at all). Archive rows are History's
+-- deep-scroll backfill -- years-old by construction whenever they're paged in -- and debug rows are
+-- the long-press dev hook; neither should ever be able to trigger a real alert notification, the
+-- identical F5 guard QuakeRepository.loadArchivePage's own `rules = emptyList()` already enforces
+-- for the live in-session path. `timeMillis > :sinceMillis` is strict greater-than (a row exactly AT
+-- the cutoff was already considered by whichever run first recorded that cutoff) -- mirrors
+-- pruneOldRows' own strict `<` on the opposite side of the same boundary value.
+newSince:
+SELECT * FROM quake WHERE timeMillis > :sinceMillis AND origin IN ('feed', 'live') ORDER BY timeMillis DESC;
+
 -- Task 6 (Plan 3): Insights' three aggregates. All three share the same `WHERE timeMillis >=
 -- :sinceMillis` window-clip — the caller (QuakeDao) always passes the period's own start-of-day
 -- millis, never a raw "now minus N millis" cutoff, so results align exactly on calendar-day

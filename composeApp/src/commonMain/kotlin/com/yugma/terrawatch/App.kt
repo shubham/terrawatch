@@ -5,6 +5,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -56,8 +57,15 @@ import org.koin.compose.viewmodel.koinViewModel
 // class's kdoc) emits the real stored value synchronously the moment this collector subscribes,
 // well before the first frame actually paints, so SYSTEM here is a type-safe placeholder for an
 // initial value collectAsState requires, not a value this composable ever visibly renders with.
+// Plan 4 Task 3: [pendingQuakeId]/[onQuakeIdConsumed] are the tap-through deep link from a digest
+// notification — both default so every pre-existing call site (jvmMain's main(), wasmJs's own
+// entry point, both bare `App()` calls) keeps compiling unchanged; only MainActivity's android
+// actual ever supplies a non-null id (a notification's own PendingIntent extra — see
+// AlertDigestWorker's kdoc). [onQuakeIdConsumed] lets the caller clear its own held state once
+// this composable has acted on the id, so a later recomposition triggered by something unrelated
+// doesn't call [QuakeSelectionViewModel.select] a second time with the same stale id.
 @Composable
-fun App() {
+fun App(pendingQuakeId: String? = null, onQuakeIdConsumed: () -> Unit = {}) {
     val homeViewModel = koinViewModel<HomeViewModel>()
     // Task 9 (Plan 3) + desktop hotfix: rememberQuakeSelectionExtras() is null only on Android —
     // see that function's own kdoc (QuakeSelectionExtras.kt) for the real crash this works around
@@ -73,6 +81,17 @@ fun App() {
     }
     val themeStore = koinInject<ThemeStore>()
     val themeSetting by themeStore.theme.collectAsState(initial = ThemeSetting.SYSTEM)
+    // Plan 4 Task 3: keyed on pendingQuakeId itself, not Unit -- a SECOND notification tapped while
+    // this composable is already alive (MainActivity's singleTask onNewIntent path) hands down a
+    // NEW, different id, which must re-run this effect and open THAT quake's sheet; a Unit key
+    // would only ever fire once for this composable's whole lifetime. `null` (the default/
+    // already-consumed state) intentionally does nothing -- select() needs a real id.
+    LaunchedEffect(pendingQuakeId) {
+        pendingQuakeId?.let { id ->
+            selectionViewModel.select(id)
+            onQuakeIdConsumed()
+        }
+    }
     TerraTheme(darkTheme = resolveDarkTheme(themeSetting, isSystemInDarkTheme())) {
         // Task 10: resolved once here (composition root) and handed down via CompositionLocal so
         // every screen/component that gates motion off LocalReducedMotion reads the same answer

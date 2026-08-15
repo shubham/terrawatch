@@ -407,20 +407,33 @@ class QuakeRepository(
                 // merge, regardless of which origin the CALLER passed in; anything else (feed/live,
                 // neither ever protected) lets the caller's own origin win exactly as before.
                 //
-                // Checks BOTH lookup shapes, independently — NOT just `previous`'s own resolved id:
-                //  - same-id update: the row already stored at incoming.id (previousById above).
-                //  - cross-id merge: the row `result.replacesId` points at.
-                // These are the identical two ids `deleteIds` just above already has to reason about
-                // for the exact same "not mutually exclusive" reason its own comment documents — a
-                // single call can supersede BOTH simultaneously (previousById != null AND
-                // result.replacesId != null at once). `previous` itself only ever resolves to ONE of
-                // them (the elvis chain's first hit, previousById when present) — checking only
-                // `previous`'s origin would silently miss a protected replacesId row exactly in that
-                // dual-stale-row case (QuakeRepositoryTest's "checks the replaced row too" pins this).
-                val existingOrigins = listOfNotNull(
-                    previous?.let { dao.originOf(it.id) },
-                    result.replacesId?.let { dao.originOf(it) },
-                )
+                // Checks BOTH slots below independently — NOT just `previous`'s own resolved id:
+                //  - `previous`: whichever of the THREE elvis branches above actually fired —
+                //    previousById (same-id update), the replacesId lookup (cross-id merge), OR the
+                //    canonical.id fallback (the orphaned-third-id case `deleteIds`' own comment above
+                //    documents: an EMSC epicenter-drift revision, where canonical.id lands on neither
+                //    incoming.id nor the matched row's id). All three already funnel through this one
+                //    variable, so this slot alone protects whichever one of them actually resolved.
+                //  - `result.replacesId` read AGAIN, directly (not reused from `previous`): needed
+                //    because `previous` only ever resolves to ONE row — the elvis chain's first
+                //    non-null hit — so whenever previousById itself is non-null, `previous` stops
+                //    there and never reaches the replacesId branch at all, even though replacesId
+                //    can independently point at a SECOND, different stale row that also needs
+                //    checking. `deleteIds` just above already has to reason about this identical
+                //    "not mutually exclusive" shape (previousById != null AND result.replacesId !=
+                //    null can both hold at once) — checking only `previous`'s origin would silently
+                //    miss a protected replacesId row in exactly that dual-stale-row case
+                //    (QuakeRepositoryTest's "checks the replaced row too" pins this).
+                // `setOfNotNull` (Task 3, Plan 4 re-review), not two independent `listOfNotNull`
+                // entries: a PLAIN cross-id merge (previousById null, only result.replacesId set)
+                // has `previous.id == result.replacesId` — the old code queried `dao.originOf` for
+                // that identical id twice over. A set naturally collapses the two id sources down to
+                // however many are actually DISTINCT before querying, so the dual-stale-row case
+                // (previousById AND replacesId both non-null, genuinely two different ids) still
+                // queries both independently, exactly as the paragraph above requires — this is a
+                // pure query-count optimization, not a behavior change (membership-testing
+                // `existingOrigins` below via `in` was already indifferent to a duplicate entry).
+                val existingOrigins = setOfNotNull(previous?.id, result.replacesId).map { dao.originOf(it) }
                 val effectiveOrigin = when {
                     QuakeStore.ORIGIN_ARCHIVE in existingOrigins -> QuakeStore.ORIGIN_ARCHIVE
                     QuakeStore.ORIGIN_DEBUG in existingOrigins -> QuakeStore.ORIGIN_DEBUG

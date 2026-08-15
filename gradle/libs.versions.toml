@@ -11,6 +11,15 @@ kotlinxDatetime = "0.7.1"
 turbine = "1.2.1"
 androidxActivity = "1.10.1"
 androidxLifecycle = "2.9.1"
+# Plan 4 Task 3: androidx.work:work-runtime-ktx. Checked Google's Maven repo's own
+# maven-metadata.xml directly (2026-08-15, not trusting the plan's own "2.10.x" placeholder as an
+# exact patch) — same "verify against the real index" discipline navigationCompose's own version
+# choice already established. Full 2.10.x line: 2.10.0 ... 2.10.5 (alpha/beta/rc precede 2.10.0);
+# 2.10.5 is the newest stable patch within the 2.10 line the plan explicitly names — a newer 2.11.x
+# stable line also exists, but the plan names "2.10.x" twice (tech-stack line + this task's own
+# dispatch), read as a deliberate compatibility target rather than a vague guess, so this stays
+# within that line rather than jumping to the newest overall stable.
+androidxWork = "2.10.5"
 maplibreCompose = "0.14.0"
 # Task 13: androidTest-only. androidx.test:runner latest stable per Maven Central/Google (checked
 # 2026-08-09) is 1.7.0 (Jul 2025) — bumped from the brief's placeholder 1.6.2 per its own "bump to
@@ -57,6 +66,15 @@ kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.
 turbine = { module = "app.cash.turbine:turbine", version.ref = "turbine" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidxActivity" }
 androidx-lifecycle-viewmodel = { module = "org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "androidxLifecycle" }
+# Plan 4 Task 3: LocalLifecycleOwner + resume-observation for the alerts permission UI (Settings'
+# ALERTS row / onboarding step 3 must reflect a permission change made in system Settings while
+# this app was merely paused, not restarted) — the JetBrains KMP-published artifact under the SAME
+# group/version this project's own lifecycle-viewmodel-compose already pins, not a second,
+# independently-versioned lifecycle dependency (checked Maven Central: 2.9.1 is a real published
+# version of this artifact too, alongside 2.9.2/2.11.0 — kept at 2.9.1 for consistency with the
+# other lifecycle artifact already in use here rather than bumping only this one).
+androidx-lifecycle-runtime-compose = { module = "org.jetbrains.androidx.lifecycle:lifecycle-runtime-compose", version.ref = "androidxLifecycle" }
+androidx-work-runtime-ktx = { module = "androidx.work:work-runtime-ktx", version.ref = "androidxWork" }
 maplibre-compose = { module = "org.maplibre.compose:maplibre-compose", version.ref = "maplibreCompose" }
 androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidxTestRunner" }
 androidx-compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest", version.ref = "androidxComposeUiTestManifest" }

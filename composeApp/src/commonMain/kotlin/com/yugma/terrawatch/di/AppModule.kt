@@ -1,5 +1,6 @@
 package com.yugma.terrawatch.di
 
+import com.yugma.terrawatch.alerts.AlertDigestScheduler
 import com.yugma.terrawatch.data.AlertRuleStore
 import com.yugma.terrawatch.data.HistoryPager
 import com.yugma.terrawatch.data.HomeLocationStore
@@ -15,6 +16,7 @@ import com.yugma.terrawatch.location.LocationProvider
 import com.yugma.terrawatch.location.LocationRequester
 import com.yugma.terrawatch.network.EmscLiveSource
 import com.yugma.terrawatch.network.UsgsApi
+import com.yugma.terrawatch.notifications.NotificationPermissionRequester
 import com.yugma.terrawatch.settings.SettingsViewModel
 import io.ktor.client.HttpClient
 import org.koin.core.module.Module
@@ -64,6 +66,13 @@ fun appModule(http: HttpClient, dao: QuakeStore, locationProvider: LocationProvi
     // this via koinInject(), not through HomeViewModel's constructor: nothing else in this graph
     // needs it.
     single { LocationRequester() }
+    // Plan 4 Task 3: same no-arg-constructor, uniform-across-targets shape as LocationRequester
+    // just above — see each class's own kdoc. NotificationPermissionRequester is resolved via
+    // koinInject() from OnboardingScreen's step 3 and SettingsScreen's ALERTS row;
+    // AlertDigestScheduler from SettingsScreen's ALERTS row only (its "is the worker enqueued"
+    // query + the debug immediate-trigger long-press).
+    single { NotificationPermissionRequester() }
+    single { AlertDigestScheduler() }
     // viewModel {} (not factory {}) — scopes HomeViewModel to the platform ViewModelStore via
     // koin-compose-viewmodel's koinViewModel<HomeViewModel>() at the App() call site, instead of
     // minting a fresh instance (and a fresh startLive() collector) on every recomposition/rotation.

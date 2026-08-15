@@ -68,3 +68,20 @@
 # treating a handful of classes as plain Java for its Kotlin-specific shrinking heuristics (still
 # fully correct, just marginally less aggressive for those classes) — not a missing-class error, not
 # fixable by a keep rule, and orthogonal to anything this app's own code does.
+
+# Plan 4 Task 3: AlertDigestWorker, WorkManager's own reflection-based instantiation.
+#
+# Unlike every OTHER concern this file's "Verified NOT needed" section above walks through
+# (Koin/SQLDelight/Ktor/kotlinx-serialization all avoid string-based reflection entirely in this
+# app), WorkManager's default WorkerFactory genuinely does one: it persists a Worker subclass's
+# fully-qualified name into its own Room-backed WorkSpec, then later re-instantiates it via
+# `Class.forName(...).asSubclass(ListenableWorker::class.java)` followed by reflectively invoking
+# its `(Context, WorkerParameters)` constructor. androidx.work:work-runtime-ktx's own bundled
+# consumer-rules.pro cannot possibly name THIS app's own AlertDigestWorker class ahead of time — a
+# library's consumer rules only ever cover that library's OWN classes, never a consuming app's.
+# Without this rule, R8 is free to rename/obfuscate AlertDigestWorker, and the very first periodic
+# run after a release install would fail with a silent ClassNotFoundException deep inside
+# WorkManager (no crash the user would see — just alerts that never fire).
+-keep class com.yugma.terrawatch.alerts.AlertDigestWorker {
+    <init>(android.content.Context, androidx.work.WorkerParameters);
+}

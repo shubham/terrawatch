@@ -1,7 +1,9 @@
 package com.yugma.terrawatch.settings
 
+import com.yugma.terrawatch.notifications.NotificationAlertsUiState
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 
 /**
  * Task 7 (Plan 3): [closestRadiusStepIndex]/[snapToHalfMagnitude] are the two small pure helpers
@@ -43,5 +45,34 @@ class SettingsScreenTest {
 
     @Test fun `app version constant pins the released version string`() {
         assertEquals("0.9.0", APP_VERSION)
+    }
+
+    // --- Task 3 (Plan 4): the ALERTS section's permission/worker-state row -----------------------
+
+    @Test fun `alertsRowStatusText is On only when ENABLED and the worker is actually enqueued`() {
+        assertEquals("On", alertsRowStatusText(NotificationAlertsUiState.ENABLED, enqueued = true))
+    }
+
+    @Test fun `alertsRowStatusText is Off when ENABLED but the worker isn't enqueued -- honest, not inferred`() {
+        assertEquals("Off", alertsRowStatusText(NotificationAlertsUiState.ENABLED, enqueued = false))
+    }
+
+    @Test fun `alertsRowStatusText is Off when permission itself isn't enabled, regardless of enqueued`() {
+        assertEquals("Off", alertsRowStatusText(NotificationAlertsUiState.CAN_ASK, enqueued = true))
+        assertEquals("Off", alertsRowStatusText(NotificationAlertsUiState.NEEDS_SETTINGS, enqueued = true))
+    }
+
+    @Test fun `alertsRowExplainer is null when ENABLED -- no explanation needed`() {
+        assertNull(alertsRowExplainer(NotificationAlertsUiState.ENABLED))
+    }
+
+    @Test fun `alertsRowExplainer is non-null and mentions Settings for CAN_ASK and NEEDS_SETTINGS alike`() {
+        val canAsk = alertsRowExplainer(NotificationAlertsUiState.CAN_ASK)
+        val needsSettings = alertsRowExplainer(NotificationAlertsUiState.NEEDS_SETTINGS)
+        assertEquals(canAsk, needsSettings) // Settings' own row uses one shape for both -- see SettingsScreen's kdoc
+        assertEquals(
+            "Notifications are off — earthquake digests can't be delivered. Enable them in system Settings.",
+            canAsk,
+        )
     }
 }

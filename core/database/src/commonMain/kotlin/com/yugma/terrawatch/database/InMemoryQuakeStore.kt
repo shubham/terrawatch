@@ -121,15 +121,23 @@ class InMemoryQuakeStore(private val clock: () -> Long = { 0L }) : QuakeStore {
     // class-level Concurrency section's QuakeRepository.ingestMutex reasoning above. That's the
     // WRONG class and the wrong path for THIS method: ingestMutex only ever serializes writes to
     // `quakes` (via QuakeRepository.ingest's replace/replaceAndDelete calls) — it has nothing to do
-    // with `meta`, and metaPutAll's own real callers (HomeLocationStore.set, ThemeStore,
-    // AlertRuleStore, OnboardingStore) never touch QuakeRepository or acquire that mutex at all. The
-    // actual reason a plain loop is safe here: this class only ever ships to the single-threaded
-    // wasmJs target (see class kdoc), and the loop body itself (`meta[key] = value`, a plain
-    // synchronous Map write) has NO suspension point — nothing else can run on that one JS thread
-    // until this whole forEach returns, so no reader can ever observe a torn intermediate state,
-    // with or without a lock. [QuakeDao]'s real `db.transaction {}` (a genuine multi-threaded,
-    // concurrent-reader environment) is what actually needs, and gets, its own transactional guard
-    // — see that method's own kdoc.
+    // with `meta`, and neither of metaPutAll's real callers ever touches QuakeRepository or
+    // acquires that mutex at all. Task 3 (Plan 4) re-review: the prior version of THIS note
+    // overclaimed the caller list too (named HomeLocationStore.set, ThemeStore, AlertRuleStore, AND
+    // OnboardingStore — grepped the whole repo to check, EVIDENCE INTEGRITY: only HomeLocationStore.
+    // set ever called this at the time). Corrected, and now genuinely two real callers as of this
+    // task: HomeLocationStore.set (home_lat/home_lon, this method's original motivating case) and
+    // `com.yugma.terrawatch.alerts.AlertDigestWorker` (androidMain — its own atomic `alert_last_run`
+    // + `alert_notified_ids` pair, same torn-write concern as HomeLocationStore's own, a fresh
+    // instance of the identical M1-shaped hazard this method exists to close). ThemeStore/
+    // AlertRuleStore/OnboardingStore each still only ever call the single-key `metaPut` — they have
+    // no multi-key write to make atomic. The actual reason a plain loop is safe here: this class
+    // only ever ships to the single-threaded wasmJs target (see class kdoc), and the loop body
+    // itself (`meta[key] = value`, a plain synchronous Map write) has NO suspension point — nothing
+    // else can run on that one JS thread until this whole forEach returns, so no reader can ever
+    // observe a torn intermediate state, with or without a lock. [QuakeDao]'s real
+    // `db.transaction {}` (a genuine multi-threaded, concurrent-reader environment) is what
+    // actually needs, and gets, its own transactional guard — see that method's own kdoc.
     override fun metaPutAll(vararg pairs: Pair<String, String>) {
         pairs.forEach { (key, value) -> meta[key] = value }
     }
@@ -167,6 +175,19 @@ class InMemoryQuakeStore(private val clock: () -> Long = { 0L }) : QuakeStore {
         expired.forEach { fetchedAt.remove(it); originById.remove(it) }
     }
 
+    /**
+     * Task 3 (Plan 4): mirrors [QuakeDao.newSince] exactly (same contract, other [QuakeStore]
+     * implementation) -- see [QuakeStore.newSince]'s own interface kdoc for the full ruling. A
+     * missing origin (should not happen outside a test poking [quakes] directly -- see
+     * [pruneOldRows]'s own kdoc for the identical defensive default) resolves to [QuakeStore.
+     * ORIGIN_FEED], i.e. eligible, matching [pruneOldRows]'s own "degrade to the least-surprising
+     * default" posture rather than silently excluding an origin-less row from ever alerting.
+     */
+    override fun newSince(sinceMillis: Long): List<DomainQuake> =
+        quakes.value.values.byRecency {
+            it.timeMillis > sinceMillis && (originById[it.id] ?: QuakeStore.ORIGIN_FEED) in ALERT_ELIGIBLE_ORIGINS
+        }
+
     // `val mag = quake.mag` first, not `quake.mag` inline twice: Quake.mag is a property declared
     // in a DIFFERENT module (core:model) from this one (core:database) — Kotlin refuses to
     // smart-cast a cross-module property read even after a `!= null` check right next to it ("Smart
@@ -184,5 +205,11 @@ class InMemoryQuakeStore(private val clock: () -> Long = { 0L }) : QuakeStore {
 
     private companion object {
         val PRUNABLE_ORIGINS = setOf(QuakeStore.ORIGIN_FEED, QuakeStore.ORIGIN_LIVE)
+
+        // Task 3 (Plan 4): same two literal values as PRUNABLE_ORIGINS above, kept as its OWN named
+        // constant rather than reused -- see QuakeStore.newSince's own kdoc for why: pruning and
+        // alert-eligibility are independent policies that currently happen to agree, not one
+        // concern wearing two names.
+        val ALERT_ELIGIBLE_ORIGINS = setOf(QuakeStore.ORIGIN_FEED, QuakeStore.ORIGIN_LIVE)
     }
 }

@@ -300,4 +300,44 @@ class InMemoryQuakeStoreTest {
         assertNotNull(store.byId("old-archive"))
         assertNotNull(store.byId("young-live"))
     }
+
+    // --- Task 3 (Plan 4): newSince -- mirrors QuakeDaoTest's own matrix exactly (same contract,
+    // other QuakeStore implementation) -----------------------------------------------------------
+
+    @Test fun `newSince returns feed and live rows strictly after the cutoff`() {
+        store.replace(quake(id = "new-feed", timeMillis = 2000), origin = "feed")
+        store.replace(quake(id = "new-live", timeMillis = 3000), origin = "live")
+        val result = store.newSince(sinceMillis = 1000)
+        assertEquals(setOf("new-feed", "new-live"), result.map { it.id }.toSet())
+    }
+
+    @Test fun `newSince excludes archive rows even when they are new`() {
+        store.replace(quake(id = "new-archive", timeMillis = 2000), origin = "archive")
+        assertEquals(emptyList(), store.newSince(sinceMillis = 1000))
+    }
+
+    @Test fun `newSince excludes debug rows even when they are new`() {
+        store.replace(quake(id = "debug-new", timeMillis = 2000), origin = "debug")
+        assertEquals(emptyList(), store.newSince(sinceMillis = 1000))
+    }
+
+    @Test fun `newSince cutoff comparison is strict greater-than -- a row exactly AT cutoff is excluded`() {
+        store.replace(quake(id = "at-cutoff", timeMillis = 1000), origin = "feed")
+        assertEquals(emptyList(), store.newSince(sinceMillis = 1000))
+    }
+
+    @Test fun `newSince excludes rows at or before the cutoff`() {
+        store.replace(quake(id = "old-feed", timeMillis = 500), origin = "feed")
+        assertEquals(emptyList(), store.newSince(sinceMillis = 1000))
+    }
+
+    @Test fun `newSince on an empty store returns empty`() {
+        assertEquals(emptyList(), InMemoryQuakeStore().newSince(sinceMillis = 1000))
+    }
+
+    @Test fun `newSince orders newest first`() {
+        store.replace(quake(id = "older", timeMillis = 2000), origin = "feed")
+        store.replace(quake(id = "newer", timeMillis = 3000), origin = "live")
+        assertEquals(listOf("newer", "older"), store.newSince(sinceMillis = 1000).map { it.id })
+    }
 }

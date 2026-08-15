@@ -198,6 +198,10 @@ class QuakeDao(private val db: TerraWatchDb, private val clock: () -> Long = { 0
     // returns the affected-row count (Long), which would mismatch QuakeStore's declared Unit.
     override fun pruneOldRows(cutoffMillis: Long) { db.quakeQueries.pruneOldRows(cutoffMillis) }
 
+    /** Task 3 (Plan 4): see [QuakeStore.newSince]'s own kdoc. */
+    override fun newSince(sinceMillis: Long): List<DomainQuake> =
+        db.quakeQueries.newSince(sinceMillis).executeAsList().map { it.toDomain() }
+
     // [origin] defaults to QuakeStore.ORIGIN_FEED so upsert()/upsertAll() (QuakeDao-only test
     // helpers, never on the QuakeStore interface — see that interface's own kdoc) keep compiling
     // unchanged; every real production write goes through replace()/replaceAndDelete() above, which

@@ -424,4 +424,47 @@ class QuakeDaoTest {
         assertNotNull(dao.byId("old-archive"))
         assertNotNull(dao.byId("young-live"))
     }
+
+    // --- Task 3 (Plan 4): newSince -- AlertDigestWorker's own "what's new since my last run" query,
+    // scoped to feed/live origins only -- mirrors pruneOldRows' own origin-filter shape (same two
+    // eligible origins), just the opposite direction (a read, not a delete) and gated by
+    // timeMillis > cutoff rather than < cutoff. See QuakeStore.newSince's own kdoc for the full
+    // ruling on why archive/debug rows must never reach a digest notification. --------------------
+
+    @Test fun `newSince returns feed and live rows strictly after the cutoff`() {
+        dao.replace(quake(id = "new-feed").copy(timeMillis = 2000), origin = "feed")
+        dao.replace(quake(id = "new-live").copy(timeMillis = 3000), origin = "live")
+        val result = dao.newSince(sinceMillis = 1000)
+        assertEquals(setOf("new-feed", "new-live"), result.map { it.id }.toSet())
+    }
+
+    @Test fun `newSince excludes archive rows even when they are new`() {
+        dao.replace(quake(id = "new-archive").copy(timeMillis = 2000), origin = "archive")
+        assertEquals(emptyList(), dao.newSince(sinceMillis = 1000))
+    }
+
+    @Test fun `newSince excludes debug rows even when they are new`() {
+        dao.replace(quake(id = "debug-new").copy(timeMillis = 2000), origin = "debug")
+        assertEquals(emptyList(), dao.newSince(sinceMillis = 1000))
+    }
+
+    @Test fun `newSince cutoff comparison is strict greater-than -- a row exactly AT cutoff is excluded`() {
+        dao.replace(quake(id = "at-cutoff").copy(timeMillis = 1000), origin = "feed")
+        assertEquals(emptyList(), dao.newSince(sinceMillis = 1000))
+    }
+
+    @Test fun `newSince excludes rows at or before the cutoff`() {
+        dao.replace(quake(id = "old-feed").copy(timeMillis = 500), origin = "feed")
+        assertEquals(emptyList(), dao.newSince(sinceMillis = 1000))
+    }
+
+    @Test fun `newSince on an empty table returns empty`() {
+        assertEquals(emptyList(), dao.newSince(sinceMillis = 1000))
+    }
+
+    @Test fun `newSince orders newest first`() {
+        dao.replace(quake(id = "older").copy(timeMillis = 2000), origin = "feed")
+        dao.replace(quake(id = "newer").copy(timeMillis = 3000), origin = "live")
+        assertEquals(listOf("newer", "older"), dao.newSince(sinceMillis = 1000).map { it.id })
+    }
 }

@@ -1,7 +1,9 @@
 package com.yugma.terrawatch.settings
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -23,6 +25,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,11 +42,16 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.yugma.terrawatch.alerts.AlertDigestScheduler
 import com.yugma.terrawatch.data.ThemeSetting
 import com.yugma.terrawatch.location.CityPickerDialog
 import com.yugma.terrawatch.location.LocationRequester
 import com.yugma.terrawatch.location.canRequestLocation
 import com.yugma.terrawatch.model.GeoPoint
+import com.yugma.terrawatch.notifications.NotificationAlertsUiState
+import com.yugma.terrawatch.notifications.NotificationPermissionRequester
+import com.yugma.terrawatch.notifications.reduceNotificationPermissionState
+import com.yugma.terrawatch.notifications.rememberNotificationCondition
 import com.yugma.terrawatch.ui.format.formatCoordinates
 import com.yugma.terrawatch.ui.format.formatCount
 import com.yugma.terrawatch.ui.format.formatMagnitude
@@ -73,6 +81,31 @@ internal fun closestRadiusStepIndex(radiusKm: Double): Int =
  * [androidx.compose.material3.Slider]'s own `steps`-driven snapping (which should already deliver
  * exact 0.5 increments for a 3.0..6.0 range) rather than a load-bearing computation of its own. */
 internal fun snapToHalfMagnitude(value: Double): Double = round(value * 2.0) / 2.0
+
+/**
+ * Task 3 (Plan 4): the ALERTS section's own on/off row text — "On" requires BOTH permission
+ * ([NotificationAlertsUiState.ENABLED] — granted, or auto-granted pre-33) AND [enqueued] (a REAL
+ * `AlertDigestScheduler.isEnqueued()` query, not merely inferred from permission alone — see that
+ * method's own kdoc for why this row wants to be honest about the worker's actual scheduled state,
+ * not just what permission theoretically allows).
+ */
+internal fun alertsRowStatusText(uiState: NotificationAlertsUiState, enqueued: Boolean): String =
+    if (uiState == NotificationAlertsUiState.ENABLED && enqueued) "On" else "Off"
+
+/**
+ * The explainer line shown under the ALERTS row whenever it reads "Off" — `null` when [uiState] is
+ * [NotificationAlertsUiState.ENABLED] (nothing to explain). Deliberately the SAME copy for
+ * [NotificationAlertsUiState.CAN_ASK] and [NotificationAlertsUiState.NEEDS_SETTINGS] alike — see
+ * [AlertsPermissionRow]'s own kdoc for the controller ruling this reflects: Settings' row always
+ * routes to system Settings, never a re-triggered in-app OS dialog (that in-app ask-with-rationale
+ * flow is onboarding step 3's job specifically, not this row's).
+ */
+internal fun alertsRowExplainer(uiState: NotificationAlertsUiState): String? =
+    if (uiState == NotificationAlertsUiState.ENABLED) {
+        null
+    } else {
+        "Notifications are off — earthquake digests can't be delivered. Enable them in system Settings."
+    }
 
 // Task 12 (Plan 3), release hygiene subset: hardcoded, not read from any BuildConfig-equivalent —
 // composeApp is a KMP commonMain source set (this file compiles for android/jvm/wasmJs alike), and
@@ -127,6 +160,8 @@ fun SettingsScreen(
                     RadiusSlider(radiusKm = nearbyRadiusKm, onRadiusChange = viewModel::setNearbyRadius)
                     Spacer(Modifier.height(16.dp))
                     MinMagSlider(minMag = minMag, onMinMagChange = viewModel::setMinMag)
+                    Spacer(Modifier.height(16.dp))
+                    AlertsPermissionRow()
                 }
                 SettingsCard {
                     SettingsSectionLabel("PLACE")
@@ -271,6 +306,76 @@ private fun MinMagSlider(minMag: Double, onMinMagChange: (Double) -> Unit, modif
             // 3.0..6.0 in steps of 0.5 = 7 stops = start + 5 intermediate + end.
             steps = 5,
         )
+    }
+}
+
+/**
+ * Task 3 (Plan 4): the ALERTS section's permission/worker-state row — "On"/"Off"
+ * ([alertsRowStatusText]) plus, when off, an explainer and a Settings deep-link
+ * ([alertsRowExplainer]). [rememberNotificationCondition] is what keeps this live across a visit
+ * to system Settings and back (see that function's own kdoc); [AlertDigestScheduler.isEnqueued] is
+ * re-queried every time [condition] itself changes (a permission flip is the one thing that could
+ * plausibly change whether the worker is enqueued too, e.g. `MainActivity`'s own grant-callback
+ * enqueue call landing right after this row last read `enqueued`).
+ *
+ * Controller ruling: unlike onboarding step 3 (`OnboardingScreen.kt`'s own `NotificationsAskStep`),
+ * this row NEVER re-triggers the in-app OS ask dialog — both [NotificationAlertsUiState.CAN_ASK]
+ * and [NotificationAlertsUiState.NEEDS_SETTINGS] resolve to the identical "explain + Settings
+ * deep-link" shape ([alertsRowExplainer]'s own kdoc), matching this task's own dispatch text
+ * literally ("denied -> row explains + Settings deep-link"). Onboarding is the one place a fresh
+ * in-context ask fits Android's own permission-UX conventions; a return visit to Settings reads
+ * better as "go fix it in system Settings" than a re-triggered dialog.
+ *
+ * The debug-only long-press (this task's own device-verification hook): [AlertDigestScheduler.
+ * isDebugTriggerAvailable] gates [AlertDigestScheduler.triggerNow] internally (mirrors `QuakeMap.
+ * android.kt`'s own `isDebuggableBuild`-gated long-press quake-inject hook) — this row's own
+ * `combinedClickable` calls it unconditionally on a long-press; a release build's own `false`
+ * answer makes that call a harmless no-op, so no separate "is this UI element visible" gate is
+ * needed on top.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun AlertsPermissionRow(modifier: Modifier = Modifier) {
+    val requester = koinInject<NotificationPermissionRequester>()
+    val scheduler = koinInject<AlertDigestScheduler>()
+    val condition = rememberNotificationCondition(requester)
+    val uiState = reduceNotificationPermissionState(condition)
+    var enqueued by remember { mutableStateOf(false) }
+    LaunchedEffect(condition) { enqueued = scheduler.isEnqueued() }
+
+    Column(
+        modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = {},
+                onLongClick = { if (scheduler.isDebugTriggerAvailable()) scheduler.triggerNow() },
+            ),
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "Alerts",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = alertsRowStatusText(uiState, enqueued),
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+        }
+        alertsRowExplainer(uiState)?.let { explainer ->
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = explainer,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            TextButton(onClick = { requester.openSettings() }, modifier = Modifier.padding(top = 4.dp)) {
+                Text("Open Settings")
+            }
+        }
     }
 }
 
