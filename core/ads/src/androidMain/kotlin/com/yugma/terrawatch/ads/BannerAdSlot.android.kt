@@ -2,6 +2,7 @@ package com.yugma.terrawatch.ads
 
 import android.content.Context
 import android.content.pm.PackageManager
+import android.view.View
 import android.view.ViewGroup
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
@@ -112,22 +113,34 @@ private const val AD_FADE_IN_DURATION_MS = 300
  *    backgrounding the app while the detail sheet happens to be open, then returning to the
  *    foreground with that sheet still open, would have the Activity's own `ON_RESUME` incorrectly
  *    call `resume()` on an `AdView` that's still supposed to be hidden.
- * 6. **The reserved-height `Box` is now the ONLY thing `visible` collapses** — the
- *    `AndroidView`/`AdView` inside is composed continuously for as long as this composable itself
- *    stays mounted (`AppNav.kt` decides that, gated on Plus/onboarding only — never on `visible`
- *    itself). `onRelease = { it.destroy() }` therefore now only fires on a REAL end-of-life (Plus
- *    purchased, onboarding not finished — both unmount this composable structurally from `AppNav.kt`
- *    's call site), not on every detail-sheet open. THE fix for glitch 2 (reload jank on hide -> show).
- *    `clipToBounds()` is defensive belt-and-suspenders, not load-bearing: Compose's own constraint
- *    propagation already forces the `AndroidView`'s native measure pass to 0 height whenever this
- *    `Box` resolves to 0dp (an entirely ordinary Android measure/layout case), kept in case a future
- *    AdMob SDK version's own internal drawing ever tries to paint past its measured bounds.
+ * 6. **The reserved-height `Box` + the native `View.visibility` together are what `visible`
+ *    collapses** — the `AndroidView`/`AdView` inside is composed continuously for as long as this
+ *    composable itself stays mounted (`AppNav.kt` decides that, gated on Plus/onboarding only — never
+ *    on `visible` itself). `onRelease = { it.destroy() }` therefore now only fires on a REAL
+ *    end-of-life (Plus purchased, onboarding not finished — both unmount this composable structurally
+ *    from `AppNav.kt`'s call site), not on every detail-sheet open. THE fix for glitch 2 (reload jank
+ *    on hide -> show). `clipToBounds()` is defensive belt-and-suspenders, not load-bearing: Compose's
+ *    own constraint propagation already forces the `AndroidView`'s native measure pass to 0 height
+ *    whenever this `Box` resolves to 0dp (an entirely ordinary Android measure/layout case), kept in
+ *    case a future AdMob SDK version's own internal drawing ever tries to paint past its measured
+ *    bounds.
+ *    **Fix Round 2 (Review 3, B-1)**: until this fix, that 0dp squeeze was the ONLY thing standing
+ *    between a live, already-loaded native `AdView` and "genuinely hidden" — nothing in this file
+ *    actually set `adView.visibility`, so spec §8's hard "no banner ever sits next to disaster detail
+ *    content" rule rested entirely on trusting `play-services-ads`'s own `onMeasure` to honor a 0dp
+ *    constraint, unverified on this specific SDK/OEM combination. Closed for free by also setting
+ *    `adView.visibility = if (visible) View.VISIBLE else View.GONE` directly in the pause/resume
+ *    `LaunchedEffect` below (same `visible` source of truth, same effect block) — `GONE` removes the
+ *    view from layout/draw/hit-testing unconditionally, regardless of what the SDK's own measure pass
+ *    does internally. Belt-and-braces, not a behavior change: an immutable ad-ethics rule is exactly
+ *    the case where redundant enforcement is the point.
  *    **Device-verification-pending** (98bc1cd8 not connected this session, per this task's own
  *    Global Constraints): a 0-height squeeze of a REAL native `AdView` — as opposed to a plain
  *    Compose-only child — has not been watched happen on this specific OEM build; nothing in
- *    `play-services-ads`'s own public contract suggests it should misbehave, but this is the one
- *    genuinely new runtime shape this task introduces that the existing device matrix never
- *    exercised.
+ *    `play-services-ads`'s own public contract suggests it should misbehave, and the new
+ *    `visibility = GONE` toggle now makes this a belt-and-braces gap rather than a load-bearing one —
+ *    but a real screenshot/tap-through check with the detail sheet open is still the highest-value
+ *    item on the device matrix below.
  */
 @Composable
 actual fun BannerAdSlot(visible: Boolean, reducedMotion: Boolean, modifier: Modifier) {
@@ -136,7 +149,11 @@ actual fun BannerAdSlot(visible: Boolean, reducedMotion: Boolean, modifier: Modi
 
     var hasLoadedOnce by remember(context) { mutableStateOf(false) }
 
-    val adView = remember(context) {
+    // Fix Round 2 (Review 3, N-1): keyed on (context, adWidthDp), not context alone — future-proofs
+    // against a config that keeps context stable but resizes width (not possible today, since no
+    // configChanges is declared for MainActivity and any orientation change recreates the Activity
+    // wholesale; see this composable's own kdoc point 3).
+    val adView = remember(context, adWidthDp) {
         val bannerUnitId = readBannerUnitId(context)
         AdView(context).apply {
             layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -160,7 +177,11 @@ actual fun BannerAdSlot(visible: Boolean, reducedMotion: Boolean, modifier: Modi
     // `setAdSize(...)` immediately at construction, so the `?: 0` fallback should never actually
     // trigger in practice — kept as a graceful "reserve nothing" degradation rather than a `!!`
     // that would crash on the one path the type system can't rule out from here.
-    val adaptiveHeightDp = remember(adView) { adView.adSize?.height ?: 0 }
+    // Fix Round 2 (Review 3, N-1): `adWidthDp` added alongside `adView` as an explicit key — `adView`
+    // already changes in lockstep with `adWidthDp` (same key list above), so this is redundant today,
+    // but ties this remember's own key list directly to the real dependency rather than relying on
+    // that lockstep staying manually in sync with the block above forever.
+    val adaptiveHeightDp = remember(adView, adWidthDp) { adView.adSize?.height ?: 0 }
     val reservedHeightDp = adSlotReservedHeightDp(eligible = visible, adaptiveHeightDp = adaptiveHeightDp)
 
     val animatedAlpha = animateFloatAsState(
@@ -183,6 +204,13 @@ actual fun BannerAdSlot(visible: Boolean, reducedMotion: Boolean, modifier: Modi
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     LaunchedEffect(visible, lifecycleResumed, adView) {
+        // Fix Round 2 (Review 3, B-1): belt-and-braces defense-in-depth for spec §8's hard "no
+        // banner ever sits next to disaster detail content" rule — see this composable's own kdoc
+        // point 6. Same `visible` source of truth as the pause/resume line below, same effect block.
+        // Deliberately NOT ANDed with `lifecycleResumed`: this toggle is about the detail sheet
+        // covering the ad, not about the host Activity's own foreground/background state (that's
+        // already handled by pause()/resume() below reacting to `lifecycleResumed` on its own).
+        adView.visibility = if (visible) View.VISIBLE else View.GONE
         if (visible && lifecycleResumed) adView.resume() else adView.pause()
     }
 

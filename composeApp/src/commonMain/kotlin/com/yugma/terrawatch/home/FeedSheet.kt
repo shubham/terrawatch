@@ -34,6 +34,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -120,8 +121,18 @@ fun FeedSheet(
     val listState = rememberLazyListState()
     val reducedMotion = LocalReducedMotion.current
     val scope = rememberCoroutineScope()
-    var previousTopId by remember { mutableStateOf<String?>(null) }
-    var chipVisible by remember { mutableStateOf(false) }
+    // Fix Round 2 (Review 3, M-1): rememberSaveable, not remember — MainActivity declares no
+    // android:configChanges, so a device rotation fully destroys/recreates the Activity, tearing
+    // down this whole composition, while HomeViewModel.newSinceExpand (a real ViewModel StateFlow)
+    // survives via the retained ViewModelStore. Plain `remember` here silently dropped a genuinely-
+    // unread "N new quakes" chip on rotation — no error, no recovery until the next arrival. Both
+    // `String?` and `Boolean` save directly, no custom Saver needed. Restoring a stale `previousTopId`
+    // that no longer names any id in a since-changed `quakes` is safe: it's only ever compared for
+    // (in)equality against `topId` below (line 133), never looked up in the list, and
+    // `onRevealChipClick` always targets index 0 unconditionally (Compose's Lazy scroll APIs are
+    // documented defensive about out-of-range targets) — no crash path either way.
+    var previousTopId by rememberSaveable { mutableStateOf<String?>(null) }
+    var chipVisible by rememberSaveable { mutableStateOf(false) }
     val topId = quakes.firstOrNull()?.id
     val feedVisible = isSheetExpanded && !isDetailOpen
 
@@ -156,16 +167,29 @@ fun FeedSheet(
             .collect { atTop -> if (atTop) chipVisible = false }
     }
 
+    // Fix Round 2 (Review 3, N-3): memoized, not a fresh lambda every recomposition — keyed on every
+    // value it captures (scope/listState are remembered once per FeedSheet instance and never change
+    // identity; reducedMotion only flips on an accessibility-setting change), so FeedSheetHeader gets
+    // a stable reference across recompositions that don't touch any of the three, instead of a new
+    // instance every time regardless.
+    // Explicit `() -> Unit` type on the `val` (not just inferred): the inner lambda's last
+    // expression is `scope.launch { ... }`, which returns `Job` — without an expected type to
+    // trigger Compose's usual Unit-coercion, `remember`'s generic `T` would infer as `() -> Job`
+    // instead, failing to assign to `onRevealChipClick`'s `() -> Unit` parameter below.
+    val onRevealChipClick: () -> Unit = remember(scope, reducedMotion, listState) {
+        {
+            chipVisible = false
+            scope.launch { if (reducedMotion) listState.scrollToItem(0) else listState.animateScrollToItem(0) }
+        }
+    }
+
     Column(modifier.fillMaxWidth()) {
         FeedSheetHeader(
             isLive = isLive,
             newCount = newCount,
             isSheetExpanded = isSheetExpanded,
             showRevealChip = chipVisible && newCount > 0,
-            onRevealChipClick = {
-                chipVisible = false
-                scope.launch { if (reducedMotion) listState.scrollToItem(0) else listState.animateScrollToItem(0) }
-            },
+            onRevealChipClick = onRevealChipClick,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         )
         // Task 10 (items b/c): this sheet previously had no Loading concept of its own at all -
