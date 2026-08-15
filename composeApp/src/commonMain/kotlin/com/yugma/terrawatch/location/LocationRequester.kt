@@ -11,7 +11,6 @@ package com.yugma.terrawatch.location
  * for notifications ([com.yugma.terrawatch.notifications.NotificationPermissionRequester]) — see that
  * class's own kdoc for the shape being mirrored here.
  *
-
  * Unlike [LocationProvider]/[com.yugma.terrawatch.database.DriverFactory] (each actual takes its
  * own platform-specific constructor — see [LocationProvider]'s own kdoc — because each is built
  * once, directly, at its platform's entry point and handed to Koin as an already-constructed

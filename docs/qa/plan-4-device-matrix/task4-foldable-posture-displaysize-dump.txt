@@ -1,0 +1,61 @@
+Plan 4 Task 4 fix round -- foldable posture display-size dump
+================================================================
+
+Purpose: task4-foldable-posture-closed.png and task4-foldable-posture-reopened.png
+(captured during the original Task 4 session) are byte-identical (same MD5,
+dbc1f4bcaf06877b341d0fede4117da9). The original report already reasoned this was an
+AVD-profile characteristic, not a capture mistake ("this particular AVD profile
+doesn't change the reported display size on a bare posture change (no separate
+cover-screen resolution), so the layout itself doesn't change either"), but that
+reasoning was asserted, not measured. This dump measures it directly: cycles the
+same three postures through the emulator console and captures the actual system
+display metrics at each one, rather than relying on screenshots alone (which can
+only ever look identical if the underlying metrics are identical -- they cannot by
+themselves distinguish "no-op" from "capture bug").
+
+Device: pml_fold36 (Generic 7.6in Foldable AVD, API 36), booted headless
+(-no-window -no-audio -no-boot-anim), adb serial emulator-5554.
+Config (~/.android/avd/pml_fold36.avd/config.ini): single fixed hw.lcd.width=1768,
+hw.lcd.height=2208, hw.lcd.density=420 -- no separate cover-screen resolution is
+configured for this profile at all, which is the root cause the dump below confirms.
+
+Method: authenticated to the emulator console (port 5554, token from
+~/.emulator_console_auth_token) and sent `posture <n>` for each of this AVD's three
+configured postures (hw.sensor.posture_list=1,2,3 / hw.sensor.hinge_angles_posture_
+definitions=0-30, 30-150, 150-180 in config.ini), waiting 2s after each for the
+framework to settle, then ran `adb shell wm size`, `adb shell wm density`, and
+`adb shell dumpsys display` (DisplayDeviceInfo line only, reproduced in full below).
+
+Result -- timestamp 2026-08-15 16:30:30 IST:
+
+--- posture 1 (closed, hinge angle 0-30 deg) ---
+adb shell wm size    -> Physical size: 1768x2208
+adb shell wm density -> Physical density: 420
+dumpsys display DisplayDeviceInfo -> DisplayDeviceInfo{"Built-in Screen": uniqueId="local:4619827259835644672", 1768 x 2208, modeId 1, renderFrameRate 60.000004, hasArrSupport false, frameRateCategoryRate FrameRateCategoryRate {normal=60.0, high=90.0}, supportedRefreshRates [60.000004], defaultModeId 1, userPreferredModeId -1, supportedModes [{id=1, width=1768, height=2208, fps=60.000004, vsync=60.000004, synthetic=false, alternativeRefreshRates=[], supportedHdrTypes=[]}], colorMode 0, supportedColorModes [0], hdrCapabilities HdrCapabilities{mSupportedHdrTypes=[], mMaxLuminance=500.0, mMaxAverageLuminance=500.0, mMinLuminance=0.0}, isForceSdr false, allmSupported false, gameContentTypeSupported false, density 420, 420.0 x 420.0 dpi, appVsyncOff 1000000, presDeadline 16666666, touch INTERNAL, rotation 0, type INTERNAL, address {port=0, model=0x401cec6a7a2b7b}, deviceProductInfo DeviceProductInfo{name=EMU_display_0, manufacturerPnpId=GGL, productId=1, modelYear=null, manufactureDate=ManufactureDate{week=27, year=2006}, connectionToSinkType=1}, state ON, committedState ON, brightnessMinimum 0.035433073, brightnessMaximum 1.0, brightnessDefault 0.39763778, brightnessDim 0.05, FLAG_ALLOWED_TO_BE_DEFAULT_DISPLAY, FLAG_ROTATES_WITH_CONTENT, FLAG_SECURE, FLAG_SUPPORTS_PROTECTED_BUFFERS, FLAG_TRUSTED, installOrientation 0, displayShape DisplayShape{ spec=150406411 displayWidth=1768 displayHeight=2208 physicalPixelDisplaySizeRatio=1.0 rotation=0 offsetX=0 offsetY=0 scale=1.0}}
+
+--- posture 2 (half-opened, hinge angle 30-150 deg) ---
+adb shell wm size    -> Physical size: 1768x2208
+adb shell wm density -> Physical density: 420
+dumpsys display DisplayDeviceInfo -> DisplayDeviceInfo{"Built-in Screen": uniqueId="local:4619827259835644672", 1768 x 2208, modeId 1, renderFrameRate 60.000004, hasArrSupport false, frameRateCategoryRate FrameRateCategoryRate {normal=60.0, high=90.0}, supportedRefreshRates [60.000004], defaultModeId 1, userPreferredModeId -1, supportedModes [{id=1, width=1768, height=2208, fps=60.000004, vsync=60.000004, synthetic=false, alternativeRefreshRates=[], supportedHdrTypes=[]}], colorMode 0, supportedColorModes [0], hdrCapabilities HdrCapabilities{mSupportedHdrTypes=[], mMaxLuminance=500.0, mMaxAverageLuminance=500.0, mMinLuminance=0.0}, isForceSdr false, allmSupported false, gameContentTypeSupported false, density 420, 420.0 x 420.0 dpi, appVsyncOff 1000000, presDeadline 16666666, touch INTERNAL, rotation 0, type INTERNAL, address {port=0, model=0x401cec6a7a2b7b}, deviceProductInfo DeviceProductInfo{name=EMU_display_0, manufacturerPnpId=GGL, productId=1, modelYear=null, manufactureDate=ManufactureDate{week=27, year=2006}, connectionToSinkType=1}, state ON, committedState ON, brightnessMinimum 0.035433073, brightnessMaximum 1.0, brightnessDefault 0.39763778, brightnessDim 0.05, FLAG_ALLOWED_TO_BE_DEFAULT_DISPLAY, FLAG_ROTATES_WITH_CONTENT, FLAG_SECURE, FLAG_SUPPORTS_PROTECTED_BUFFERS, FLAG_TRUSTED, installOrientation 0, displayShape DisplayShape{ spec=150406411 displayWidth=1768 displayHeight=2208 physicalPixelDisplaySizeRatio=1.0 rotation=0 offsetX=0 offsetY=0 scale=1.0}}
+
+--- posture 3 (opened, hinge angle 150-180 deg) ---
+adb shell wm size    -> Physical size: 1768x2208
+adb shell wm density -> Physical density: 420
+dumpsys display DisplayDeviceInfo -> DisplayDeviceInfo{"Built-in Screen": uniqueId="local:4619827259835644672", 1768 x 2208, modeId 1, renderFrameRate 60.000004, hasArrSupport false, frameRateCategoryRate FrameRateCategoryRate {normal=60.0, high=90.0}, supportedRefreshRates [60.000004], defaultModeId 1, userPreferredModeId -1, supportedModes [{id=1, width=1768, height=2208, fps=60.000004, vsync=60.000004, synthetic=false, alternativeRefreshRates=[], supportedHdrTypes=[]}], colorMode 0, supportedColorModes [0], hdrCapabilities HdrCapabilities{mSupportedHdrTypes=[], mMaxLuminance=500.0, mMaxAverageLuminance=500.0, mMinLuminance=0.0}, isForceSdr false, allmSupported false, gameContentTypeSupported false, density 420, 420.0 x 420.0 dpi, appVsyncOff 1000000, presDeadline 16666666, touch INTERNAL, rotation 0, type INTERNAL, address {port=0, model=0x401cec6a7a2b7b}, deviceProductInfo DeviceProductInfo{name=EMU_display_0, manufacturerPnpId=GGL, productId=1, modelYear=null, manufactureDate=ManufactureDate{week=27, year=2006}, connectionToSinkType=1}, state ON, committedState ON, brightnessMinimum 0.035433073, brightnessMaximum 1.0, brightnessDefault 0.39763778, brightnessDim 0.05, FLAG_ALLOWED_TO_BE_DEFAULT_DISPLAY, FLAG_ROTATES_WITH_CONTENT, FLAG_SECURE, FLAG_SUPPORTS_PROTECTED_BUFFERS, FLAG_TRUSTED, installOrientation 0, displayShape DisplayShape{ spec=150406411 displayWidth=1768 displayHeight=2208 physicalPixelDisplaySizeRatio=1.0 rotation=0 offsetX=0 offsetY=0 scale=1.0}}
+
+The three DisplayDeviceInfo records above are identical byte-for-byte apart from the
+"posture N" label used to select which command preceded each capture -- same
+uniqueId, same resolution, same density, same rotation, same everything.
+
+Conclusion: `wm size`, `wm density`, and the full `dumpsys display` DisplayDeviceInfo
+record (same uniqueId, same 1768x2208, same 420dpi, same rotation 0) are IDENTICAL
+across closed/half-opened/opened. This is not a screenshot-capture artifact -- the
+system itself reports zero display-metric change across this AVD's posture range,
+confirming the original report's reasoning with a measurement rather than an
+assumption. task4-foldable-posture-closed.png/reopened.png being byte-identical is
+therefore expected and correct, not a gap: there is no distinguishing screenshot to
+take on this AVD profile, because the OS-level input this app's layoutMode() keys
+off (WindowSizeClass, itself derived from actual display width/height) never
+changes here. A foldable AVD profile with a real distinct cover-screen resolution
+would be needed to exercise a genuine posture-driven layout change; none was
+available in this pass.
