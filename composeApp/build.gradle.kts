@@ -124,11 +124,12 @@ android {
         applicationId = "com.yugma.terrawatch"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        // Task 7 (Plan 3): bumped to match SettingsScreen's own About section version string —
-        // both now name the same Plan 3 milestone (3 tabs + settings + theme + user-settable
-        // radius) rather than the app's own manifest disagreeing with what Settings tells the user.
-        versionName = "0.3.0"
+        // Plan 4 Task 1: R8 release hardening milestone. KEEP IN SYNC BY HAND with
+        // SettingsScreen.kt's APP_VERSION const (that file's own kdoc carries the same reminder) —
+        // no BuildConfig surface reaches commonMain, so these two literals are the only source of
+        // truth and must be bumped together.
+        versionCode = 2
+        versionName = "0.9.0"
         // Task 13: required for connectedDebugAndroidTest to resolve a runner at all — AGP's
         // default is the deprecated android.test.InstrumentationTestRunner otherwise.
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -136,6 +137,18 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // FOR NOW (Plan 4 Task 1): debug-signed so this release build type can be built and
+            // installed today for R8/manual smoke verification without a real signing identity —
+            // real release signing (keystore, Play App Signing) is Task 8's job. Revisit before any
+            // Play Console upload; a debug-signed release APK is not distributable as-is.
+            signingConfig = signingConfigs.getByName("debug")
+        }
     }
 }
 

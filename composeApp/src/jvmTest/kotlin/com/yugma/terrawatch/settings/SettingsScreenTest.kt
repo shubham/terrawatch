@@ -42,6 +42,6 @@ class SettingsScreenTest {
     }
 
     @Test fun `app version constant pins the released version string`() {
-        assertEquals("0.3.0", APP_VERSION)
+        assertEquals("0.9.0", APP_VERSION)
     }
 }

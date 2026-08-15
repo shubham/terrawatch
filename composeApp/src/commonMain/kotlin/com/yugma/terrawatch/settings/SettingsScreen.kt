@@ -82,7 +82,7 @@ internal fun snapToHalfMagnitude(value: Double): Double = round(value * 2.0) / 2
 // KEEP IN SYNC BY HAND with composeApp/build.gradle.kts's `versionName` — the two are independently
 // literal today. SettingsScreenTest pins this constant; bump BOTH this and versionName together
 // (no BuildConfig in KMP commonMain).
-internal const val APP_VERSION = "0.3.0"
+internal const val APP_VERSION = "0.9.0"
 
 /** Task 13: `testTag` for [SettingsHeader]'s back chevron — `NavRoundTripTest`
  * (androidInstrumentedTest) taps this to complete the Home->History->Insights->Settings->Home leg
