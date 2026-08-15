@@ -6,9 +6,9 @@
   rationale), but every fillColor/strokeColor here is opaque white: per Android's own themed-icon
   guidance, the system reads ONLY this layer's alpha channel and re-tints the visible pixels with
   its own dynamic accent color, so the literal color is inert (same "alpha channel is all that
-  matters" rule the pre-existing ic_notification.xml/ic_stat_terrawatch.xml document for
-  notification small icons) - white is used here purely by convention (fully opaque wherever a
-  shape is drawn, fully transparent elsewhere).
+  matters" rule ic_notification.xml/ic_stat_terrawatch.xml document for notification small icons) -
+  white is used here purely by convention (fully opaque wherever a shape is drawn, fully transparent
+  elsewhere).
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"

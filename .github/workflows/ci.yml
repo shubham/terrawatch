@@ -14,7 +14,7 @@ jobs:
         with: { distribution: temurin, java-version: 17 }
       - uses: gradle/actions/setup-gradle@v4
       - name: Unit tests (core + app)
-        run: ./gradlew :core:model:jvmTest :core:network:jvmTest :core:database:jvmTest :core:data:jvmTest :core:ui:jvmTest :composeApp:jvmTest
+        run: ./gradlew :core:model:jvmTest :core:network:jvmTest :core:database:jvmTest :core:data:jvmTest :core:ui:jvmTest :core:monetization:jvmTest :core:ads:jvmTest :composeApp:jvmTest
       # Note: connected Android device tests run locally (docs/qa/)
       - name: Build all targets
         run: ./gradlew :composeApp:assembleDebug :composeApp:jvmJar :composeApp:wasmJsBrowserDistribution

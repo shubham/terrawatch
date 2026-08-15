@@ -17,6 +17,7 @@ import androidx.lifecycle.lifecycleScope
 import com.yugma.terrawatch.alerts.AlertDigestWorker
 import com.yugma.terrawatch.alerts.enqueueAlertDigestWorker
 import com.yugma.terrawatch.data.HomeLocationStore
+import com.yugma.terrawatch.data.OnboardingStore
 import com.yugma.terrawatch.di.ensureKoinStarted
 import com.yugma.terrawatch.location.LocationProvider
 import com.yugma.terrawatch.location.bindLocationPermissionController
@@ -50,6 +51,11 @@ class MainActivity : ComponentActivity() {
     // startKoin() has always already run by then, regardless of which entry point (this Activity,
     // or a headless AlertDigestWorker run — see ensureKoinStarted's own kdoc) got there first.
     private val homeLocationStore: HomeLocationStore by lazy { GlobalContext.get().get() }
+
+    // Plan 4 Task 6 (Fix Round 1, M1): onboarding gate for digest worker — same Koin-lazy
+    // resolution as homeLocationStore above, for the identical reason (ensureKoinStarted runs
+    // mid-onCreate, and enqueueDigestWorkerIfPermitted is called well after that point).
+    private val onboardingStore: OnboardingStore by lazy { GlobalContext.get().get() }
 
     // Plan 4 Task 3: the notification tap-through deep link — a non-null id means MainActivity was
     // opened (cold `onCreate`, or a `singleTask` re-front via `onNewIntent`) from a digest
@@ -192,6 +198,13 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun enqueueDigestWorkerIfPermitted() {
+        // Gate on onboarding — post-33 is already gated by the permission check itself (can't
+        // POST_NOTIFICATIONS until explicitly granted during or after onboarding), but pre-33 has
+        // no permission to gate on, so the permission check alone would unconditionally enqueue
+        // on first onCreate (before the user has seen onboarding). Check isOnboarded() to
+        // suppress the pre-33 case until onboarding is actually complete.
+        if (!onboardingStore.isOnboarded()) return
+
         val permitted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
         if (permitted) enqueueAlertDigestWorker(applicationContext)

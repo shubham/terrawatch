@@ -150,8 +150,9 @@ Additional honest notes for whoever fills the real form at Task 8:
   ever sent to one. Uninstalling the app deletes all local data (standard Android behavior, no
   special handling needed).
 - **Encryption in transit**: all real network calls (USGS, EMSC, OpenFreeMap, GDELT) run over
-  HTTPS/WSS. Verify `network_security_config.xml` (`composeApp/src/androidMain/res/xml/`) still
-  matches this claim at submission time if it changes.
+  HTTPS/WSS. Debug builds use `network_security_config.xml` (`composeApp/src/androidMain/res/xml/`,
+  strict pinning for internal cert during testing); release builds use the platform default (system
+  CAs only).
 - **Data is not required for basic app functionality beyond location** — the app is fully usable
   with location permission denied (per Plan 4 Task 4's permission-correctness work: "Use my
   location" is opt-in, city-picker is a no-location alternative, and the world M6+ alert rule
