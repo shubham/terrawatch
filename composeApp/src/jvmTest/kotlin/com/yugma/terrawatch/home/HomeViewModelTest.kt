@@ -39,6 +39,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.test.AfterTest
 import kotlin.test.Test
+import kotlin.time.Duration.Companion.seconds
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
@@ -381,7 +382,14 @@ class HomeViewModelTest {
         )
         val vm = createVm(repository)
 
-        vm.state.test {
+        // timeout = 30s (Turbine's default is 3s WALL-CLOCK): the emission chain that satisfies
+        // awaitItem() below crosses two thread pools this test does NOT control — QuakeDao.recent()'s
+        // hard-coded mapToList(Dispatchers.Default) hop and MockEngine's own worker — so on a starved
+        // CI runner the post-advance emission can take >3s of real time despite virtual time being
+        // fully advanced. Flaked exactly this way on GitHub Actions run 31894021662 (passed on rerun
+        // and locally). The margin only widens the failure window for a real hang; it never slows a
+        // passing run.
+        vm.state.test(timeout = 30.seconds) {
             var s = awaitItem()
             while (s is HomeUiState.Loading || (s is HomeUiState.Content && s.quakes.none { it.id == "us1234" })) {
                 s = awaitItem()
