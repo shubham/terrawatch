@@ -732,6 +732,55 @@ class HomeViewModelTest {
         }
     }
 
+    // Task 1 (Plan 5), USER REQUIREMENT: startupCameraTarget/recenterTarget/
+    // locationUnavailableEvents. KNOWN COVERAGE LIMIT (documented rather than silently accepted —
+    // same "flag the gap, don't hide it" discipline this codebase already applies elsewhere, e.g.
+    // core/model's GeoTest "KNOWN LIMITATION" test): LocationProvider/LocationRequester are plain
+    // `expect`/`actual` CLASSES (not interfaces), neither `open`, so no jvmTest fake can make either
+    // one report anything other than what LocationProvider.jvm.kt/LocationRequester.jvm.kt
+    // hardcode — always a null fix, always NOT_APPLICABLE (-> GRANTED). That makes the
+    // NON-null-fix half of startupCameraTarget's own wiring (createVm()'s default
+    // `LocationProvider()`) untestable at this level by construction: it can never be proven here
+    // that a real "fix differs >50km from stored home" scenario actually reaches the camera — only
+    // on the real device (this task's own device-verification step) does that path run for real.
+    // What jvmTest CAN prove — and what's pinned below — is everything on THIS side of that
+    // platform boundary: the null-fix degrade-to-"do nothing" path, and recenterToCurrentLocation's
+    // own null-fix -> snackbar-event branch (which — precisely because the jvm actual always
+    // returns null — is fully exercised for real here, not merely a default-value smoke check).
+    // [startupCameraTarget]'s own full 5-case decision table is pinned exhaustively, independent of
+    // any of this, by CameraTargetTest.kt.
+
+    @Test fun `startupCameraTarget stays null when the platform has no location fix to offer`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val vm = createVm(fakeRepositoryAlwaysFailing())
+        vm.startupCameraTarget.test {
+            assertEquals(null, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `recenterToCurrentLocation emits a locationUnavailableEvent when no fix is available`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val vm = createVm(fakeRepositoryAlwaysFailing())
+        vm.locationUnavailableEvents.test {
+            vm.recenterToCurrentLocation()
+            awaitItem() // Unit - the event itself firing is the whole assertion
+            cancelAndIgnoreRemainingEvents()
+        }
+        // The complementary outcome: a null fix must NOT also populate recenterTarget - the two
+        // are meant to be mutually exclusive (see recenterToCurrentLocation's own kdoc).
+        assertEquals(null, vm.recenterTarget.value)
+    }
+
+    @Test fun `consumeStartupCameraTarget and consumeRecenterTarget are safe no-ops with nothing pending`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val vm = createVm(fakeRepositoryAlwaysFailing())
+        vm.consumeStartupCameraTarget()
+        vm.consumeRecenterTarget()
+        assertEquals(null, vm.startupCameraTarget.value)
+        assertEquals(null, vm.recenterTarget.value)
+    }
+
     // Task 11's selection wiring tests (`select`/`dismissSelection`/`selectedQuake`) MIGRATED to
     // QuakeSelectionViewModelTest.kt as of Task 3 (Plan 3) — see QuakeSelectionViewModel's own
     // kdoc for why that state no longer lives on this class at all.

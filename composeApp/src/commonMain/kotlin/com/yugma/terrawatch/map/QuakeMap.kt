@@ -68,6 +68,22 @@ data class QuakePin(
  *   that doesn't yet thread a real store-fed value through still renders a geographically-honest
  *   ring rather than an arbitrary placeholder number — `HomeScreen`'s real call sites always pass
  *   `HomeViewModel.nearbyRadiusKm`'s live value instead of relying on this default.
+ * @param startupCameraTarget Task 1 (Plan 5), USER REQUIREMENT: a non-null value means "jump the
+ *   camera here now, zoom ~6" — [com.yugma.terrawatch.home.startupCameraTarget]'s cold-start
+ *   decision, resolved once by `HomeViewModel` and consumed exactly once (see
+ *   [onStartupCameraApplied]). Null (the default, and the steady-state value once consumed) means
+ *   "do nothing" — the android actual's own `rememberCameraState`/`CameraStateSaver` restore (or
+ *   its world-view default) stands untouched; jvm/wasmJs accept the parameter for expect/actual
+ *   signature parity but have no camera to move.
+ * @param onStartupCameraApplied invoked the moment [startupCameraTarget] has actually been applied
+ *   to the camera — the caller's cue to clear its own held value so a later recomposition/rotation
+ *   can never re-apply the same cold-start jump again. Defaulted to a no-op so every pre-existing
+ *   call site keeps compiling unchanged.
+ * @param recenterTarget Task 1 (Plan 5), USER REQUIREMENT: the my-location FAB's own recenter
+ *   signal — same "non-null means jump the camera, then get consumed" shape as
+ *   [startupCameraTarget], but at zoom ~8 and with no cold-start/rotation semantics of its own
+ *   (`HomeViewModel.recenterToCurrentLocation`'s own kdoc).
+ * @param onRecenterApplied mirrors [onStartupCameraApplied], for [recenterTarget].
  */
 @Composable
 expect fun QuakeMap(
@@ -78,4 +94,8 @@ expect fun QuakeMap(
     onDebugLongPress: (lat: Double, lon: Double) -> Unit = { _, _ -> },
     homeLocation: GeoPoint? = null,
     radiusKm: Double = 100.0,
+    startupCameraTarget: GeoPoint? = null,
+    onStartupCameraApplied: () -> Unit = {},
+    recenterTarget: GeoPoint? = null,
+    onRecenterApplied: () -> Unit = {},
 )

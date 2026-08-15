@@ -6,7 +6,10 @@ import com.yugma.terrawatch.data.AlertRuleStore
 import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.data.QuakeRepository
 import com.yugma.terrawatch.data.RefreshStatus
+import com.yugma.terrawatch.location.LocationAskUiState
 import com.yugma.terrawatch.location.LocationProvider
+import com.yugma.terrawatch.location.LocationRequester
+import com.yugma.terrawatch.location.reduceLocationPermissionState
 import com.yugma.terrawatch.map.QuakePin
 import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.model.MagRevision
@@ -18,6 +21,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -84,6 +88,16 @@ class HomeViewModel(
     // Koin wiring, HomeFlowTest/OnboardingGateTest's androidInstrumentedTest call sites) — none of
     // them need to change to keep compiling.
     private val clock: () -> Long = { Clock.System.now().toEpochMilliseconds() },
+    // Task 1 (Plan 5): appended as a 6th, DEFAULTED param — same "doesn't disturb any existing
+    // positional construction" reasoning [clock] itself already established just above (see
+    // HomeViewModelTest's createVm(), HomeFlowTest/OnboardingGateTest's own construction sites —
+    // none supply a 6th argument, all keep compiling unchanged). LocationRequester()'s no-arg
+    // constructor is real and uniform on every target (see its own kdoc) — same "a real, working
+    // default, not a test stub" shape [clock]'s own default expression already is — so production
+    // Koin wiring (AppModule.kt's `HomeViewModel(get(), get(), get(), get())`) needs no change
+    // either; it simply keeps falling through to this default, exactly like it already does for
+    // [clock].
+    private val locationRequester: LocationRequester = LocationRequester(),
 ) : ViewModel() {
     private val _state = MutableStateFlow<HomeUiState>(HomeUiState.Loading)
     val state: StateFlow<HomeUiState> = _state
@@ -100,6 +114,31 @@ class HomeViewModel(
     // in both cases: nothing to be unsafe *about* without a reference point.
     private val _homeLocation = MutableStateFlow<GeoPoint?>(null)
     val homeLocation: StateFlow<GeoPoint?> = _homeLocation
+
+    // Task 1 (Plan 5), USER REQUIREMENT: the cold-start camera-centering signal — see
+    // startupCameraTarget's own kdoc (CameraTarget.kt) for the decision this reduces to. Null means
+    // "nothing to do", either because the decision itself resolved null, or because a non-null
+    // value was already applied and consumed (see consumeStartupCameraTarget below). ONE-SHOT by
+    // construction: the init{} block below writes this exactly once, and HomeViewModel itself is
+    // constructed exactly once per real process start — Koin's `viewModel {}` scoping (koin-
+    // compose-viewmodel's koinViewModel<HomeViewModel>() at App()'s composition root) means a
+    // rotation/config change reuses this SAME instance rather than re-running init{}, so this
+    // StateFlow can never spontaneously become non-null a second time for the life of the process.
+    private val _startupCameraTarget = MutableStateFlow<GeoPoint?>(null)
+    val startupCameraTarget: StateFlow<GeoPoint?> = _startupCameraTarget
+
+    // Task 1 (Plan 5): the my-location FAB's own recenter target — independent of
+    // [_startupCameraTarget] (a different trigger, a different zoom level at the call site, and no
+    // rotation-survival requirement of its own — see recenterToCurrentLocation's own kdoc below).
+    private val _recenterTarget = MutableStateFlow<GeoPoint?>(null)
+    val recenterTarget: StateFlow<GeoPoint?> = _recenterTarget
+
+    // Task 1 (Plan 5): the FAB's "Location unavailable" snackbar trigger — a hot, fire-and-forget
+    // event (same SharedFlow shape [newQuakeIds] above already establishes for exactly this
+    // "notify once, don't replay" reason), not sticky state: a recomposition well after the tap
+    // that caused it must never re-show the same snackbar.
+    private val _locationUnavailableEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val locationUnavailableEvents: SharedFlow<Unit> = _locationUnavailableEvents
 
     // Task 7 (Plan 3), USER REQUIREMENT: the pill's radius/minMag are now user-settable (Settings
     // screen slider -> AlertRuleStore) - every real pillStatus() call site (HomeScreen) threads that
@@ -236,9 +275,40 @@ class HomeViewModel(
         // this only ever asks the platform once (matches the brief's `get() ?: current()?.also
         // { set(it) }` — HomeLocationStore.set() is itself an ordinary synchronous DAO write, and
         // running it here, still on Dispatchers.Default, keeps it off Main too).
+        //
+        // Task 1 (Plan 5): this block now ALSO resolves [_startupCameraTarget] — folded into the
+        // SAME launch rather than a separate one, since it needs the exact same [stored]/[fix]
+        // values this block already computes (a second independent call to
+        // [locationProvider.current] would be a redundant platform read for no benefit).
+        // [permissionGranted] is resolved via [locationRequester] (the same reducer Settings'/
+        // onboarding's own location-ask UI already reads —
+        // [com.yugma.terrawatch.location.reduceLocationPermissionState]) rather than inferred from
+        // [fix]'s nullity: [LocationProvider.current]'s own contract already returns null without
+        // permission (see its own kdoc), which WOULD make the two collapse to an identical outcome
+        // here today — but [startupCameraTarget]'s own contract wants an explicit, real signal, not
+        // one silently borrowed from a different class's side effect that could drift later.
+        //
+        // BEHAVIOR NOTE: before this task, [locationProvider.current] was only ever called when
+        // [stored] was null (the elvis operator's lazy right-hand side) — a device with an
+        // already-known home never re-read the platform location at all. It's now called on EVERY
+        // start (gated only on [permissionGranted], not on [stored]'s nullity), because comparing a
+        // fresh fix against the stored reference point is the whole point of this task's feature
+        // (e.g. the user travelled since their last session — home is still the old city, but the
+        // map should open on where they actually are now). [LocationProvider.current]'s android
+        // actual is a cheap, side-effect-free `LocationManager.getLastKnownLocation` cache read (no
+        // active GPS request, no permission dialog — permission is already resolved by this point),
+        // so one extra call per cold start is a deliberate, low-cost trade, not an oversight. The
+        // `stored ?: fix?.also { homeLocationStore.set(it) }` write below still only ever fires
+        // when [stored] is null, exactly as before — [fix] being eagerly resolved doesn't change
+        // WHEN the store gets written, only when the platform gets asked.
         viewModelScope.launch(Dispatchers.Default) {
             val stored = homeLocationStore.get()
-            _homeLocation.value = stored ?: locationProvider.current()?.also { homeLocationStore.set(it) }
+            val permissionGranted =
+                reduceLocationPermissionState(locationRequester.currentCondition()) == LocationAskUiState.GRANTED
+            val fix = if (permissionGranted) locationProvider.current() else null
+            _homeLocation.value = stored ?: fix?.also { homeLocationStore.set(it) }
+            _startupCameraTarget.value =
+                startupCameraTarget(savedTarget = stored, fix = fix, permissionGranted = permissionGranted)
         }
 
         // Task 2 (Plan 3), "close the location loop": homeLocation used to be resolved exactly
@@ -412,6 +482,40 @@ class HomeViewModel(
      * `.Expanded` — the user has now seen the list, so the "N NEW" chip resets. */
     fun markSheetExpanded() {
         _newSinceExpand.value = 0
+    }
+
+    /** Called by `QuakeMap` once it has actually applied [startupCameraTarget] to the camera —
+     * clears the signal so a later recomposition/rotation can never re-apply the same cold-start
+     * jump again (mirrors `MainActivity`'s own `pendingQuakeId`/`onQuakeIdConsumed` "consume once"
+     * shape). */
+    fun consumeStartupCameraTarget() {
+        _startupCameraTarget.value = null
+    }
+
+    /** Called by `QuakeMap` once it has actually applied [recenterTarget] to the camera — same
+     * one-shot "consume, don't replay" contract as [consumeStartupCameraTarget]. */
+    fun consumeRecenterTarget() {
+        _recenterTarget.value = null
+    }
+
+    /**
+     * Task 1 (Plan 5), USER REQUIREMENT (dogfooding feedback item 2, "a button to recenter on
+     * me"): the my-location FAB's tap action — a fresh, one-shot fix, independent of
+     * [homeLocation]/[startupCameraTarget]: this never writes [HomeLocationStore] and never moves
+     * the alert ring/pill's own reference point, only the camera — "where is the device right
+     * now, for the map" is a strictly narrower question than "where is home."
+     *
+     * The FAB itself is only ever visible when permission is granted (`HomeScreen`'s own live gate,
+     * via [com.yugma.terrawatch.location.rememberLocationCondition]), so a null result here in
+     * practice means "permission granted, but nothing cached yet" (e.g. an emulator with no
+     * location provider enabled) rather than a missing permission — either way, the brief's own
+     * "brief snackbar" treatment applies identically.
+     */
+    fun recenterToCurrentLocation() {
+        viewModelScope.launch(Dispatchers.Default) {
+            val fix = locationProvider.current()
+            if (fix != null) _recenterTarget.value = fix else _locationUnavailableEvents.emit(Unit)
+        }
     }
 
     /**
