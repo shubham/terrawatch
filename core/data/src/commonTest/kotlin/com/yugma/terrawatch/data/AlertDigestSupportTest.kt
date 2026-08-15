@@ -6,12 +6,16 @@ import com.yugma.terrawatch.model.Source
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-private fun q(id: String, mag: Double? = 5.0, timeMillis: Long = 900) =
-    Quake(id, timeMillis, 7.1, 126.5, 10.0, mag, "mb", "Somewhere", false, null,
-        QuakeStatus.AUTOMATIC, mapOf(Source.USGS to id), emptyList(), timeMillis)
+private fun q(
+    id: String, mag: Double? = 5.0, timeMillis: Long = 900,
+    sources: Map<Source, String> = mapOf(Source.USGS to id),
+) = Quake(id, timeMillis, 7.1, 126.5, 10.0, mag, "mb", "Somewhere", false, null,
+        QuakeStatus.AUTOMATIC, sources, emptyList(), timeMillis)
 
-private fun event(id: String, mag: Double? = 5.0, timeMillis: Long = 900, ruleId: String = "near") =
-    AlertEvent(q(id, mag, timeMillis), ruleId)
+private fun event(
+    id: String, mag: Double? = 5.0, timeMillis: Long = 900, ruleId: String = "near",
+    sources: Map<Source, String> = mapOf(Source.USGS to id),
+) = AlertEvent(q(id, mag, timeMillis, sources), ruleId)
 
 /**
  * Task 3 (Plan 4): TDD for `AlertDigestWorker`'s (androidMain) two pure pieces — pulled into
@@ -86,6 +90,43 @@ class AlertDigestSupportTest {
         assertEquals(100, result.split(",").size)
         assertEquals("us2", result.split(",").first()) // us1 fell off the front
         assertEquals("us101", result.split(",").last())
+    }
+
+    // --- notifiedIdentifiers / filterFreshAlertEvents (Fix Round 1, I1) -------------------------
+
+    @Test fun `notifiedIdentifiers includes only the canonical id for a single-source quake`() {
+        assertEquals(setOf("us1"), notifiedIdentifiers(event("us1")))
+    }
+
+    @Test fun `notifiedIdentifiers includes the canonical id and every per-agency source id`() {
+        val e = event("usgs-456", sources = mapOf(Source.USGS to "usgs-456", Source.EMSC to "emsc-123"))
+        assertEquals(setOf("usgs-456", "emsc-123"), notifiedIdentifiers(e))
+    }
+
+    @Test fun `filterFreshAlertEvents keeps an event whose identifiers were never notified`() {
+        val e = event("us1")
+        assertEquals(listOf(e), filterFreshAlertEvents(listOf(e), alreadyNotifiedIds = emptySet()))
+    }
+
+    @Test fun `filterFreshAlertEvents drops an event whose own current id was already notified`() {
+        val e = event("us1")
+        assertEquals(emptyList(), filterFreshAlertEvents(listOf(e), alreadyNotifiedIds = setOf("us1")))
+    }
+
+    @Test fun `filterFreshAlertEvents absorbs a canonical-id swap -- an old source id already in the buffer suppresses re-notification`() {
+        // A same-event merge later prefers USGS's id as canonical (DedupeEngine.merge can pick
+        // either side) -- "emsc-123" was the row's OWN id back when it was first notified, so
+        // that's what the worker's own ring buffer recorded at the time. The merged row's `id` has
+        // since moved to "usgs-456", but its `sources` map still carries BOTH agency ids -- this
+        // must NOT read as a brand-new, never-notified event.
+        val swapped = event("usgs-456", sources = mapOf(Source.USGS to "usgs-456", Source.EMSC to "emsc-123"))
+        assertEquals(emptyList(), filterFreshAlertEvents(listOf(swapped), alreadyNotifiedIds = setOf("emsc-123")))
+    }
+
+    @Test fun `filterFreshAlertEvents keeps fresh events and drops stale ones, order preserved`() {
+        val fresh = event("us1")
+        val stale = event("us2")
+        assertEquals(listOf(fresh), filterFreshAlertEvents(listOf(fresh, stale), alreadyNotifiedIds = setOf("us2")))
     }
 
     // --- planDigestNotifications -----------------------------------------------------------------

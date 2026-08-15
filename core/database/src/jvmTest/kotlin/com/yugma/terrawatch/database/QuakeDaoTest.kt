@@ -427,34 +427,48 @@ class QuakeDaoTest {
 
     // --- Task 3 (Plan 4): newSince -- AlertDigestWorker's own "what's new since my last run" query,
     // scoped to feed/live origins only -- mirrors pruneOldRows' own origin-filter shape (same two
-    // eligible origins), just the opposite direction (a read, not a delete) and gated by
-    // timeMillis > cutoff rather than < cutoff. See QuakeStore.newSince's own kdoc for the full
-    // ruling on why archive/debug rows must never reach a digest notification. --------------------
+    // eligible origins), just the opposite direction (a read, not a delete).
+    //
+    // Fix Round 1 (I1): the WHERE cursor moved from `timeMillis` (the quake's own reported event
+    // time) to `fetchedAtMillis` (this device's own write-clock) -- see QuakeStore.newSince's own
+    // kdoc for the full ruling (a publication-lag quake or a late magnitude revision both have an
+    // OLD timeMillis but a FRESH fetchedAtMillis on every re-write; a timeMillis-based cursor
+    // silently never selected either). ORDER BY is UNCHANGED (still timeMillis DESC -- see
+    // "orders newest event-time first" below) -- only the WHERE predicate's column changed. Every
+    // case below now writes through an explicitly clocked `QuakeDao(db, clock = {...})`, never
+    // this file's own class-level `dao` field (its default `clock = { 0L }` would make every row's
+    // fetchedAtMillis identically 0, meaningless for pinning a fetchedAt-based cursor) -- reads
+    // still go through the plain `dao` field since a read never consults its own `clock`. --------
 
     @Test fun `newSince returns feed and live rows strictly after the cutoff`() {
-        dao.replace(quake(id = "new-feed").copy(timeMillis = 2000), origin = "feed")
-        dao.replace(quake(id = "new-live").copy(timeMillis = 3000), origin = "live")
+        val clockedDao = QuakeDao(db, clock = { 2000L })
+        clockedDao.replace(quake(id = "new-feed"), origin = "feed")
+        clockedDao.replace(quake(id = "new-live"), origin = "live")
         val result = dao.newSince(sinceMillis = 1000)
         assertEquals(setOf("new-feed", "new-live"), result.map { it.id }.toSet())
     }
 
     @Test fun `newSince excludes archive rows even when they are new`() {
-        dao.replace(quake(id = "new-archive").copy(timeMillis = 2000), origin = "archive")
+        val clockedDao = QuakeDao(db, clock = { 2000L })
+        clockedDao.replace(quake(id = "new-archive"), origin = "archive")
         assertEquals(emptyList(), dao.newSince(sinceMillis = 1000))
     }
 
     @Test fun `newSince excludes debug rows even when they are new`() {
-        dao.replace(quake(id = "debug-new").copy(timeMillis = 2000), origin = "debug")
+        val clockedDao = QuakeDao(db, clock = { 2000L })
+        clockedDao.replace(quake(id = "debug-new"), origin = "debug")
         assertEquals(emptyList(), dao.newSince(sinceMillis = 1000))
     }
 
-    @Test fun `newSince cutoff comparison is strict greater-than -- a row exactly AT cutoff is excluded`() {
-        dao.replace(quake(id = "at-cutoff").copy(timeMillis = 1000), origin = "feed")
+    @Test fun `newSince cutoff comparison is strict greater-than -- a row fetched exactly AT cutoff is excluded`() {
+        val clockedDao = QuakeDao(db, clock = { 1000L })
+        clockedDao.replace(quake(id = "at-cutoff"), origin = "feed")
         assertEquals(emptyList(), dao.newSince(sinceMillis = 1000))
     }
 
-    @Test fun `newSince excludes rows at or before the cutoff`() {
-        dao.replace(quake(id = "old-feed").copy(timeMillis = 500), origin = "feed")
+    @Test fun `newSince excludes rows fetched at or before the cutoff`() {
+        val clockedDao = QuakeDao(db, clock = { 500L })
+        clockedDao.replace(quake(id = "old-feed"), origin = "feed")
         assertEquals(emptyList(), dao.newSince(sinceMillis = 1000))
     }
 
@@ -462,9 +476,36 @@ class QuakeDaoTest {
         assertEquals(emptyList(), dao.newSince(sinceMillis = 1000))
     }
 
-    @Test fun `newSince orders newest first`() {
-        dao.replace(quake(id = "older").copy(timeMillis = 2000), origin = "feed")
-        dao.replace(quake(id = "newer").copy(timeMillis = 3000), origin = "live")
+    @Test fun `newSince orders newest event-time first`() {
+        val clockedDao = QuakeDao(db, clock = { 5000L }) // both fetched well after the cutoff
+        clockedDao.replace(quake(id = "older").copy(timeMillis = 2000), origin = "feed")
+        clockedDao.replace(quake(id = "newer").copy(timeMillis = 3000), origin = "live")
         assertEquals(listOf("newer", "older"), dao.newSince(sinceMillis = 1000).map { it.id })
+    }
+
+    // Fix Round 1 (I1): the fix's own two motivating scenarios -- a timeMillis-based cursor missed
+    // both of these. (The third TDD case, a canonical-id swap absorbing an already-notified event,
+    // is a worker-side ring-buffer concern layered on top of this read, not a newSince/store
+    // concern -- see AlertDigestSupportTest's own `filterFreshAlertEvents` cases.)
+
+    @Test fun `newSince selects a publication-lag quake -- old event time, fresh fetchedAt`() {
+        // A real feed quake whose reported event time is well before this run's own cutoff, but
+        // which this device only just fetched for the first time (real publication lag routinely
+        // runs 2-20 min; this test uses a much larger gap purely to make the point unambiguous).
+        val clockedDao = QuakeDao(db, clock = { 5000L })
+        clockedDao.replace(quake(id = "lagged").copy(timeMillis = 100), origin = "feed")
+        assertEquals(listOf("lagged"), dao.newSince(sinceMillis = 1000).map { it.id })
+    }
+
+    @Test fun `newSince selects a magnitude revision on an old quake -- fresh fetchedAt on re-write`() {
+        val firstDao = QuakeDao(db, clock = { 100L })
+        firstDao.replace(quake(id = "revised", mag = 5.4).copy(timeMillis = 100), origin = "feed")
+        // Same id, later revision to M6.2 -- timeMillis (the event's own reported time) never
+        // changes, but this device re-writes the row, so fetchedAtMillis does.
+        val revisionDao = QuakeDao(db, clock = { 5000L })
+        revisionDao.replace(quake(id = "revised", mag = 6.2).copy(timeMillis = 100), origin = "feed")
+        val result = dao.newSince(sinceMillis = 1000)
+        assertEquals(listOf("revised"), result.map { it.id })
+        assertEquals(6.2, result.single().mag)
     }
 }

@@ -302,42 +302,78 @@ class InMemoryQuakeStoreTest {
     }
 
     // --- Task 3 (Plan 4): newSince -- mirrors QuakeDaoTest's own matrix exactly (same contract,
-    // other QuakeStore implementation) -----------------------------------------------------------
+    // other QuakeStore implementation).
+    //
+    // Fix Round 1 (I1): cursor moved from `timeMillis` to `fetchedAtMillis` -- see QuakeStore.
+    // newSince's own kdoc / QuakeDaoTest's identical newSince block for the full ruling. Every
+    // case below writes through an explicitly clocked `InMemoryQuakeStore(clock = {...})`, never
+    // this file's own class-level `store` field (its default `clock = { 0L }` would make every
+    // row's fetchedAt identically 0, meaningless for pinning a fetchedAt-based cursor). ----------
 
     @Test fun `newSince returns feed and live rows strictly after the cutoff`() {
-        store.replace(quake(id = "new-feed", timeMillis = 2000), origin = "feed")
-        store.replace(quake(id = "new-live", timeMillis = 3000), origin = "live")
-        val result = store.newSince(sinceMillis = 1000)
+        val clockedStore = InMemoryQuakeStore(clock = { 2000L })
+        clockedStore.replace(quake(id = "new-feed"), origin = "feed")
+        clockedStore.replace(quake(id = "new-live"), origin = "live")
+        val result = clockedStore.newSince(sinceMillis = 1000)
         assertEquals(setOf("new-feed", "new-live"), result.map { it.id }.toSet())
     }
 
     @Test fun `newSince excludes archive rows even when they are new`() {
-        store.replace(quake(id = "new-archive", timeMillis = 2000), origin = "archive")
-        assertEquals(emptyList(), store.newSince(sinceMillis = 1000))
+        val clockedStore = InMemoryQuakeStore(clock = { 2000L })
+        clockedStore.replace(quake(id = "new-archive"), origin = "archive")
+        assertEquals(emptyList(), clockedStore.newSince(sinceMillis = 1000))
     }
 
     @Test fun `newSince excludes debug rows even when they are new`() {
-        store.replace(quake(id = "debug-new", timeMillis = 2000), origin = "debug")
-        assertEquals(emptyList(), store.newSince(sinceMillis = 1000))
+        val clockedStore = InMemoryQuakeStore(clock = { 2000L })
+        clockedStore.replace(quake(id = "debug-new"), origin = "debug")
+        assertEquals(emptyList(), clockedStore.newSince(sinceMillis = 1000))
     }
 
-    @Test fun `newSince cutoff comparison is strict greater-than -- a row exactly AT cutoff is excluded`() {
-        store.replace(quake(id = "at-cutoff", timeMillis = 1000), origin = "feed")
-        assertEquals(emptyList(), store.newSince(sinceMillis = 1000))
+    @Test fun `newSince cutoff comparison is strict greater-than -- a row fetched exactly AT cutoff is excluded`() {
+        val clockedStore = InMemoryQuakeStore(clock = { 1000L })
+        clockedStore.replace(quake(id = "at-cutoff"), origin = "feed")
+        assertEquals(emptyList(), clockedStore.newSince(sinceMillis = 1000))
     }
 
-    @Test fun `newSince excludes rows at or before the cutoff`() {
-        store.replace(quake(id = "old-feed", timeMillis = 500), origin = "feed")
-        assertEquals(emptyList(), store.newSince(sinceMillis = 1000))
+    @Test fun `newSince excludes rows fetched at or before the cutoff`() {
+        val clockedStore = InMemoryQuakeStore(clock = { 500L })
+        clockedStore.replace(quake(id = "old-feed"), origin = "feed")
+        assertEquals(emptyList(), clockedStore.newSince(sinceMillis = 1000))
     }
 
     @Test fun `newSince on an empty store returns empty`() {
         assertEquals(emptyList(), InMemoryQuakeStore().newSince(sinceMillis = 1000))
     }
 
-    @Test fun `newSince orders newest first`() {
-        store.replace(quake(id = "older", timeMillis = 2000), origin = "feed")
-        store.replace(quake(id = "newer", timeMillis = 3000), origin = "live")
-        assertEquals(listOf("newer", "older"), store.newSince(sinceMillis = 1000).map { it.id })
+    @Test fun `newSince orders newest event-time first`() {
+        val clockedStore = InMemoryQuakeStore(clock = { 5000L }) // both fetched well after the cutoff
+        clockedStore.replace(quake(id = "older", timeMillis = 2000), origin = "feed")
+        clockedStore.replace(quake(id = "newer", timeMillis = 3000), origin = "live")
+        assertEquals(listOf("newer", "older"), clockedStore.newSince(sinceMillis = 1000).map { it.id })
+    }
+
+    // Fix Round 1 (I1): the fix's own two motivating scenarios -- a timeMillis-based cursor missed
+    // both of these. (The third TDD case, a canonical-id swap absorbing an already-notified event,
+    // is a worker-side ring-buffer concern layered on top of this read -- see
+    // AlertDigestSupportTest's own `filterFreshAlertEvents` cases.)
+
+    @Test fun `newSince selects a publication-lag quake -- old event time, fresh fetchedAt`() {
+        val clockedStore = InMemoryQuakeStore(clock = { 5000L })
+        clockedStore.replace(quake(id = "lagged", timeMillis = 100), origin = "feed")
+        assertEquals(listOf("lagged"), clockedStore.newSince(sinceMillis = 1000).map { it.id })
+    }
+
+    @Test fun `newSince selects a magnitude revision on an old quake -- fresh fetchedAt on re-write`() {
+        var now = 100L
+        val clockedStore = InMemoryQuakeStore(clock = { now })
+        clockedStore.replace(quake(id = "revised", timeMillis = 100, mag = 5.4), origin = "feed")
+        // Same id, later revision to M6.2 -- timeMillis (the event's own reported time) never
+        // changes, but this device re-writes the row, so fetchedAtMillis does.
+        now = 5000L
+        clockedStore.replace(quake(id = "revised", timeMillis = 100, mag = 6.2), origin = "feed")
+        val result = clockedStore.newSince(sinceMillis = 1000)
+        assertEquals(listOf("revised"), result.map { it.id })
+        assertEquals(6.2, result.single().mag)
     }
 }

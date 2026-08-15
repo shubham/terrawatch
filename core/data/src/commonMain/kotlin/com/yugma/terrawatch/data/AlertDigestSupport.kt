@@ -10,12 +10,18 @@ package com.yugma.terrawatch.data
 
 /**
  * Parses the CSV persisted under the worker's own `"alert_notified_ids"` meta key back into an
- * ordered list of quake ids (oldest-notified first, matching [appendNotifiedIds]'s own append
+ * ordered list of identifiers (oldest-notified first, matching [appendNotifiedIds]'s own append
  * order) — a null or blank value (never-run-yet, or a corrupt/hand-edited row) degrades to an
  * empty list rather than throwing, same "missing precondition degrades quietly" posture this
  * codebase's other meta readers ([AlertRuleStore]'s corrupt-value fallback, [HomeLocationStore.get])
  * already take. Tolerates stray whitespace around a comma (defensive, not load-bearing — every
  * real writer is [appendNotifiedIds] itself, which never inserts any).
+ *
+ * Fix Round 1 (I1): "identifiers," not "quake ids" — since that fix, an entry here can be either a
+ * quake's own canonical id OR one of its per-agency [com.yugma.terrawatch.model.Quake.sources]
+ * values, both fed in by the worker's own [notifiedIdentifiers] call. This function itself stays a
+ * plain, opaque string-list parser either way; it has no reason to care which kind of identifier
+ * any one entry is.
  */
 fun parseNotifiedIds(csv: String?): List<String> =
     csv?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
@@ -44,6 +50,36 @@ fun appendNotifiedIds(existingCsv: String?, newIds: List<String>, cap: Int = 100
     val trimmed = if (merged.size > cap) merged.takeLast(cap) else merged
     return trimmed.joinToString(",")
 }
+
+/**
+ * Fix Round 1 (I1, review finding): every identifier [event]'s own quake is currently reachable
+ * by — its current canonical [com.yugma.terrawatch.model.Quake.id] AND every per-agency id in
+ * [com.yugma.terrawatch.model.Quake.sources]'s values. [DedupeEngine.merge] can change WHICH id a
+ * row's own `id` field carries on a later merge (it prefers whichever side carries a
+ * [com.yugma.terrawatch.model.Source.USGS] entry — see that function's own `id` selection), but
+ * `sources` only ever GROWS (`existing.sources + incoming.sources`, never shrinks) — so an id this
+ * worker already recorded as notified stays reachable through [com.yugma.terrawatch.model.
+ * Quake.sources] on the merged row even after the row's own `id` has moved on to a different
+ * agency's value.
+ *
+ * The single source of truth both [filterFreshAlertEvents] (the read side, checking membership)
+ * and the worker's own ring-buffer append (the write side, recording membership) call — so the two
+ * can never independently drift on "what counts as this event's identity."
+ */
+fun notifiedIdentifiers(event: AlertEvent): Set<String> = setOf(event.quake.id) + event.quake.sources.values
+
+/**
+ * Fix Round 1 (I1, review finding): the dedupe-across-runs freshness filter — an [AlertEvent]
+ * counts as fresh (never notified before) only when NONE of [notifiedIdentifiers] appears in
+ * [alreadyNotifiedIds]. Checking every source id, not just the row's own CURRENT [com.yugma.
+ * terrawatch.model.Quake.id], is what absorbs a canonical-id swap: a same-event merge that changes
+ * which agency's id becomes the row's own `id` must not look like a brand-new quake purely because
+ * that one field's value changed — see [notifiedIdentifiers]'s own kdoc for why `sources` is what
+ * still remembers the old id. Order-preserving (a plain filter), matching [planDigestNotifications]'s
+ * own "the caller decides ordering" posture — this function's one job is inclusion, not sequencing.
+ */
+fun filterFreshAlertEvents(events: List<AlertEvent>, alreadyNotifiedIds: Set<String>): List<AlertEvent> =
+    events.filter { event -> notifiedIdentifiers(event).none { it in alreadyNotifiedIds } }
 
 /**
  * One worker run's notification shape: the first [individual] events get their own individual

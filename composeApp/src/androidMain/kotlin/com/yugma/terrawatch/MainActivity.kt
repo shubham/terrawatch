@@ -15,7 +15,6 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.yugma.terrawatch.alerts.AlertDigestWorker
 import com.yugma.terrawatch.alerts.enqueueAlertDigestWorker
-import com.yugma.terrawatch.alerts.initAlertDigestSchedulerContext
 import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.di.ensureKoinStarted
 import com.yugma.terrawatch.location.LocationProvider
@@ -25,10 +24,23 @@ import com.yugma.terrawatch.notifications.computeNotificationPermissionCondition
 import com.yugma.terrawatch.notifications.currentNotificationRationale
 import com.yugma.terrawatch.notifications.markNotificationPermissionAsked
 import com.yugma.terrawatch.notifications.openNotificationSettings
-import com.yugma.terrawatch.share.initShareContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.koin.core.context.GlobalContext
+
+// Fix Round 1 (C1, review Critical): a SEPARATE process-lifetime flag from Koin's own
+// GlobalContext state — see ensureKoinStarted's own kdoc for why GlobalContext.getOrNull() alone
+// is no longer a safe proxy for "has MainActivity ever run in this process" now that
+// AlertDigestWorker.doWork() can start Koin from a headless, WorkManager-only process start with
+// MainActivity never created at all. If that headless run happens first and the OS keeps the
+// process alive long enough for the user to then open the app, GlobalContext.getOrNull() would
+// already read non-null on MainActivity's own very first onCreate — the OLD single-guard code
+// would have silently skipped the one-shot location-permission ask below for what is, from THIS
+// Activity's point of view, genuinely its first launch. A top-level var (not an instance field),
+// same reasoning as the original GlobalContext check: a config-change recreate constructs a
+// brand-new MainActivity instance whose own fields would silently reset, but this must stay true
+// for the rest of the process's lifetime once set.
+private var mainActivityBootstrappedThisProcess = false
 
 class MainActivity : ComponentActivity() {
     // Built once per Activity instance (not per onCreate/Koin-guard branch — applicationContext is
@@ -40,11 +52,12 @@ class MainActivity : ComponentActivity() {
     // entirely Koin-built (`single { HomeLocationStore(get()) }`, AppModule.kt) with no
     // Context/Activity dependency of its own, so there's no reason for MainActivity to construct it
     // directly the way it must for locationProvider. `by lazy` matters here, not just style: this
-    // initializer calls into Koin's GlobalContext, which the firstLaunchThisProcess guard in
-    // onCreate() below doesn't start until partway through — deferring the lookup until this
-    // property is actually first READ (the grant callback below, which can only fire once the OS
-    // permission dialog has been answered, well after onCreate has returned) guarantees startKoin()
-    // has always already run by then.
+    // initializer calls into Koin's GlobalContext, which onCreate() below doesn't start until
+    // partway through its own body (ensureKoinStarted's call site) — deferring the lookup until
+    // this property is actually first READ (the grant callback below, which can only fire once the
+    // OS permission dialog has been answered, well after onCreate has returned) guarantees
+    // startKoin() has always already run by then, regardless of which entry point (this Activity,
+    // or a headless AlertDigestWorker run — see ensureKoinStarted's own kdoc) got there first.
     private val homeLocationStore: HomeLocationStore by lazy { GlobalContext.get().get() }
 
     // Plan 4 Task 3: the notification tap-through deep link — a non-null id means MainActivity was
@@ -131,31 +144,26 @@ class MainActivity : ComponentActivity() {
             },
             openSettingsAction = { openNotificationSettings(this) },
         )
-        // Guard against a second startKoin() call if the Activity is ever recreated in the same
-        // process (e.g. a config change) — Koin throws KoinAppAlreadyStartedException otherwise.
-        // Reused below for the permission ask too: "first launch" means once per process, not once
-        // per onCreate() — without this, a rotation would re-launch the request every time (a no-op
-        // dialog-wise once already granted/denied, but a pointless repeat ask/log all the same).
-        val firstLaunchThisProcess = GlobalContext.getOrNull() == null
-        // ALL construction lives inside this guard now: on a rotation, onCreate() runs again, but
-        // Koin (and the singletons it holds — QuakeRepository, etc.) is built exactly once per
-        // process. HomeViewModel itself is no longer built here at all — App() resolves it via
-        // koinViewModel(), which binds to this Activity's ViewModelStore (survives rotation) rather
-        // than being newly constructed on every onCreate().
-        if (firstLaunchThisProcess) {
-            // Task 11: the Share button's Android actual needs a Context but shareQuakeText's
-            // expect/actual signature can't carry one (see Share.kt's kdoc) - this is the one-time
-            // wiring that substitutes for it, same "build/wire the platform-specific bit once here"
-            // spirit as ensureKoinStarted's own dao/http/locationProvider construction.
-            initShareContext(applicationContext)
-            // Plan 4 Task 3: same one-time wiring shape as initShareContext above — see that
-            // function's own kdoc for the "process-lifetime holder" pattern this mirrors.
-            initAlertDigestSchedulerContext(applicationContext)
-            // Plan 4 Task 3: factored out of this block (was inline dao/http construction +
-            // startKoin call) — see ensureKoinStarted's own kdoc for why AlertDigestWorker.doWork()
-            // needs to be able to call the exact same bootstrap from a headless process start.
-            ensureKoinStarted(applicationContext, locationProvider)
-        }
+        // Fix Round 1 (C1, review Critical): unconditional on EVERY onCreate now, not gated behind
+        // a "first launch" check computed from GlobalContext state — ensureKoinStarted is
+        // internally idempotent (its own GlobalContext.getOrNull() != null short-circuit, unchanged)
+        // and now ALSO performs the Share/AlertDigestScheduler context wiring that used to be a
+        // separate, externally-gated block here (see that function's own kdoc for the bug this
+        // closes: AlertDigestWorker.doWork() can start Koin from a headless process before
+        // MainActivity ever runs, which used to leave initShareContext/
+        // initAlertDigestSchedulerContext never called at all once THIS onCreate finally did run,
+        // because the old external guard read GlobalContext as already-started by then —
+        // UninitializedPropertyAccessException the moment Settings/Share/the ALERTS row was ever
+        // touched). Relying on ensureKoinStarted's OWN internal guard — the single source of truth
+        // for "has bootstrap happened," located inside the idempotent function itself — is strictly
+        // more robust than duplicating that condition out here a second time.
+        ensureKoinStarted(applicationContext, locationProvider)
+        // A SEPARATE, Koin-independent guard for this Activity's own one-shot behavior below (the
+        // location-permission ask) — see mainActivityBootstrappedThisProcess's own top-of-file
+        // comment for why GlobalContext state can no longer answer "has MainActivity run before in
+        // this process" now that ensureKoinStarted has another possible caller.
+        val firstMainActivityLaunchThisProcess = !mainActivityBootstrappedThisProcess
+        mainActivityBootstrappedThisProcess = true
         pendingQuakeId = intent?.getStringExtra(AlertDigestWorker.EXTRA_QUAKE_ID)
         setContent {
             App(
@@ -163,7 +171,7 @@ class MainActivity : ComponentActivity() {
                 onQuakeIdConsumed = { pendingQuakeId = null },
             )
         }
-        if (firstLaunchThisProcess) {
+        if (firstMainActivityLaunchThisProcess) {
             // Ask AFTER content is showing, not before — a permission dialog racing the first frame
             // would otherwise cover a still-blank window. Activity-level by design (not a
             // LaunchedEffect from App()): the ask is one-shot Activity plumbing, independent of
@@ -171,11 +179,12 @@ class MainActivity : ComponentActivity() {
             // App.kt).
             requestLocationPermission.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
         }
-        // Plan 4 Task 3: unlike the location ask above (one-shot, firstLaunchThisProcess-gated),
-        // this runs on EVERY onCreate — ExistingPeriodicWorkPolicy.KEEP (see
-        // enqueueAlertDigestWorker's own kdoc) makes every call past the first a harmless no-op, and
-        // re-checking on every app start (not just first-ever-install) is what picks up a
-        // permission grant that happened via system Settings while the app was closed.
+        // Plan 4 Task 3: unlike the location ask above (one-shot, firstMainActivityLaunchThisProcess
+        // -gated), this runs on EVERY onCreate — ExistingPeriodicWorkPolicy.UPDATE (Fix Round 1, I3
+        // — see enqueueAlertDigestWorker's own kdoc) makes every call past the first a harmless
+        // no-op for anything about the request that hasn't actually changed, and re-checking on
+        // every app start (not just first-ever-install) is what picks up a permission grant that
+        // happened via system Settings while the app was closed.
         enqueueDigestWorkerIfPermitted()
     }
 

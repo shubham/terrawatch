@@ -137,11 +137,28 @@ SELECT origin FROM quake WHERE id = ?;
 -- deep-scroll backfill -- years-old by construction whenever they're paged in -- and debug rows are
 -- the long-press dev hook; neither should ever be able to trigger a real alert notification, the
 -- identical F5 guard QuakeRepository.loadArchivePage's own `rules = emptyList()` already enforces
--- for the live in-session path. `timeMillis > :sinceMillis` is strict greater-than (a row exactly AT
--- the cutoff was already considered by whichever run first recorded that cutoff) -- mirrors
--- pruneOldRows' own strict `<` on the opposite side of the same boundary value.
+-- for the live in-session path.
+--
+-- Fix Round 1 (I1, review finding): cursor moved from `timeMillis` (the quake's own REPORTED
+-- event time, set by the originating agency) to `fetchedAtMillis` (THIS device's own write-clock
+-- -- see QuakeDao.toRow's `clock()` call, already indexed by `quake_fetchedAt` above). A
+-- timeMillis cursor silently never selected two real cases: a publication-lag quake (USGS/EMSC
+-- routinely publish 2-20 minutes after the actual event -- its timeMillis can already be older
+-- than a run's own cutoff the FIRST time this device ever sees it), and a magnitude revision on
+-- an already-old quake (a later revision re-writes the SAME row -- timeMillis never changes, but
+-- fetchedAtMillis does, on every re-write). `fetchedAtMillis` is what actually answers "did this
+-- device learn something new since the last run" -- `timeMillis` alone cannot. `ORDER BY
+-- timeMillis DESC` is UNCHANGED (still display/event recency, not fetch recency) -- only the
+-- WHERE predicate's column changed. `fetchedAtMillis > :sinceMillis` is strict greater-than (a
+-- row fetched exactly AT the cutoff was already considered by whichever run first recorded it) --
+-- mirrors pruneOldRows' own strict `<` on the opposite side of an analogous boundary value.
+--
+-- A canonical-id swap on a later merge re-presenting an already-notified event under a new `id`
+-- is a SEPARATE concern this query does not handle -- absorbed by AlertDigestWorker's own
+-- ring-buffer identifier check (AlertDigestSupport.kt's notifiedIdentifiers/
+-- filterFreshAlertEvents), a layer above this read, not by this WHERE clause.
 newSince:
-SELECT * FROM quake WHERE timeMillis > :sinceMillis AND origin IN ('feed', 'live') ORDER BY timeMillis DESC;
+SELECT * FROM quake WHERE fetchedAtMillis > :sinceMillis AND origin IN ('feed', 'live') ORDER BY timeMillis DESC;
 
 -- Task 6 (Plan 3): Insights' three aggregates. All three share the same `WHERE timeMillis >=
 -- :sinceMillis` window-clip — the caller (QuakeDao) always passes the period's own start-of-day

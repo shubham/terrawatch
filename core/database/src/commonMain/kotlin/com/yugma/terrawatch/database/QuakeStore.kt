@@ -170,8 +170,9 @@ interface QuakeStore {
 
     /**
      * Task 3 (Plan 4): `AlertDigestWorker`'s (androidMain, `composeApp`) own "what's new since my
-     * last run" query — every row whose `timeMillis` is strictly after [sinceMillis] AND whose
-     * `origin` is [ORIGIN_FEED] or [ORIGIN_LIVE], newest first. The worker reads its own persisted
+     * last run" query — every row whose `fetchedAtMillis` (this device's own write-clock, NOT the
+     * quake's own reported event time) is strictly after [sinceMillis] AND whose `origin` is
+     * [ORIGIN_FEED] or [ORIGIN_LIVE], newest-event-time first. The worker reads its own persisted
      * `alert_last_run` meta value as [sinceMillis], evaluates [com.yugma.terrawatch.data.
      * AlertRuleEngine] against exactly the rows this returns, then advances that meta value.
      *
@@ -187,9 +188,27 @@ interface QuakeStore {
      * count; a future origin added to one set should not be assumed to belong in the other without
      * its own decision).
      *
-     * Strict `>`, not `>=` — a row exactly AT [sinceMillis] was already considered by whichever
-     * run first recorded that cutoff (mirrors [pruneOldRows]'s own strict `<` on the opposite side
-     * of an identical boundary-value question).
+     * Fix Round 1 (I1, review finding): the ORIGINAL version of this cursor compared `timeMillis`
+     * against [sinceMillis] — silently wrong for two real cases: a publication-lag quake (USGS/
+     * EMSC routinely publish 2-20 minutes after the actual event; its `timeMillis` can already be
+     * older than a run's own cutoff the FIRST time this device ever sees it) and a magnitude
+     * revision on an already-old quake (a later revision re-writes the same row — `timeMillis`
+     * never changes, but `fetchedAtMillis` does, on every re-write, per [com.yugma.terrawatch.
+     * database.QuakeDao]'s own `clock()`-stamped `toRow`). `fetchedAtMillis` is what actually
+     * answers "did this device learn something new since the last run" — `timeMillis` alone
+     * cannot. Ordering is UNCHANGED (still newest-`timeMillis`-first — display/event recency, not
+     * fetch recency).
+     *
+     * A separate concern this query does NOT handle: a canonical-id swap on a later
+     * [com.yugma.terrawatch.data.DedupeEngine] merge re-presenting an already-notified event under
+     * a new `id`. That is absorbed by the WORKER's own ring-buffer identifier check (records/
+     * checks every `sources.values` entry, not just the row's current `id` — see
+     * `com.yugma.terrawatch.data.notifiedIdentifiers`/`filterFreshAlertEvents` in
+     * `AlertDigestSupport.kt`), a layer above this method, not by this method's own WHERE clause.
+     *
+     * Strict `>`, not `>=` — a row fetched exactly AT [sinceMillis] was already considered by
+     * whichever run first recorded that cutoff (mirrors [pruneOldRows]'s own strict `<` on the
+     * opposite side of an identical boundary-value question).
      */
     fun newSince(sinceMillis: Long): List<DomainQuake>
 

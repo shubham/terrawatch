@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -332,6 +333,13 @@ private fun MinMagSlider(minMag: Double, onMinMagChange: (Double) -> Unit, modif
  * `combinedClickable` calls it unconditionally on a long-press; a release build's own `false`
  * answer makes that call a harmless no-op, so no separate "is this UI element visible" gate is
  * needed on top.
+ *
+ * Fix Round 1 (minor): `indication = null` — the row's `onClick = {}` is a required parameter
+ * (`combinedClickable` needs SOME `onClick` to also accept `onLongClick`), not a real tap
+ * affordance; left at its default indication, every tap on this row showed a ripple that implied
+ * the row itself was actionable when nothing happens on a plain tap. A remembered
+ * [MutableInteractionSource] plus `indication = null` keeps the long-press detection intact while
+ * removing that misleading visual.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -347,6 +355,8 @@ private fun AlertsPermissionRow(modifier: Modifier = Modifier) {
         modifier
             .fillMaxWidth()
             .combinedClickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
                 onClick = {},
                 onLongClick = { if (scheduler.isDebugTriggerAvailable()) scheduler.triggerNow() },
             ),

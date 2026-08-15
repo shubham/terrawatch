@@ -182,10 +182,22 @@ class InMemoryQuakeStore(private val clock: () -> Long = { 0L }) : QuakeStore {
      * [pruneOldRows]'s own kdoc for the identical defensive default) resolves to [QuakeStore.
      * ORIGIN_FEED], i.e. eligible, matching [pruneOldRows]'s own "degrade to the least-surprising
      * default" posture rather than silently excluding an origin-less row from ever alerting.
+     *
+     * Fix Round 1 (I1): cursor moved from `timeMillis` to `fetchedAt[id]` (this store's own
+     * write-clock map, parallel to [quakes] -- see that field's own kdoc), mirroring
+     * [QuakeDao.newSince]'s identical `timeMillis` -> `fetchedAtMillis` correction (see that
+     * method's own kdoc for the publication-lag/revision cases a `timeMillis` cursor silently
+     * missed). A missing `fetchedAt` entry (should not happen outside a test poking [quakes]
+     * directly -- the one real write path, [replaceAndDelete], always populates both together)
+     * defaults to `0L`, i.e. EXCLUDED by any realistic positive [sinceMillis] -- the OPPOSITE
+     * direction from [originById]'s own "missing degrades to eligible" default just above,
+     * deliberately: this field gates whether a row can ever reach a notification at all, so an
+     * impossible/test-only data shape should degrade toward silence, never toward a spurious
+     * alert.
      */
     override fun newSince(sinceMillis: Long): List<DomainQuake> =
         quakes.value.values.byRecency {
-            it.timeMillis > sinceMillis && (originById[it.id] ?: QuakeStore.ORIGIN_FEED) in ALERT_ELIGIBLE_ORIGINS
+            (fetchedAt[it.id] ?: 0L) > sinceMillis && (originById[it.id] ?: QuakeStore.ORIGIN_FEED) in ALERT_ELIGIBLE_ORIGINS
         }
 
     // `val mag = quake.mag` first, not `quake.mag` inline twice: Quake.mag is a property declared
