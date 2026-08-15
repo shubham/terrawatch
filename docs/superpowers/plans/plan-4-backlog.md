@@ -50,3 +50,26 @@ Accumulator for Plan 4 (monetization + notifications + release + external-review
 3. **M4: pill/world-rule vocabulary split** — `PillStatus.pillStatus()` (the Home status pill) only ever reflects a home-relative "near" check; it has no notion of `AlertRuleEngine.DEFAULT_RULES`'s independent "world" rule (M6.0+, unbounded radius — fires for a major quake anywhere on Earth). A world-rule match populates `alertEvents` today with zero visible effect, but once Plan 4 surfaces real notifications, a user could receive a "world M6+" push while the pill on their own Home screen still reads CALM. Decide at notifications: either the pill grows a third state for world-rule matches, or notifications scope to near-rule matches only.
 4. **Minify/R8 MUST land before any Play upload** — restates the "Release-build debug-hook stripping" ledger item above (Tasks 12/13) as a hard release gate, not passive debt: `injectDebugQuake`/`ingestDebugBypassingDedupe`/`purgeDebugQuakes`/`isDebuggableBuild` ship unobfuscated in the release APK today (no ProGuard/R8 rules configured yet). This blocks any Play Store upload, closed-testing track included — it is not optional polish.
 5. **900-980dp layout dead zone** — `AppNav.kt`'s own `BoxWithConstraints` (measures the full window width to pick rail-vs-bottom-bar chrome) and `HomeScreen.kt`'s independent `BoxWithConstraints` (measures width minus the rail, once shown) both call the same `layoutMode()` 900dp breakpoint, but disagree in the roughly 900-980dp band: the nav rail can show here while Home still falls back to its phone (sheet) layout underneath it, instead of the two-pane layout the rail implies. Documented as accepted-for-now directly in `AppNav.kt` (no test or device screenshot gates this narrow band today); worth a second look whenever a real desktop pass happens.
+
+## From Plan 4 Task 3 re-review (2026-08-15, Round 2)
+
+1. **Ingest content-diff gate** (traced this round, not fixed — see task-3-report.md's Round 2
+   section for the ring-buffer-cap mitigation this motivated) — `QuakeRepository.ingest()`'s
+   `dao.replaceAndDelete(result.canonical, deleteIds, origin = effectiveOrigin)` call is
+   unconditional: every quake present in a feed poll's response gets rewritten every single poll,
+   even when the reconciled canonical is byte-identical to what's already stored. `QuakeDao.toRow()`
+   stamps `fetchedAtMillis = clock()` on every write with no content check first, so that
+   unconditional rewrite re-stamps EVERY still-current quake's fetch time on EVERY poll, not just
+   genuinely new-or-revised ones. Two costs, one root cause: (a) `AlertDigestWorker`'s
+   `store.newSince(lastRun)` cursors on exactly this column, so it re-selects every still-qualifying
+   quake as "new" on every digest run regardless of whether anything actually changed — the ring
+   buffer (`AlertDigestSupport.kt`'s `NOTIFIED_IDS_CAP`) is the ONLY thing currently suppressing a
+   re-notify, which is why its adequacy under a high-volume rule mattered enough to need a Round 2
+   cap bump (100 -> 1000); (b) every poll performs a full DB rewrite of the whole current feed
+   window even when nothing needs writing, which is wasted I/O independent of alerting. A
+   content-diff gate in `ingest()` — skip `replaceAndDelete` (and the `fetchedAtMillis` re-stamp
+   that comes with it) whenever the reconciled canonical is unchanged from what `previous` already
+   holds — would remove both costs at the source instead of a downstream mitigation absorbing the
+   symptom. Bigger scope than a fix-round slice (touches the one shared `ingest()` path every
+   origin funnels through — feed, live, archive — so needs its own equality/dirty-check design and
+   TDD pass); logged here rather than folded into this round.

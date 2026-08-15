@@ -13,8 +13,14 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-// Set once from MainActivity.onCreate's own "first launch this process" guard — same
-// process-lifetime-holder shape com.yugma.terrawatch.share.Share.android.kt's own appContext
+// Round 2 (stale-kdoc fix): set once from ensureKoinStarted (di/KoinBootstrap.kt) -- called from
+// BOTH of this app's entry points, MainActivity.onCreate AND AlertDigestWorker.doWork() (a
+// headless WorkManager process start -- see that function's own kdoc), inside its own idempotent
+// guard. (Was: "set once from MainActivity.onCreate's own first-launch guard" -- stale since the
+// C1 fix moved this call INSIDE ensureKoinStarted so a headless worker-started process gets it
+// too; the original bug this closed was exactly THIS file's appContext being left uninitialized
+// whenever a worker-started process reached MainActivity.onCreate later with Koin already up.)
+// Same process-lifetime-holder shape com.yugma.terrawatch.share.Share.android.kt's own appContext
 // establishes (applicationContext, not the Activity, stored specifically so this can never leak an
 // Activity past its lifecycle). Unlike NotificationPermissionRequester's controller (which needs
 // per-Activity-instance closures for shouldShowRequestPermissionRationale), everything this file

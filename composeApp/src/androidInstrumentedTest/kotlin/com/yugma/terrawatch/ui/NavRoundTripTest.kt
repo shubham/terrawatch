@@ -13,6 +13,7 @@ import com.yugma.terrawatch.data.OnboardingStore
 import com.yugma.terrawatch.database.QuakeDao
 import com.yugma.terrawatch.database.TerraWatchDb
 import com.yugma.terrawatch.di.appModule
+import com.yugma.terrawatch.di.ensureKoinStarted
 import com.yugma.terrawatch.history.HISTORY_SUBTITLE
 import com.yugma.terrawatch.home.HOME_MAP_CONTAINER_TAG
 import com.yugma.terrawatch.home.SETTINGS_GEAR_TAG
@@ -29,7 +30,6 @@ import io.ktor.http.HttpStatusCode
 import org.junit.Rule
 import org.junit.Test
 import org.koin.core.context.GlobalContext
-import org.koin.core.context.startKoin
 
 /**
  * Task 13: THE white-screen regression pin (plan Task 4 brief, quoted in `AppNav.kt`'s own kdoc:
@@ -49,14 +49,32 @@ import org.koin.core.context.startKoin
  * here, because `AppNav.kt`'s History/Insights/Settings routes each resolve their own ViewModel via
  * their screen's own defaulted `= koinViewModel()` parameter, with no override plumbed through
  * `AppNav` the way Home's `homeViewModel`/`selectionViewModel` already are — there is no way to
- * mount the real History/Insights/Settings screens without a started Koin. Guarded exactly the way
- * `MainActivity.onCreate`'s own `firstLaunchThisProcess` check is (`GlobalContext.getOrNull() ==
- * null`): this is the only class in this instrumented suite that starts Koin, but the guard is kept
- * anyway so a future second Koin-using test class added to this same `androidInstrumentedTest`
- * source set (all of which share ONE Instrumentation process/JVM per `HomeFlowTest`'s own kdoc)
- * fails safe (reuses the already-started graph) instead of crashing on
+ * mount the real History/Insights/Settings screens without a started Koin. Guarded by the same
+ * `GlobalContext.getOrNull() == null` shape [com.yugma.terrawatch.di.ensureKoinStarted] itself
+ * checks internally (Round 2 correction: `MainActivity.onCreate` no longer computes this check
+ * itself post-C1-fix — it calls that function unconditionally and trusts its own internal guard;
+ * see that function's own kdoc): this is the only class in this instrumented suite that starts
+ * Koin, but the guard is kept anyway so a future second Koin-using test class added to this same
+ * `androidInstrumentedTest` source set (all of which share ONE Instrumentation process/JVM per
+ * `HomeFlowTest`'s own kdoc) fails safe (reuses the already-started graph) instead of crashing on
  * `KoinAppAlreadyStartedException`. Never stopped, for the same reason `HomeFlowTest` never starts
  * it: no natural teardown point shared safely across sibling test classes in one process.
+ *
+ * Round 2 (review finding, EVIDENCE INTEGRITY — traced against source, not assumed): this class
+ * used to call `startKoin {}` directly with its own hand-built [appModule] graph instead of going
+ * through [com.yugma.terrawatch.di.ensureKoinStarted] the way both real entry points
+ * (`MainActivity.onCreate`, `AlertDigestWorker.doWork`) do. That skipped `initShareContext`/
+ * `initAlertDigestSchedulerContext` entirely — both only ever run from INSIDE that function as of
+ * the C1 fix above — leaving `AlertDigestScheduler`'s (and Share's) `lateinit appContext` holder
+ * uninitialized for the whole test. Harmless for Legs 0-3 (Home/History/Insights never touch
+ * either), but Leg 4/5's Settings navigation renders the ALERTS row, which calls
+ * `AlertDigestScheduler.isEnqueued()` — an unconditional read of that uninitialized `appContext`,
+ * i.e. a live `UninitializedPropertyAccessException` the instant this test actually reached
+ * Settings. Fixed by routing through [com.yugma.terrawatch.di.ensureKoinStarted] itself (see
+ * [ensureKoinStartedAndOnboarded]'s own kdoc for how it still gets its throwaway in-memory
+ * driver/mock HTTP client via that function's new Round 2 seam) so this test now exercises the
+ * IDENTICAL bootstrap path production does, not a parallel one two of its three init calls could
+ * silently diverge from again.
  *
  * The [MockEngine] backing this Koin graph's one shared [HttpClient] always answers 500 — this test
  * cares about NAVIGATION surviving, not about any screen's fetched data (History's own
@@ -125,21 +143,29 @@ class NavRoundTripTest {
     }
 
     /**
-     * Builds the exact same [appModule] graph `MainActivity.onCreate` builds for real (fresh,
+     * Builds the exact same [appModule] graph `MainActivity.onCreate` builds for real, through the
+     * SAME [com.yugma.terrawatch.di.ensureKoinStarted] bootstrap both real entry points call — not
+     * a hand-rolled `startKoin` of its own (Round 2 fix: see this class's own top-of-file kdoc for
+     * the live crash that bootstrap-skipping shortcut caused). That function's new `storeOverride`/
+     * `httpClientOverride` seam (see its own kdoc) is what lets this call keep using a fresh,
      * throwaway in-memory driver in place of `DriverFactory`'s named "terrawatch.db" — see
      * [HomeFlowTest.freshDriver]'s own kdoc for why a named driver would be wrong here: this
-     * device's manual-QA passes read/write real quakes into that file), then flips the resolved
-     * [OnboardingStore] singleton to onboarded BEFORE [App] ever composes — `AppNav`'s
-     * `startDestination` is read exactly once, via `remember {}` with no key (see that composable's
-     * own kdoc), so this must happen before `setContent {}`, not after.
+     * device's manual-QA passes read/write real quakes into that file — and the same always-500
+     * [MockEngine] this class's own top-of-file kdoc explains, instead of letting
+     * [com.yugma.terrawatch.di.ensureKoinStarted]'s default parameters build a real `DriverFactory`/
+     * real `OkHttp` client (which its two real call sites still get, untouched, since they never
+     * pass either argument). Then flips the resolved [OnboardingStore] singleton to onboarded
+     * BEFORE [App] ever composes — `AppNav`'s `startDestination` is read exactly once, via
+     * `remember {}` with no key (see that composable's own kdoc), so this must happen before
+     * `setContent {}`, not after.
      */
     private fun ensureKoinStartedAndOnboarded() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
         if (GlobalContext.getOrNull() == null) {
-            val context = InstrumentationRegistry.getInstrumentation().targetContext
             val driver = AndroidSqliteDriver(TerraWatchDb.Schema, context, name = null)
             val dao = QuakeDao(TerraWatchDb(driver))
             val http = HttpClient(MockEngine { respond("", HttpStatusCode.InternalServerError) })
-            startKoin { modules(appModule(http, dao, LocationProvider(context))) }
+            ensureKoinStarted(context, LocationProvider(context), storeOverride = dao, httpClientOverride = http)
         }
         GlobalContext.get().get<OnboardingStore>().setOnboarded()
     }

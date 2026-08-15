@@ -4,6 +4,7 @@ import android.content.Context
 import com.yugma.terrawatch.alerts.initAlertDigestSchedulerContext
 import com.yugma.terrawatch.database.DriverFactory
 import com.yugma.terrawatch.database.QuakeDao
+import com.yugma.terrawatch.database.QuakeStore
 import com.yugma.terrawatch.database.createDatabase
 import com.yugma.terrawatch.location.LocationProvider
 import com.yugma.terrawatch.share.initShareContext
@@ -58,16 +59,36 @@ private val koinBootstrapLock = Any()
  * unconditionally — never re-derive "is this the first bootstrap" externally from `GlobalContext`
  * state again (see `MainActivity.onCreate`'s own comment for the SEPARATE, Koin-independent flag it
  * now uses for its own activity-scoped first-run behavior instead).
+ *
+ * Round 2 (review finding): [storeOverride]/[httpClientOverride] are a new trailing seam, both
+ * defaulted to `null` — a `null` reproduces this function's ORIGINAL, only-ever-real-[DriverFactory]/
+ * real-`OkHttp` construction byte-for-byte, so neither of this function's two real call sites
+ * (`MainActivity.onCreate`, `AlertDigestWorker.doWork`) changes at all: both still call this with
+ * exactly the same two positional arguments as before. The seam exists purely so
+ * `NavRoundTripTest` (`androidInstrumentedTest`) can go through this SAME bootstrap — Share/
+ * AlertDigestScheduler context init included — instead of a hand-rolled `startKoin {}` call that
+ * used to skip both entirely (see that test's own kdoc for the crash this closes: Settings' ALERTS
+ * row reads `AlertDigestScheduler`'s `appContext` unconditionally, which was never set when the
+ * test built its own bare Koin graph, since [initShareContext]/[initAlertDigestSchedulerContext]
+ * only ever fire from INSIDE this function) — while still substituting a throwaway in-memory
+ * driver/`MockEngine` for the real device DB/network, the same way `HomeFlowTest.freshDriver`'s own
+ * kdoc explains an instrumented test must never touch the real on-device "terrawatch.db"/network.
  */
 @OptIn(ExperimentalTime::class)
-fun ensureKoinStarted(context: Context, locationProvider: LocationProvider) {
+fun ensureKoinStarted(
+    context: Context,
+    locationProvider: LocationProvider,
+    storeOverride: QuakeStore? = null,
+    httpClientOverride: HttpClient? = null,
+) {
     synchronized(koinBootstrapLock) {
         if (GlobalContext.getOrNull() != null) return
         val appContext = context.applicationContext
         initShareContext(appContext)
         initAlertDigestSchedulerContext(appContext)
-        val dao = QuakeDao(createDatabase(DriverFactory(appContext)), clock = { Clock.System.now().toEpochMilliseconds() })
-        val http = HttpClient(OkHttp) {
+        val dao = storeOverride
+            ?: QuakeDao(createDatabase(DriverFactory(appContext)), clock = { Clock.System.now().toEpochMilliseconds() })
+        val http = httpClientOverride ?: HttpClient(OkHttp) {
             install(WebSockets) { pingIntervalMillis = 30_000 }
             install(HttpTimeout) {
                 requestTimeoutMillis = 15_000

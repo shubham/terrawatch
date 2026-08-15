@@ -32,11 +32,38 @@ fun parseNotifiedIds(csv: String?): List<String> =
  * a plain FIFO ring buffer, not an LRU (an id's position never moves once appended; only running
  * off the front ages it out). Returns the new CSV to persist back into the SAME meta key.
  *
- * [cap] defaults to 100 (the worker's own dispatch-specified bound) — keeps the persisted string
- * from growing unboundedly over a device's lifetime while comfortably covering "how many quakes
- * could plausibly be notified-and-then-need-re-suppression within a realistic run cadence" (a
- * 45-minute period means clearing 100 entries would need roughly 75 hours of nonstop distinct
- * matches with zero repeats — far beyond what a real quake feed produces).
+ * [cap] defaults to 1000 as of Round 2 (was 100 — a review traced that value as provably too
+ * small; see below). Worst-case adequacy math, not average-case, since this buffer's whole job is
+ * to survive a BUSY period, not a typical one:
+ *  - [notifiedIdentifiers] (this worker's own caller) appends UP TO 2 identifiers per matched
+ *    quake, not 1 — this codebase's [com.yugma.terrawatch.model.Source] enum has exactly two
+ *    agencies (USGS/EMSC), and a quake carrying both contributes its own id plus one more.
+ *  - Nothing caps how many DISTINCT quakes one worker run's own "fresh" list can contain before
+ *    reaching this function — only the NOTIFICATION display is capped (3 individual + 1 summary,
+ *    see [planDigestNotifications]) — so one run's identifier contribution is open-ended under a
+ *    permissive rule during an active sequence, not fixed at exactly 1 the way the ORIGINAL
+ *    cap-100 version of this comment assumed ("clearing 100 entries would need roughly 75 hours of
+ *    nonstop distinct matches" — true only if every run contributes exactly one identifier, which
+ *    nothing in this worker's design actually guarantees).
+ *  - At the digest worker's 45-minute cadence (24h / 45min = 32 runs/day) and up to 2
+ *    identifiers/quake, 1000 slots exactly fill in one day at a SUSTAINED average of
+ *    1000 / (32 * 2) ≈ 15.6 newly-matching quakes per run — comfortable margin over everyday
+ *    activity even for a wide "near" rule (e.g. this app's own 1000 km/M3.0 device-tested config,
+ *    task-3-report.md), but not a proof against a genuinely historic swarm/aftershock sequence,
+ *    which no fixed-size buffer can promise against. 1000 (a 10x jump from the old 100) is a
+ *    pragmatic mitigation of the SYMPTOM — this buffer being the ONLY suppression against a
+ *    re-notify — not the root cause: see [com.yugma.terrawatch.data.QuakeRepository.ingest]'s
+ *    missing content-diff gate (logged, docs/superpowers/plans/plan-4-backlog.md, not fixed this
+ *    round) for why an unchanged quake re-enters this worker's own "fresh" candidate set on every
+ *    single poll in the first place, which is what makes hitting this cap plausible at all.
+ *
+ * CSV size at the new cap, sanity-checked against this codebase's own real id samples
+ * (core/network's `usgs_all_hour.json`/`emsc_event.json` fixtures: `"aka2026poxsgc"`/
+ * `"nc75413897"`/`"us6000tj70"` at 10-13 chars, EMSC's `"20260807_0000123"` at 16) — roughly 15
+ * chars/id average including the joining comma puts a full 1000-entry buffer at roughly 15,000
+ * characters (~15KB) for this one `meta.value` TEXT column. Trivial for SQLite (no declared column
+ * length limit, and SQLite's own default max TEXT/BLOB size is on the order of 1GB) and for an
+ * in-process parse/join every 45 minutes — no size concern at this cap.
  *
  * [distinct] (stable, first-occurrence-wins) rather than a [Set]: guards against [newIds]
  * containing an id [existingCsv] already carries without ever producing a duplicate entry in the
@@ -45,7 +72,7 @@ fun parseNotifiedIds(csv: String?): List<String> =
  * nothing to make safe against on its own terms rather than trusting the caller never to violate
  * it.
  */
-fun appendNotifiedIds(existingCsv: String?, newIds: List<String>, cap: Int = 100): String {
+fun appendNotifiedIds(existingCsv: String?, newIds: List<String>, cap: Int = 1000): String {
     val merged = (parseNotifiedIds(existingCsv) + newIds).distinct()
     val trimmed = if (merged.size > cap) merged.takeLast(cap) else merged
     return trimmed.joinToString(",")

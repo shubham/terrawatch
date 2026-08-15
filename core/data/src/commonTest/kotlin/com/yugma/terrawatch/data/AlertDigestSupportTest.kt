@@ -84,12 +84,16 @@ class AlertDigestSupportTest {
         assertEquals("us4,us5,us6,us7,us8", appendNotifiedIds(existing, listOf("us6", "us7", "us8"), cap = 5))
     }
 
-    @Test fun `appendNotifiedIds default cap is 100`() {
-        val existing = (1..100).joinToString(",") { "us$it" }
-        val result = appendNotifiedIds(existing, listOf("us101"))
-        assertEquals(100, result.split(",").size)
+    // Round 2 (ring-buffer adequacy, review finding): 100 -> 1000 -- see appendNotifiedIds' own
+    // kdoc for the worst-case-identifiers-per-run math this reflects. RED before the fix (this
+    // test asserted 100/"us2"/"us101" against the OLD default), GREEN after -- a genuine eviction
+    // proof at the new production cap, not just a value-literal change.
+    @Test fun `appendNotifiedIds default cap is 1000`() {
+        val existing = (1..1000).joinToString(",") { "us$it" }
+        val result = appendNotifiedIds(existing, listOf("us1001"))
+        assertEquals(1000, result.split(",").size)
         assertEquals("us2", result.split(",").first()) // us1 fell off the front
-        assertEquals("us101", result.split(",").last())
+        assertEquals("us1001", result.split(",").last())
     }
 
     // --- notifiedIdentifiers / filterFreshAlertEvents (Fix Round 1, I1) -------------------------

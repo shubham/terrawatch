@@ -109,6 +109,24 @@ import org.koin.core.context.GlobalContext
  *   own `isEnqueued` precedent — real blocking DB/synchronous I/O belongs off [Dispatchers.Default]
  *   (a small, CPU-core-sized pool this app's OTHER coroutines share), not directly on whatever
  *   dispatcher [CoroutineWorker.doWork] happens to run on by default.
+ *
+ * **Round 2 (re-review), what changed and why:**
+ * - **Ring-buffer adequacy**: [NOTIFIED_IDS_CAP] 100 -> 1000 — see [com.yugma.terrawatch.data.
+ *   appendNotifiedIds]'s own kdoc for the full worst-case-identifiers-per-run math this reflects.
+ *   100 was provably too small for a permissive "near" rule (this app's own 1000 km/M3.0
+ *   device-tested config, task-3-report.md) sustained over 24h: this worker's own [QuakeStore.
+ *   newSince] re-selects every still-qualifying quake on every run (unaffected by whether anything
+ *   about it actually changed — see [com.yugma.terrawatch.data.QuakeRepository.ingest]'s missing
+ *   content-diff gate, logged to `docs/superpowers/plans/plan-4-backlog.md`, not fixed this round),
+ *   so a busy enough period could evict a still-active quake's id from a too-small buffer and let
+ *   that same re-selection present it as freshly-fetched again on a later run — a genuine duplicate
+ *   notification for something the user already saw.
+ * - **I2's clamp, disclosed honestly**: the 24h lookback clamp (I2, above) is a deliberate trade,
+ *   not a hidden gap — any matching quake, including a world-rule M6+, that falls entirely inside
+ *   the clamped-away portion of a long-dark gap is never evaluated by this worker at all and
+ *   produces no notification, with no user-visible signal that a window was skipped, in exchange
+ *   for never storming a returning user with a multi-day backlog (the same "digest, not
+ *   early-warning" honesty spec §6.5 already asks of every notification's own copy).
  */
 class AlertDigestWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
@@ -266,7 +284,12 @@ class AlertDigestWorker(context: Context, params: WorkerParameters) : CoroutineW
         private const val KEY_LAST_RUN = "alert_last_run"
         private const val KEY_NOTIFIED_IDS = "alert_notified_ids"
         private const val MAX_INDIVIDUAL_NOTIFICATIONS = 3
-        private const val NOTIFIED_IDS_CAP = 100
+
+        // Round 2 (ring-buffer adequacy, review finding): 100 -> 1000 -- see
+        // com.yugma.terrawatch.data.appendNotifiedIds' own kdoc for the full adequacy math this
+        // reflects (100 was provably too small for a permissive "near" rule, e.g. this app's own
+        // 1000 km/M3.0 device-tested config, sustained over 24h).
+        private const val NOTIFIED_IDS_CAP = 1000
 
         // Fix Round 1 (minor): 0 -> 1 -- a literal-zero notification id/PendingIntent request code
         // reads too easily as an "absent"/unset sentinel elsewhere in this codebase and the wider
