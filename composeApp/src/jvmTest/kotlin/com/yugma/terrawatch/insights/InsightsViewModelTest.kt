@@ -23,8 +23,11 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.http.HttpStatusCode
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.job
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -208,6 +211,23 @@ class InsightsViewModelTest {
  * 6h meta-cache. A separate class (not folded into [InsightsViewModelTest] above) purely to keep
  * this feature's own test setup (custom MockEngine responders, cache pre-seeding) from cluttering
  * the existing suite's already-established helper shapes.
+ *
+ * Fix round (Plan 4 Task 5 review, Critical): every thin-30d-cache scenario below now expects TWO
+ * state emissions, not one - [InsightsUiState.Content] publishes with `worldwideCount = null` first
+ * (the three core cards, instantly), then a SEPARATE, later emission patches in the real count once
+ * `InsightsViewModel.scheduleWorldwideBackfill`'s own coroutine resolves. This mirrors the
+ * ViewModel's own publish-then-patch fix - see its class-level kdoc for the bug this closes (the
+ * backfill used to block the whole screen, including a period flip mid-fetch).
+ *
+ * [repository]'s `ioDispatcher` param is pinned to the SAME [UnconfinedTestDispatcher] instance
+ * backing `Dispatchers.Main` in every test below (not just the two new ones that strictly require
+ * it, for consistency) - same "a real Dispatchers.Default hop races this test's own assertions on
+ * an uncontrolled thread" reasoning `HomeViewModelTest`'s own poll-loop/prune tests already
+ * document for this identical pin - so the backfill's own DAO/network hops resolve
+ * deterministically, inline, on the one scheduler every assertion here already depends on. This
+ * matters most for `expectNoEvents()` (a non-suspending, checks-right-now assertion - see Turbine's
+ * own kdoc on it): without the pin, a stale 30d fetch resolving on a real background thread could
+ * still be in flight the instant that check runs, making the assertion pass for the wrong reason.
  */
 class InsightsDensityBackfillTest {
     private val createdViewModels = mutableListOf<InsightsViewModel>()
@@ -224,8 +244,8 @@ class InsightsDensityBackfillTest {
         return QuakeDao(TerraWatchDb(driver))
     }
 
-    private fun repository(dao: QuakeDao, engine: MockEngine): QuakeRepository =
-        QuakeRepository(UsgsApi(HttpClient(engine)), EmscLiveSource(HttpClient(engine)), dao, clock = { 1L })
+    private fun repository(dao: QuakeDao, engine: MockEngine, ioDispatcher: CoroutineDispatcher): QuakeRepository =
+        QuakeRepository(UsgsApi(HttpClient(engine)), EmscLiveSource(HttpClient(engine)), dao, clock = { 1L }, ioDispatcher = ioDispatcher)
 
     private fun createVm(repository: QuakeRepository, nowMillis: Long): InsightsViewModel =
         InsightsViewModel(repository, clock = { nowMillis }).also { createdViewModels += it }
@@ -256,12 +276,14 @@ class InsightsDensityBackfillTest {
     }
 
     @Test fun `never backfills for the 7-day period, even with a thin cache`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
         val dao = freshDao()
         val now = 100 * DAY
         dao.upsert(quake("a", timeMillis = now, mag = 5.0))
         var called = false
-        val vm = createVm(repository(dao, MockEngine { called = true; respond("""{"count":1}""", HttpStatusCode.OK) }), now)
+        val engine = MockEngine { called = true; respond("""{"count":1}""", HttpStatusCode.OK) }
+        val vm = createVm(repository(dao, engine, testDispatcher), now)
         vm.state.test {
             val content = assertIs<InsightsUiState.Content>(awaitPastLoading())
             assertEquals(null, content.worldwideCount)
@@ -271,12 +293,14 @@ class InsightsDensityBackfillTest {
     }
 
     @Test fun `never backfills for THIRTY_DAYS once the cache already has 100+ rows`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
         val dao = freshDao()
         val now = 100 * DAY
         repeat(100) { i -> dao.upsert(quake("q$i", timeMillis = now - i * 1000L, mag = 4.0)) }
         var called = false
-        val vm = createVm(repository(dao, MockEngine { called = true; respond("""{"count":1}""", HttpStatusCode.OK) }), now)
+        val engine = MockEngine { called = true; respond("""{"count":1}""", HttpStatusCode.OK) }
+        val vm = createVm(repository(dao, engine, testDispatcher), now)
         vm.state.test {
             val thirtyDay = thirtyDayContent(vm)
             assertEquals(100L, thirtyDay.dayCounts.sum())
@@ -286,78 +310,163 @@ class InsightsDensityBackfillTest {
         assertEquals(false, called, "a healthy (>=100 row) cache must never trigger a density backfill call")
     }
 
-    @Test fun `backfills and populates worldwideCount when THIRTY_DAYS cache is thin`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
+    // Fix round (Plan 4 Task 5 review, Critical), TDD case 1 - the whole point of publish-then-patch:
+    // proves the three core cards' Content is NOT held hostage by the backfill fetch, by gating that
+    // fetch on a CompletableDeferred this test controls directly. Same "a real suspension point, not
+    // virtual time" gate `HomeViewModelTest`'s own "cached pins render immediately, before the
+    // pending network refresh resolves" test already established for the identical class of claim.
+    @Test fun `Content publishes with worldwideCount null before the backfill fetch ever resolves`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
         val dao = freshDao()
         val now = 100 * DAY
         dao.upsert(quake("a", timeMillis = now, mag = 5.0))
-        val vm = createVm(repository(dao, MockEngine { respond("""{"count":11082,"maxAllowed":20000}""", HttpStatusCode.OK) }), now)
+        val gate = CompletableDeferred<Unit>()
+        val engine = MockEngine { gate.await(); respond("""{"count":11082,"maxAllowed":20000}""", HttpStatusCode.OK) }
+        val vm = createVm(repository(dao, engine, testDispatcher), now)
+        vm.state.test {
+            val published = thirtyDayContent(vm)
+            assertEquals(null, published.worldwideCount, "the 3 core cards must publish before a gated backfill fetch ever resolves")
+
+            gate.complete(Unit) // now let the parked fetch resolve
+
+            val patched = assertIs<InsightsUiState.Content>(awaitItem())
+            assertEquals(11_082L, patched.worldwideCount)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    // Fix round (Plan 4 Task 5 review, Critical), TDD case 2 - the OTHER half of the bug this fix
+    // closes: the old code's single _period.collect coroutine sat suspended inside the inline
+    // backfill call, so a tap back to 7d had to wait behind an in-flight 30d fetch (StateFlow
+    // conflation - the collector can't see the newer period until it finishes the current
+    // iteration). Proves both halves at once: the flip itself is never blocked (it settles on its
+    // own Content while the gate is still parked - if it WERE still blocked, the awaitItem() call
+    // right after setPeriod would hang forever, since `gate` isn't completed until later), AND the
+    // eventually-resolved 30d count is never patched onto the 7d Content that superseded it
+    // (computeGeneration moved on the instant the flip started).
+    @Test fun `a period flip mid-backfill means the stale count is never patched onto the new period's Content`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val dao = freshDao()
+        val now = 100 * DAY
+        dao.upsert(quake("a", timeMillis = now, mag = 5.0)) // thin on both the 7d and 30d windows
+        val gate = CompletableDeferred<Unit>()
+        val engine = MockEngine { gate.await(); respond("""{"count":11082,"maxAllowed":20000}""", HttpStatusCode.OK) }
+        val vm = createVm(repository(dao, engine, testDispatcher), now)
         vm.state.test {
             val thirtyDay = thirtyDayContent(vm)
-            assertEquals(11_082L, thirtyDay.worldwideCount)
+            assertEquals(null, thirtyDay.worldwideCount, "backfill is scheduled but parked on `gate`, mid-flight")
+
+            vm.setPeriod(InsightsPeriod.SEVEN_DAYS) // flips away WHILE the 30d backfill is still in flight
+
+            assertIs<InsightsUiState.Loading>(awaitItem())
+            val sevenDay = assertIs<InsightsUiState.Content>(awaitPastLoading())
+            assertEquals(InsightsPeriod.SEVEN_DAYS.label, sevenDay.periodLabel)
+            assertEquals(null, sevenDay.worldwideCount, "7d never backfills at all")
+
+            gate.complete(Unit) // let the now-superseded 30d fetch resolve
+
+            // Its count must never land on the (different-period, different-generation) Content
+            // above - scheduleWorldwideBackfill's own gen check drops this result silently.
+            expectNoEvents()
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `backfills and populates worldwideCount when THIRTY_DAYS cache is thin`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val dao = freshDao()
+        val now = 100 * DAY
+        dao.upsert(quake("a", timeMillis = now, mag = 5.0))
+        val engine = MockEngine { respond("""{"count":11082,"maxAllowed":20000}""", HttpStatusCode.OK) }
+        val vm = createVm(repository(dao, engine, testDispatcher), now)
+        vm.state.test {
+            val published = thirtyDayContent(vm)
+            assertEquals(null, published.worldwideCount, "publishes before the backfill resolves - see the dedicated ordering test above")
+            val patched = assertIs<InsightsUiState.Content>(awaitItem())
+            assertEquals(11_082L, patched.worldwideCount)
             cancelAndIgnoreRemainingEvents()
         }
     }
 
     @Test fun `a failed fetch with nothing cached leaves worldwideCount null`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
         val dao = freshDao()
         val now = 100 * DAY
         dao.upsert(quake("a", timeMillis = now, mag = 5.0))
-        val vm = createVm(repository(dao, MockEngine { respond("boom", HttpStatusCode.InternalServerError) }), now)
+        // Channel-based rendezvous (same pattern HomeViewModelTest's own "retryNow ignores a re-tap"
+        // test uses) - deterministic proof the fetch was actually attempted (and failed), never just
+        // silently skipped, before asserting nothing patches.
+        val callStarted = Channel<Unit>(Channel.UNLIMITED)
+        val engine = MockEngine { callStarted.trySend(Unit); respond("boom", HttpStatusCode.InternalServerError) }
+        val vm = createVm(repository(dao, engine, testDispatcher), now)
         vm.state.test {
-            val thirtyDay = thirtyDayContent(vm)
-            assertEquals(null, thirtyDay.worldwideCount)
+            val published = thirtyDayContent(vm)
+            assertEquals(null, published.worldwideCount)
+            callStarted.receive() // the (failing) fetch really was attempted...
+            expectNoEvents() // ...and its failure never patches - Content stays exactly as first published
             cancelAndIgnoreRemainingEvents()
         }
     }
 
     @Test fun `a fresh cached count is reused without a new network call`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
         val dao = freshDao()
         val now = 100 * DAY
         dao.upsert(quake("a", timeMillis = now, mag = 5.0))
         var callCount = 0
         val engine = MockEngine { callCount++; respond("""{"count":99999,"maxAllowed":20000}""", HttpStatusCode.OK) }
-        val repo = repository(dao, engine)
+        val repo = repository(dao, engine, testDispatcher)
         repo.setWorldwideCountCache(count = 555, fetchedAtMillis = now - 60 * 60 * 1000L) // 1h old, well within 6h TTL
         val vm = createVm(repo, now)
         vm.state.test {
-            val thirtyDay = thirtyDayContent(vm)
-            assertEquals(555L, thirtyDay.worldwideCount)
+            val published = thirtyDayContent(vm)
+            assertEquals(null, published.worldwideCount)
+            val patched = assertIs<InsightsUiState.Content>(awaitItem())
+            assertEquals(555L, patched.worldwideCount)
             cancelAndIgnoreRemainingEvents()
         }
         assertEquals(0, callCount, "a fresh (< 6h) cache hit must never touch the network")
     }
 
     @Test fun `a stale (6h+) cached count triggers a fresh fetch instead of being reused`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
         val dao = freshDao()
         val now = 100 * DAY
         dao.upsert(quake("a", timeMillis = now, mag = 5.0))
         val engine = MockEngine { respond("""{"count":77,"maxAllowed":20000}""", HttpStatusCode.OK) }
-        val repo = repository(dao, engine)
+        val repo = repository(dao, engine, testDispatcher)
         repo.setWorldwideCountCache(count = 555, fetchedAtMillis = now - 7 * 60 * 60 * 1000L) // 7h old, past the 6h TTL
         val vm = createVm(repo, now)
         vm.state.test {
-            val thirtyDay = thirtyDayContent(vm)
-            assertEquals(77L, thirtyDay.worldwideCount, "a stale cache must be refreshed, not served as-is")
+            val published = thirtyDayContent(vm)
+            assertEquals(null, published.worldwideCount)
+            val patched = assertIs<InsightsUiState.Content>(awaitItem())
+            assertEquals(77L, patched.worldwideCount, "a stale cache must be refreshed, not served as-is")
             cancelAndIgnoreRemainingEvents()
         }
     }
 
     @Test fun `a failed fetch falls back to a stale cached value rather than null`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
         val dao = freshDao()
         val now = 100 * DAY
         dao.upsert(quake("a", timeMillis = now, mag = 5.0))
         val engine = MockEngine { respond("boom", HttpStatusCode.InternalServerError) }
-        val repo = repository(dao, engine)
+        val repo = repository(dao, engine, testDispatcher)
         repo.setWorldwideCountCache(count = 555, fetchedAtMillis = now - 7 * 60 * 60 * 1000L) // stale, forces a re-fetch attempt
         val vm = createVm(repo, now)
         vm.state.test {
-            val thirtyDay = thirtyDayContent(vm)
-            assertEquals(555L, thirtyDay.worldwideCount, "a failed refresh should fall back to the stale value, not drop to null")
+            val published = thirtyDayContent(vm)
+            assertEquals(null, published.worldwideCount)
+            val patched = assertIs<InsightsUiState.Content>(awaitItem())
+            assertEquals(555L, patched.worldwideCount, "a failed refresh should fall back to the stale value, not drop to null")
             cancelAndIgnoreRemainingEvents()
         }
     }

@@ -118,13 +118,30 @@ fun fillBandGaps(counts: List<BandCount>): List<Pair<MagnitudeBand, Long>> {
  * FDSN `/count` call (via [repository]'s own [QuakeRepository.worldwideCount]/
  * [QuakeRepository.worldwideCountCache] - never a direct network dependency of this class) to
  * populate [InsightsUiState.Content.worldwideCount] with a "N cached · M worldwide" disclosure
- * caption. It is structurally incapable of blocking, gating, or replacing the three core cards:
- * [computeContent] always computes [dayCounts]/[bands]/[strongest] first and unconditionally, and
- * [worldwideCountIfThin] itself just returns null on ANY failure (see its own kdoc) - the caption
- * silently absent is the only possible symptom of a GDELT/FDSN outage, never a broken Insights tab.
- * See [InsightsNewsViewModel] for the SEPARATE, sibling "In the news" card - deliberately NOT folded
- * in here at all, network-touching from the start, for exactly the reason this class stays this
- * narrowly amended rather than absorbing a second, unrelated network feature too.
+ * caption. [worldwideCountIfThin] itself just returns null on ANY failure (see its own kdoc) - the
+ * caption silently absent is the only possible symptom of a GDELT/FDSN outage, never a broken
+ * Insights tab. See [InsightsNewsViewModel] for the SEPARATE, sibling "In the news" card -
+ * deliberately NOT folded in here at all, network-touching from the start, for exactly the reason
+ * this class stays this narrowly amended rather than absorbing a second, unrelated network feature
+ * too.
+ *
+ * Fix round (Plan 4 Task 5 review, Critical): [computeContent] used to AWAIT [worldwideCountIfThin]
+ * inline while building the very [InsightsUiState.Content] it returns - directly contradicting the
+ * "structurally incapable of blocking... the three core cards" claim this kdoc already made. A thin
+ * cache plus a slow/absent network could hold the WHOLE screen on [InsightsUiState.Loading] for as
+ * long as the fetch took (observed up to ~15s), for three cards that are otherwise instant local
+ * reads - and since [_period]'s own collector processes one emission at a time, a user tapping back
+ * to 7d while a slow 30d backfill was in flight had to wait for that fetch too (StateFlow conflation
+ * means the collector can't see the newer period until it finishes the current iteration). Fixed via
+ * publish-then-patch: [computeContent] now NEVER touches [worldwideCountIfThin] and always returns
+ * `worldwideCount = null`; [publish] schedules the backfill separately, in its own [viewModelScope]
+ * coroutine ([scheduleWorldwideBackfill]), only AFTER the three-card [InsightsUiState.Content] is
+ * already committed to [state] - so the period-flip/recentQuakes collectors are never blocked behind
+ * it. That coroutine patches [state] via `copy(worldwideCount = ...)` if (and only if) it succeeds
+ * AND [computeGeneration] still matches the generation it was scheduled under - the exact same fence
+ * [publish] itself already uses, so a period flip (or a newer recentQuakes tick) mid-fetch silently
+ * drops the stale result instead of patching a count from one period onto another's (by-then
+ * different) Content.
  *
  * Two independent triggers recompute [state], each with different Loading semantics - the
  * distinction is deliberate, not an oversight:
@@ -143,7 +160,8 @@ fun fillBandGaps(counts: List<BandCount>): List<Pair<MagnitudeBand, Long>> {
  * HomeViewModel.refreshGeneration] already established: whichever trigger STARTED most recently
  * is the only one allowed to actually write [state] once its (possibly-not-last-to-finish) read
  * resolves, so a live quake arriving mid-period-flip can never stomp the flip's fresher result
- * with a stale one (or vice versa).
+ * with a stale one (or vice versa). [scheduleWorldwideBackfill]'s own patch reuses this identical
+ * fence rather than inventing a second one.
  */
 class InsightsViewModel(
     private val repository: QuakeRepository,
@@ -210,7 +228,13 @@ class InsightsViewModel(
     private suspend fun publish(period: InsightsPeriod, gen: Long) {
         val result = runCatching { computeContent(period) }
         if (gen != computeGeneration) return // superseded by a newer trigger - drop this stale result
-        _state.value = result.fold(onSuccess = { it }, onFailure = { InsightsUiState.Error(it) })
+        val published = result.fold(onSuccess = { it }, onFailure = { InsightsUiState.Error(it) })
+        _state.value = published
+        // Fix round (Plan 4 Task 5 review, Critical): scheduled AFTER the write above, never
+        // before/inline with it - see scheduleWorldwideBackfill's own kdoc for why.
+        if (published is InsightsUiState.Content) {
+            scheduleWorldwideBackfill(period, cachedCount = published.dayCounts.sum(), gen = gen)
+        }
     }
 
     private suspend fun computeContent(period: InsightsPeriod): InsightsUiState {
@@ -228,9 +252,57 @@ class InsightsViewModel(
                 strongest = repository.strongest(sinceMillis),
                 periodLabel = period.label,
                 nowBucketAtCompute = nowBucket,
-                worldwideCount = worldwideCountIfThin(period, cachedCount = dayCounts.sum(), sinceMillis = sinceMillis, nowMillis = clock()),
+                // Fix round (Plan 4 Task 5 review, Critical): always null here now - see
+                // scheduleWorldwideBackfill's kdoc for where a value actually comes from. This
+                // function must stay a pure, fast, all-local read so the three cards above can
+                // never be held hostage by the one field that isn't.
+                worldwideCount = null,
             )
         }
+    }
+
+    /**
+     * Fix round (Plan 4 Task 5 review, Critical): the "patch" half of publish-then-patch - see this
+     * class's own kdoc for the bug this closes (the density backfill used to block the whole screen,
+     * including a period flip mid-fetch). Called from [publish] only AFTER an [InsightsUiState.Content]
+     * for [period]/[gen] is already sitting in [state] - so nothing here can ever delay that write,
+     * unlike the old inline call inside [computeContent].
+     *
+     * Launches its own, independent [viewModelScope] coroutine (never awaited by [publish] itself)
+     * that runs [worldwideCountIfThin] - which keeps ALL of its existing gating (THIRTY_DAYS + thin
+     * cache only, 6h cache reuse, stale-fallback-on-failure - see its own kdoc, unchanged by this fix)
+     * - and, only if it actually resolves a value, patches [state] via `copy(worldwideCount = ...)`.
+     *
+     * [gen] is the generation [published]'s [InsightsUiState.Content] was written under, captured in
+     * [publish] BEFORE this function's coroutine ever suspends. If [computeGeneration] has since moved
+     * on - a period flip or a fresher `recentQuakes` tick started a newer [publish] call while this
+     * fetch was still in flight - the result is silently dropped instead of patched: without this
+     * check, a slow 30-day fetch could land its count on a 7-day (or simply newer) Content that
+     * replaced it in the meantime. The `is InsightsUiState.Content` check on [_state] right before the
+     * write is the same defensive belt-and-braces the generation check already implies (state can
+     * only have moved off Content by way of a generation bump too) but costs nothing to assert
+     * explicitly.
+     */
+    private fun scheduleWorldwideBackfill(period: InsightsPeriod, cachedCount: Long, gen: Long) {
+        viewModelScope.launch {
+            val nowMillis = clock()
+            val sinceMillis = sinceMillisFor(period, nowMillis)
+            val count = worldwideCountIfThin(period, cachedCount, sinceMillis, nowMillis) ?: return@launch
+            if (gen != computeGeneration) return@launch // superseded - drop, never patch a stale/replaced Content
+            (_state.value as? InsightsUiState.Content)?.let { current -> _state.value = current.copy(worldwideCount = count) }
+        }
+    }
+
+    /** Shared by [computeContent] and [scheduleWorldwideBackfill] so both derive "since millis for
+     * this period, as of now" from [clock] via the exact same formula - two independent
+     * re-derivations of this kind of bucket math is the precise class of bug
+     * [InsightsUiState.Content.nowBucketAtCompute] already exists to close for `InsightsScreen`'s
+     * date labels (see that field's own kdoc); this closes the identical risk between this class's
+     * own two internal call sites. */
+    private fun sinceMillisFor(period: InsightsPeriod, nowMillis: Long): Long {
+        val nowBucket = nowMillis / DAY_MILLIS
+        val sinceBucket = nowBucket - (period.days - 1)
+        return sinceBucket * DAY_MILLIS
     }
 
     /**
@@ -247,6 +319,10 @@ class InsightsViewModel(
      * rather than dropping straight to null - a slightly-stale global count is a more honest
      * disclosure than none at all when the network happens to be down right this instant, same
      * "the cache stays browsable" spirit this app already applies to quake data itself.
+     *
+     * Fix round (Plan 4 Task 5 review, Critical): no longer called from [computeContent] - see
+     * [scheduleWorldwideBackfill], which now owns calling this from its own separate coroutine. This
+     * function's own gate/cache/fallback logic is otherwise completely unchanged by that fix.
      */
     private suspend fun worldwideCountIfThin(period: InsightsPeriod, cachedCount: Long, sinceMillis: Long, nowMillis: Long): Long? {
         if (period != InsightsPeriod.THIRTY_DAYS || cachedCount >= DENSITY_TRIGGER_THRESHOLD) return null
