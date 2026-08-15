@@ -24,10 +24,17 @@
 #
 # Verified NOT needed (brief's own flagged trouble spots — checked, not assumed):
 # - **maplibre-native JNI** (org.maplibre.**): the concern is real in general (R8 has no visibility
-#   into a .so's JNI calls back into obfuscated Java/Kotlin classes) but maplibre-compose 0.14.0's
-#   AAR already ships its own consumer-rules.pro (merged automatically — see
-#   :composeApp:mergeReleaseConsumerProguardFiles's inputs). Confirmed on-device, not just by clean
-#   build: the release APK's live map rendered real MapLibre vector tiles, pins, clustering, and the
+#   into a .so's JNI calls back into obfuscated Java/Kotlin classes) but the transitive
+#   `org.maplibre.gl:android-sdk:13.0.2` dependency (pulled in by maplibre-compose 0.14.0, NOT
+#   maplibre-compose's own AAR — corrected here; the prior draft of this comment mis-credited that
+#   AAR directly) already ships its own proguard.txt with the needed keeps, merged automatically —
+#   verified in composeApp/build/outputs/mapping/release/configuration.txt:222-236: line 222's own
+#   "The proguard configuration file for the following section is .../android-sdk-13.0.2/
+#   proguard.txt" file-source comment, followed by lines 228-236's "Reflection on classes from
+#   native code" section, which is what actually keeps `org.maplibre.android.tile.TileOperation`,
+#   `.maps.RenderingStats`, and `.maps.NativeMapOptions` — not anything shipped in
+#   maplibre-compose's own consumer-rules.pro. Confirmed on-device too, not just by clean build: the
+#   release APK's live map rendered real MapLibre vector tiles, pins, clustering, and the
 #   home-radius ring correctly on 98bc1cd8 (task1-release-home.png) — if JNI callback targets had
 #   been renamed without a matching native-side rule, this would have been a black/blank map or a
 #   native crash, not a silent success.
