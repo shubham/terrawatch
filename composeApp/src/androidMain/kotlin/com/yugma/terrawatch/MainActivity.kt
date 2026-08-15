@@ -124,7 +124,7 @@ class MainActivity : ComponentActivity() {
     @OptIn(kotlin.time.ExperimentalTime::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Task 2 (Plan 3): rebind on EVERY onCreate, NOT gated behind firstLaunchThisProcess below —
+        // Task 2 (Plan 3): rebind on EVERY onCreate, NOT gated behind mainActivityBootstrappedThisProcess below —
         // a config-change recreate constructs a brand-new MainActivity instance with its own
         // brand-new requestLocationPermission launcher, and LocationRequester's holder (see
         // LocationRequester.android.kt) must always point at the CURRENT instance's launcher, never
