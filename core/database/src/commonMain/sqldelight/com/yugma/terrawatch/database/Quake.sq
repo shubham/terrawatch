@@ -23,6 +23,13 @@ CREATE TABLE meta (
 
 CREATE INDEX quake_time ON quake(timeMillis DESC);
 CREATE INDEX quake_mag ON quake(mag);
+-- Final review (F2): lastFetchedAt below is an unindexed full-table MAX() on a hot path
+-- (HomeViewModel's cache-driven state loop calls QuakeRepository.lastFetchedAtMillis() on every
+-- recentQuakes() emission, i.e. every ingest/live-arrival). See DriverFactory.jvm.kt's exists()
+-- gate / AndroidSqliteDriver's own onCreate-only-if-missing semantics for why this only reaches
+-- ALREADY-installed on-device DBs via a fresh install, not an in-place upgrade — noted in this
+-- commit's body, accepted pre-release.
+CREATE INDEX quake_fetchedAt ON quake(fetchedAtMillis);
 
 insertOrReplace:
 INSERT OR REPLACE INTO quake VALUES ?;

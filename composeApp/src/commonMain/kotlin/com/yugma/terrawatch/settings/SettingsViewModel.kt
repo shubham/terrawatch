@@ -57,9 +57,18 @@ class SettingsViewModel(
         }
     }
 
-    fun setNearbyRadius(km: Double) = alertRuleStore.setNearbyRadius(km)
+    // Final review (F4): setNearbyRadius/setMinMag are called directly from the slider's
+    // onValueChange (a rapid-fire Compose callback while the user drags), and AlertRuleStore's
+    // setters are plain synchronous DAO writes (metaPut) — same "off Main" treatment this class's
+    // own init block already gives homeLocationStore.get() above, for the same reason: a slider
+    // drag must not block Main with a SQLite write per pixel of travel.
+    fun setNearbyRadius(km: Double) {
+        viewModelScope.launch(Dispatchers.Default) { alertRuleStore.setNearbyRadius(km) }
+    }
 
-    fun setMinMag(mag: Double) = alertRuleStore.setMinMag(mag)
+    fun setMinMag(mag: Double) {
+        viewModelScope.launch(Dispatchers.Default) { alertRuleStore.setMinMag(mag) }
+    }
 
     fun setTheme(setting: ThemeSetting) = themeStore.setTheme(setting)
 }
