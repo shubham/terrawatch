@@ -156,6 +156,18 @@ Additional honest notes for whoever fills the real form at Task 8:
   with location permission denied (per Plan 4 Task 4's permission-correctness work: "Use my
   location" is opt-in, city-picker is a no-location alternative, and the world M6+ alert rule
   needs no home location at all).
+- **AD_ID permission, confirmed in the real merged manifest (Task 6 fix round)**:
+  `com.google.android.gms.permission.AD_ID` (plus `android.permission.ACCESS_ADSERVICES_AD_ID`) is
+  present in `composeApp`'s actual merged manifest today — checked directly against
+  `processDebugManifest`/`processReleaseManifest`'s real output this fix round, not assumed from
+  `play-services-ads`'s own docs. This app declares neither permission itself; `play-services-ads`
+  merges both in transitively (standard for any app carrying the Google Mobile Ads SDK). This is
+  exactly why the **Device or other identifiers** row above answers "Yes, when ads render / shared
+  with Google (AdMob)" — Play Console's own policy review cross-checks a manifest that requests
+  `AD_ID` against the Data Safety form's "Advertising ID" collection answer, so leaving that row as
+  "No" while this permission is present would be a real submission-time policy mismatch, not just an
+  incomplete disclosure. Noted here so whoever fills the real form at Task 8 knows this is a required
+  answer, not a discretionary one.
 
 ## Screenshots — picks and rationale
 

@@ -57,6 +57,14 @@ kotlin {
                 exclude(group = "androidx.privacysandbox.ads", module = "ads-adservices-java")
                 exclude(group = "androidx.privacysandbox.ads", module = "ads-adservices")
             }
+            // Fix round (Plan 4 Task 6 review): BannerAdSlot.android.kt's AdView lifecycle wiring
+            // (pause/resume on ON_PAUSE/ON_RESUME) needs LocalLifecycleOwner/Lifecycle/
+            // LifecycleEventObserver — the SAME JetBrains KMP artifact composeApp's own
+            // LocationPermissionCompose.kt/NotificationPermissionCompose.kt already use for the
+            // identical observer pattern (see libs.versions.toml's own androidx-lifecycle-runtime-
+            // compose kdoc). androidMain-only, matching play-services-ads immediately above: jvm/
+            // wasmJs actuals are empty composables with no lifecycle to observe.
+            implementation(libs.androidx.lifecycle.runtime.compose)
         }
     }
 }

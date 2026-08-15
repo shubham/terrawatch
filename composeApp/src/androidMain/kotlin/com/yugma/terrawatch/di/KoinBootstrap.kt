@@ -18,12 +18,18 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.websocket.WebSockets
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 import org.koin.core.context.GlobalContext
 import org.koin.core.context.startKoin
 
 private val koinBootstrapLock = Any()
+
+/** Fix round (Plan 4 Task 6 review): [MobileAds.initialize]'s own one-shot guard — deliberately a
+ * SEPARATE flag from [GlobalContext]'s own started-check inside [ensureKoinStarted], not a re-use of
+ * it. See that function's own "Fix round" kdoc paragraph for why. */
+private val mobileAdsInitStarted = AtomicBoolean(false)
 
 /** Plan 4 Task 6: this app's own manifest meta-data key for the RevenueCat API key — mirrors
  * `BannerAdSlot.android.kt`'s identical `com.yugma.terrawatch.ADMOB_BANNER_UNIT` key, both sourced
@@ -95,6 +101,37 @@ private fun buildEntitlementsProvider(context: Context): EntitlementsProvider {
  * state again (see `MainActivity.onCreate`'s own comment for the SEPARATE, Koin-independent flag it
  * now uses for its own activity-scoped first-run behavior instead).
  *
+ * **Fix round (Plan 4 Task 6 review, post-device-verify): `MobileAds.initialize` moved off the
+ * calling thread and out of [koinBootstrapLock].** It used to run right here, synchronously, as the
+ * last statement inside the `synchronized` block below — correct for "exactly once" (folded into
+ * the same guarded bootstrap every real entry point already funnels through) but wrong for "off the
+ * caller's thread": `MainActivity.onCreate` calls this function on the MAIN thread, BEFORE
+ * `setContent`, so that inline call blocked the first composed frame on however long the AdMob SDK's
+ * own init took — Google's own documented guidance is to call `MobileAds.initialize` from a
+ * background thread precisely to avoid this
+ * (developers.google.com/admob/android/quick-start#initialize_the_mobile_ads_sdk). Now it runs on a
+ * short-lived background [Thread], started AFTER the `synchronized` block releases the lock, so
+ * neither the lock's critical section nor the calling thread waits on it. Safe to detach like this:
+ * the ads SDK is documented to queue a `loadAd()` that fires before its own async init completes
+ * rather than drop it (`BannerAdSlot.android.kt`'s own kdoc already relies on exactly this), so
+ * nothing downstream needs to block on this thread finishing.
+ *
+ * Idempotence for this ONE call is now [mobileAdsInitStarted] — a dedicated `AtomicBoolean` — not a
+ * side effect of [GlobalContext]'s own started-check above. Those are genuinely two different
+ * questions ("has Koin started" vs "has `MobileAds.initialize` fired"); the original code answered
+ * both from the SAME `if (GlobalContext.getOrNull() != null) return`, which is why the call had to
+ * physically live INSIDE that guarded block to only ever fire once. Un-coupling it onto its own flag
+ * is what lets it move outside the block at all while staying exactly-once, on purpose rather than
+ * as an accident of where a `return` happens to sit.
+ *
+ * `AlertDigestWorker.doWork()` (this function's own "second caller," directly above) has no ads UI
+ * of its own, but it calls this SAME shared function purely to reach Koin/the DB/network — so it
+ * triggers this block too, once, the first time either entry point wins the race. Not worth
+ * splitting out behind a new caller-identity parameter just to skip it there: `doWork()` already
+ * runs off a `CoroutineWorker`'s own background dispatcher (never the Main thread to begin with),
+ * and the block below is now just "spin up one more cheap background thread" rather than a blocking
+ * call — an acceptable, documented cost on a periodic (45min) worker tick, not a silent one.
+ *
  * Round 2 (review finding): [storeOverride]/[httpClientOverride] are a new trailing seam, both
  * defaulted to `null` — a `null` reproduces this function's ORIGINAL, only-ever-real-[DriverFactory]/
  * real-`OkHttp` construction byte-for-byte, so neither of this function's two real call sites
@@ -116,29 +153,29 @@ fun ensureKoinStarted(
     storeOverride: QuakeStore? = null,
     httpClientOverride: HttpClient? = null,
 ) {
+    val appContext = context.applicationContext
     synchronized(koinBootstrapLock) {
-        if (GlobalContext.getOrNull() != null) return
-        val appContext = context.applicationContext
-        initShareContext(appContext)
-        initAlertDigestSchedulerContext(appContext)
-        val dao = storeOverride
-            ?: QuakeDao(createDatabase(DriverFactory(appContext)), clock = { Clock.System.now().toEpochMilliseconds() })
-        val http = httpClientOverride ?: HttpClient(OkHttp) {
-            install(WebSockets) { pingIntervalMillis = 30_000 }
-            install(HttpTimeout) {
-                requestTimeoutMillis = 15_000
-                connectTimeoutMillis = 10_000
+        if (GlobalContext.getOrNull() == null) {
+            initShareContext(appContext)
+            initAlertDigestSchedulerContext(appContext)
+            val dao = storeOverride
+                ?: QuakeDao(createDatabase(DriverFactory(appContext)), clock = { Clock.System.now().toEpochMilliseconds() })
+            val http = httpClientOverride ?: HttpClient(OkHttp) {
+                install(WebSockets) { pingIntervalMillis = 30_000 }
+                install(HttpTimeout) {
+                    requestTimeoutMillis = 15_000
+                    connectTimeoutMillis = 10_000
+                }
             }
+            startKoin { modules(appModule(http, dao, locationProvider, buildEntitlementsProvider(appContext))) }
         }
-        // Plan 4 Task 6: MobileAds.initialize (this task's own brief: "MobileAds.initialize in
-        // ensureKoinStarted (android)") — folded into this SAME guarded, idempotent block for the
-        // identical reason initShareContext/initAlertDigestSchedulerContext already are (see this
-        // function's own Fix Round 1 paragraph above): ONE bootstrap, called from every real entry
-        // point (MainActivity, a headless AlertDigestWorker wake, or an instrumented test's own
-        // call), never re-derived externally. No listener needed — BannerAdSlot's own loadAd() call
-        // is tolerant of firing before MobileAds' own async init completes (Google's documented
-        // behavior: queued, not dropped).
-        MobileAds.initialize(appContext)
-        startKoin { modules(appModule(http, dao, locationProvider, buildEntitlementsProvider(appContext))) }
+    }
+    // Plan 4 Task 6 (this task's own brief: "MobileAds.initialize in ensureKoinStarted (android)"),
+    // fix round: deliberately OUTSIDE koinBootstrapLock and off the calling thread now — see this
+    // function's own "Fix round" kdoc paragraph above for the full before/after reasoning. Guarded by
+    // its own [mobileAdsInitStarted] flag, not by this block's Koin-started check, so it stays
+    // exactly-once regardless of how many times either real entry point calls this function.
+    if (mobileAdsInitStarted.compareAndSet(false, true)) {
+        Thread({ MobileAds.initialize(appContext) }, "MobileAdsInit").start()
     }
 }
