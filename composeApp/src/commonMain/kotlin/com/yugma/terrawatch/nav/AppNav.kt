@@ -36,6 +36,7 @@ import com.yugma.terrawatch.home.QuakeSelectionViewModel
 import com.yugma.terrawatch.home.layoutMode
 import com.yugma.terrawatch.insights.InsightsScreen
 import com.yugma.terrawatch.monetization.EntitlementsProvider
+import com.yugma.terrawatch.motion.LocalReducedMotion
 import com.yugma.terrawatch.onboarding.OnboardingScreen
 import com.yugma.terrawatch.paywall.PaywallScreen
 import com.yugma.terrawatch.settings.SettingsScreen
@@ -201,19 +202,41 @@ fun AppNav(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
                 if (showTabChrome) {
-                    // Task 4's ad-slot placeholder Spacer is replaced here (Plan 4 Task 6) by the
+                    // Task 4's ad-slot placeholder Spacer was replaced here (Plan 4 Task 6) by the
                     // real BannerAdSlot — spec §8's IMMUTABLE ad-ethics rule, as the pure
-                    // adSlotVisible truth table (core:ads). `visible = false` renders nothing at all
-                    // (see BannerAdSlot's own kdoc), so this Column's height simply shrinks by the
-                    // ad's own height whenever it's hidden — no dead reserved gap.
-                    BannerAdSlot(
-                        visible = adSlotVisible(
-                            isPlusActive = isPlusActive,
-                            isDetailOpen = isDetailOpen,
-                            isOnboarding = isOnboarding,
-                        ),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                    // adSlotVisible truth table (core:ads).
+                    //
+                    // Plan 5 Task 3 (user dogfooding: "ads appearing causes glitchy experience"):
+                    // this call site now does TWO separate things, not one — see BannerAdSlot's own
+                    // (expect) kdoc for the full split. (a) This `if` gates whether BannerAdSlot is
+                    // called AT ALL: only while `!isPlusActive && !isOnboarding`, i.e. exactly the
+                    // two of adSlotVisible's three inputs that are meant to be a genuine
+                    // destroy()/recreate (Plus purchase, onboarding finishing) rather than a
+                    // frequent, in-session toggle. `isOnboarding` is included here for the identical
+                    // "self-documenting correctness over relying on a reader to trace the exclusion"
+                    // reason this file already computes it unconditionally above (see that val's own
+                    // comment) — this branch is already structurally unreachable during onboarding
+                    // (TAB_ROUTES), so the term is redundant in practice, not in the reading. (b) The
+                    // full 3-input adSlotVisible (isDetailOpen included) still feeds `visible` below,
+                    // now interpreted by BannerAdSlot as "collapse the reserved height + pause,"
+                    // never as "tear the AdView down" — so `isDetailOpen` toggling (opening/closing
+                    // the quake detail sheet, by far the most frequent of the three) no longer
+                    // destroys/reloads the ad the way it used to. The old "renders nothing at
+                    // all... no dead reserved gap" framing this comment used to carry is exactly the
+                    // bug Task 3 fixes: a dead reserved gap while eligible is now deliberate — it's
+                    // what keeps the slot's footprint stable BEFORE a creative ever fills, so filling
+                    // no longer moves anything.
+                    if (!isPlusActive && !isOnboarding) {
+                        BannerAdSlot(
+                            visible = adSlotVisible(
+                                isPlusActive = isPlusActive,
+                                isDetailOpen = isDetailOpen,
+                                isOnboarding = isOnboarding,
+                            ),
+                            reducedMotion = LocalReducedMotion.current,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                     AppBottomBar(currentRoute = currentRoute, navController = navController)
                 }
             }

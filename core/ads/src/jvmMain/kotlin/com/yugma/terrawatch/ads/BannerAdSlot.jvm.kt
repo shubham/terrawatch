@@ -8,6 +8,9 @@ import androidx.compose.ui.Modifier
 // present" stub with unused parameters — there is nothing for this target to ever render here,
 // matching this codebase's own jvm-actual "no-op" precedent (e.g. `LocationProvider.jvm.kt`,
 // `QuakeMap.jvm.kt`'s fallback-pane delegation).
+// Plan 5 Task 3: gained `reducedMotion` to match the `expect`'s widened signature (the android
+// actual's new fade-in-on-first-fill animation) — still unused here, same "nothing to render"
+// reasoning.
 @Composable
-actual fun BannerAdSlot(visible: Boolean, modifier: Modifier) {
+actual fun BannerAdSlot(visible: Boolean, reducedMotion: Boolean, modifier: Modifier) {
 }
