@@ -1,12 +1,18 @@
 package com.yugma.terrawatch.di
 
 import android.content.Context
+import android.content.pm.PackageManager
+import com.google.android.gms.ads.MobileAds
 import com.yugma.terrawatch.alerts.initAlertDigestSchedulerContext
 import com.yugma.terrawatch.database.DriverFactory
 import com.yugma.terrawatch.database.QuakeDao
 import com.yugma.terrawatch.database.QuakeStore
 import com.yugma.terrawatch.database.createDatabase
 import com.yugma.terrawatch.location.LocationProvider
+import com.yugma.terrawatch.monetization.AlwaysFreeEntitlements
+import com.yugma.terrawatch.monetization.EntitlementsProvider
+import com.yugma.terrawatch.monetization.RevenueCatEntitlements
+import com.yugma.terrawatch.monetization.revenueCatKeyIsConfigured
 import com.yugma.terrawatch.share.initShareContext
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
@@ -18,6 +24,35 @@ import org.koin.core.context.GlobalContext
 import org.koin.core.context.startKoin
 
 private val koinBootstrapLock = Any()
+
+/** Plan 4 Task 6: this app's own manifest meta-data key for the RevenueCat API key — mirrors
+ * `BannerAdSlot.android.kt`'s identical `com.yugma.terrawatch.ADMOB_BANNER_UNIT` key, both sourced
+ * from the SAME `composeApp/monetization.properties` file via `composeApp/build.gradle.kts`'s
+ * manifest placeholders (see that file's own kdoc for why meta-data, not BuildConfig, carries this
+ * across module boundaries). `private` — only [readRevenueCatApiKey] below needs it. */
+private const val REVENUECAT_API_KEY_METADATA_KEY = "com.yugma.terrawatch.REVENUECAT_API_KEY"
+
+private fun readRevenueCatApiKey(context: Context): String? {
+    val metaData = context.packageManager
+        .getApplicationInfo(context.packageName, PackageManager.GET_META_DATA)
+        .metaData
+    return metaData?.getString(REVENUECAT_API_KEY_METADATA_KEY)
+}
+
+/**
+ * Task 6 (Plan 4): the real android [EntitlementsProvider] gate — [revenueCatKeyIsConfigured] (the
+ * pure, TDD'd rule, `core:monetization`) decides between [RevenueCatEntitlements] and
+ * [AlwaysFreeEntitlements]; this function is the thin, obviously-correct wiring around it (same
+ * "push the decision to a pure fn, keep the platform glue thin" split this codebase already applies
+ * everywhere else — e.g. `alertsRowStatusText`/`AlertsPermissionRow`). Always resolves to
+ * [AlwaysFreeEntitlements] throughout Task 6: no RevenueCat account exists yet, so
+ * `composeApp/monetization.properties`'s `REVENUECAT_API_KEY` is absent/blank on every build this
+ * task ships (a USER-GATED prerequisite, plan's own Global Constraints).
+ */
+private fun buildEntitlementsProvider(context: Context): EntitlementsProvider {
+    val apiKey = readRevenueCatApiKey(context)
+    return if (revenueCatKeyIsConfigured(apiKey)) RevenueCatEntitlements(apiKey!!) else AlwaysFreeEntitlements
+}
 
 /**
  * Plan 4 Task 3: factored out of `MainActivity.onCreate`'s own former inline block — byte-for-byte
@@ -95,6 +130,15 @@ fun ensureKoinStarted(
                 connectTimeoutMillis = 10_000
             }
         }
-        startKoin { modules(appModule(http, dao, locationProvider)) }
+        // Plan 4 Task 6: MobileAds.initialize (this task's own brief: "MobileAds.initialize in
+        // ensureKoinStarted (android)") — folded into this SAME guarded, idempotent block for the
+        // identical reason initShareContext/initAlertDigestSchedulerContext already are (see this
+        // function's own Fix Round 1 paragraph above): ONE bootstrap, called from every real entry
+        // point (MainActivity, a headless AlertDigestWorker wake, or an instrumented test's own
+        // call), never re-derived externally. No listener needed — BannerAdSlot's own loadAd() call
+        // is tolerant of firing before MobileAds' own async init completes (Google's documented
+        // behavior: queued, not dropped).
+        MobileAds.initialize(appContext)
+        startKoin { modules(appModule(http, dao, locationProvider, buildEntitlementsProvider(appContext))) }
     }
 }

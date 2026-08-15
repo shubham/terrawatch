@@ -22,6 +22,9 @@ local.properties
 *.jks
 google-services.json
 secrets.properties
+# Plan 4 Task 6: RevenueCat + AdMob local config (composeApp/monetization.properties.example is the
+# committed template — see that file's own header comment).
+composeApp/monetization.properties
 
 # Session/agent artifacts
 .superpowers/

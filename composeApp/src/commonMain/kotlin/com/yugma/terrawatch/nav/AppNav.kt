@@ -3,10 +3,8 @@ package com.yugma.terrawatch.nav
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -15,6 +13,7 @@ import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Text
 import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -25,6 +24,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.yugma.terrawatch.ads.BannerAdSlot
+import com.yugma.terrawatch.ads.adSlotVisible
 import com.yugma.terrawatch.data.OnboardingStore
 import com.yugma.terrawatch.detail.DetailNewsViewModel
 import com.yugma.terrawatch.history.HistoryScreen
@@ -34,17 +35,19 @@ import com.yugma.terrawatch.home.LayoutMode
 import com.yugma.terrawatch.home.QuakeSelectionViewModel
 import com.yugma.terrawatch.home.layoutMode
 import com.yugma.terrawatch.insights.InsightsScreen
+import com.yugma.terrawatch.monetization.EntitlementsProvider
 import com.yugma.terrawatch.onboarding.OnboardingScreen
+import com.yugma.terrawatch.paywall.PaywallScreen
 import com.yugma.terrawatch.settings.SettingsScreen
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 
 /**
- * Task 4 (Plan 3): the app's 5 nav destinations. [HOME]/[HISTORY]/[INSIGHTS] are the 3 persistent
- * tabs (bottom [NavigationBar] on phone, [NavigationRail] on desktop — see [AppNav]); [SETTINGS]
- * and [ONBOARDING] are stack-only routes reached from a tab (Home's gear chip, and the app's own
- * conditional start destination) rather than tabs of their own — neither shows in the tab
- * bar/rail (see [TAB_ROUTES]).
+ * Task 4 (Plan 3): the app's nav destinations. [HOME]/[HISTORY]/[INSIGHTS] are the 3 persistent
+ * tabs (bottom [NavigationBar] on phone, [NavigationRail] on desktop — see [AppNav]); [SETTINGS],
+ * [ONBOARDING], and (Plan 4 Task 6) [PAYWALL] are stack-only routes reached from a tab (Home's gear
+ * chip, the app's own conditional start destination, and Settings' "TerraWatch Plus" row,
+ * respectively) rather than tabs of their own — none shows in the tab bar/rail (see [TAB_ROUTES]).
  *
  * Plain `String` constants, not `@Serializable` type-safe route classes (Navigation Compose
  * 2.9's other supported style): every screen here resolves its own ViewModel/state via Koin, not
@@ -60,6 +63,7 @@ object Routes {
     const val INSIGHTS = "insights"
     const val SETTINGS = "settings"
     const val ONBOARDING = "onboarding"
+    const val PAYWALL = "paywall"
 }
 
 /** The 3 routes that show bottom-nav/rail chrome — [Routes.SETTINGS]/[Routes.ONBOARDING] render
@@ -112,6 +116,10 @@ internal const val NAV_INSIGHTS_TAG = "nav-insights"
  * it, so production behavior is byte-for-byte unchanged; `OnboardingGateTest`
  * (androidInstrumentedTest) passes a directly-constructed, Koin-free `OnboardingStore` instead, so
  * pinning "fresh install -> onboarding shown, onboarded -> home" needs no `startKoin{}` at all.
+ *
+ * Plan 4 Task 6: [entitlementsProvider] is the SAME "defaulted `koinInject()`" shape as
+ * [onboardingStore] just above, for the identical reason — it feeds [adSlotVisible] below (spec §8,
+ * IMMUTABLE), the one thing that decides whether [BannerAdSlot] shows anything at all.
  */
 @Composable
 fun AppNav(
@@ -122,6 +130,7 @@ fun AppNav(
     // call sites - none of which pass this - keep compiling unchanged).
     detailNewsViewModel: DetailNewsViewModel = koinViewModel(),
     onboardingStore: OnboardingStore = koinInject(),
+    entitlementsProvider: EntitlementsProvider = koinInject(),
 ) {
     // One-shot, read exactly once for this composable's whole lifetime (remember, no key) --
     // deliberately NOT re-read on every recomposition: "onboarded" only ever flips false -> true
@@ -137,6 +146,17 @@ fun AppNav(
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
     val showTabChrome = currentRoute in TAB_ROUTES
+
+    // Plan 4 Task 6: adSlotVisible's 3 inputs. [isOnboarding] is computed generally here (not
+    // hardcoded `false`) even though the one real call site below sits inside `if (showTabChrome)`,
+    // which already structurally excludes Routes.ONBOARDING (see TAB_ROUTES) — self-documenting
+    // correctness over relying on a reader to trace that exclusion back to this composable's own
+    // `when` of routes. [isDetailOpen]/[isPlusActive] are the two inputs that actually vary while
+    // tab chrome is showing.
+    val isOnboarding = currentRoute == Routes.ONBOARDING
+    val selectedQuake by selectionViewModel.selectedQuake.collectAsState()
+    val isDetailOpen = selectedQuake != null
+    val isPlusActive by entitlementsProvider.isPlusActive.collectAsState()
 
     // Plan 4 Task 4 (c): ONE shared source of truth, replacing the former per-call-site
     // BoxWithConstraints measurement this kdoc used to describe disagreeing with HomeScreen's own
@@ -162,6 +182,12 @@ fun AppNav(
                     onboardingStore = onboardingStore,
                     modifier = Modifier.weight(1f).fillMaxSize(),
                 )
+                // Plan 4 Task 6 SCOPE NOTE: no ad slot in TWO_PANE — this branch never reserved one
+                // to begin with (Task 4's own placeholder Spacer only ever lived in the Column/
+                // PHONE branch below), and the Android-only real-device verification scope
+                // directive (in force since Plan 4 Task 4) means TWO_PANE is compile-only, never
+                // runtime-verified on the one judged target (a phone). Revisit if/when a real
+                // desktop/tablet pass is ever reopened.
             }
         } else {
             Column(Modifier.fillMaxSize()) {
@@ -175,10 +201,19 @@ fun AppNav(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
                 if (showTabChrome) {
-                    // Task 4: ad-slot placeholder, "above bottom bar" per the brief -- Plan 4
-                    // fills this in (Plan 2's own ad-slot deferral, honored again here). Inert on
-                    // purpose: no content, no background, no click target, just reserved height.
-                    Spacer(Modifier.fillMaxWidth().height(50.dp))
+                    // Task 4's ad-slot placeholder Spacer is replaced here (Plan 4 Task 6) by the
+                    // real BannerAdSlot — spec §8's IMMUTABLE ad-ethics rule, as the pure
+                    // adSlotVisible truth table (core:ads). `visible = false` renders nothing at all
+                    // (see BannerAdSlot's own kdoc), so this Column's height simply shrinks by the
+                    // ad's own height whenever it's hidden — no dead reserved gap.
+                    BannerAdSlot(
+                        visible = adSlotVisible(
+                            isPlusActive = isPlusActive,
+                            isDetailOpen = isDetailOpen,
+                            isOnboarding = isOnboarding,
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                     AppBottomBar(currentRoute = currentRoute, navController = navController)
                 }
             }
@@ -276,7 +311,18 @@ private fun AppNavHost(
         // NavBackStackEntry (same shape History/Insights already use for their own ViewModels).
         // onBack pops this stack-only route — see SettingsScreen's own kdoc for why it needs one at
         // all (unlike HOME/HISTORY/INSIGHTS, this isn't a tab with its own back-stack root).
-        composable(Routes.SETTINGS) { SettingsScreen(onBack = { navController.popBackStack() }) }
+        // Plan 4 Task 6: onPlusClick pushes the new PAYWALL route — same "stack-only route reached
+        // from a tab, popped via onBack" shape.
+        composable(Routes.SETTINGS) {
+            SettingsScreen(
+                onBack = { navController.popBackStack() },
+                onPlusClick = { navController.navigate(Routes.PAYWALL) },
+            )
+        }
+        // Plan 4 Task 6: the "TerraWatch Plus" paywall STUB (real purchases-kmp-ui wiring is Task
+        // 8, once a RevenueCat account/product exists — see PaywallScreen's own kdoc). Stack-only,
+        // same "reached from a tab, own onBack pops it" shape as SETTINGS/ONBOARDING above.
+        composable(Routes.PAYWALL) { PaywallScreen(onBack = { navController.popBackStack() }) }
         // Task 8 (Plan 3): the real 3-step pager replaces the OnboardingPlaceholder this route
         // used to render (Task 4's own scaffolding, deleted below — see OnboardingScreen.kt's own
         // kdoc for the 3 steps). onFinish fires from EITHER the pager's own "Done" (final step) or

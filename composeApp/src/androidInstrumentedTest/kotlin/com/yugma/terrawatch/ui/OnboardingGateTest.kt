@@ -82,8 +82,23 @@ class OnboardingGateTest {
         // Never call setOnboarded() -- OnboardingStore.isOnboarded() defaults false on a brand-new
         // meta table (OnboardingStoreTest, core:data jvmTest, pins this exact default).
 
+        // Plan 4 Task 6 fix (found, not introduced, by this task): both AppNav() calls in this file
+        // used to pass graph.onboardingStore POSITIONALLY as the 3rd argument, which bound to
+        // AppNav's detailNewsViewModel param (Plan 4 Task 5 inserted it before onboardingStore,
+        // pushing that param from position 3 to 4) -- a genuine type mismatch
+        // (OnboardingStore vs DetailNewsViewModel) that left this whole file failing to compile
+        // since Task 5 shipped, uncaught because androidInstrumentedTest compilation is outside
+        // both jvmTest and the 3-target "compile" gate, and connectedDebugAndroidTest apparently
+        // wasn't re-run after that task. Named arguments here (rather than re-counting positions
+        // again) fix it AND make this call site immune to the identical class of regression the
+        // next time AppNav() gains another defaulted parameter (Task 6 itself just added one --
+        // entitlementsProvider).
         composeTestRule.setContent {
-            AppNav(graph.homeViewModel, graph.selectionViewModel, graph.onboardingStore)
+            AppNav(
+                homeViewModel = graph.homeViewModel,
+                selectionViewModel = graph.selectionViewModel,
+                onboardingStore = graph.onboardingStore,
+            )
         }
 
         composeTestRule.waitUntil(timeoutMillis = 10_000) {
@@ -103,7 +118,11 @@ class OnboardingGateTest {
         graph.onboardingStore.setOnboarded()
 
         composeTestRule.setContent {
-            AppNav(graph.homeViewModel, graph.selectionViewModel, graph.onboardingStore)
+            AppNav(
+                homeViewModel = graph.homeViewModel,
+                selectionViewModel = graph.selectionViewModel,
+                onboardingStore = graph.onboardingStore,
+            )
         }
 
         composeTestRule.waitUntil(timeoutMillis = 10_000) {

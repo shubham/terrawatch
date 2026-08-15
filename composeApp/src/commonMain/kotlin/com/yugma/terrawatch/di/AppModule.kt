@@ -16,6 +16,7 @@ import com.yugma.terrawatch.insights.InsightsNewsViewModel
 import com.yugma.terrawatch.insights.InsightsViewModel
 import com.yugma.terrawatch.location.LocationProvider
 import com.yugma.terrawatch.location.LocationRequester
+import com.yugma.terrawatch.monetization.EntitlementsProvider
 import com.yugma.terrawatch.network.EmscLiveSource
 import com.yugma.terrawatch.network.GdeltClient
 import com.yugma.terrawatch.network.UsgsApi
@@ -30,15 +31,23 @@ import kotlin.time.ExperimentalTime
 
 // Platform entry points supply: HttpClient (engine differs), a QuakeStore (android/jvm hand in a
 // real QuakeDao over their own DriverFactory; wasmJs hands in an InMemoryQuakeStore — Task 9, Plan
-// 3, see QuakeStore's own kdoc for why), and LocationProvider (android needs a Context, jvm/wasmJs
+// 3, see QuakeStore's own kdoc for why), LocationProvider (android needs a Context, jvm/wasmJs
 // need nothing — see LocationProvider.kt's no-declared-constructor rationale, mirroring
-// DriverFactory).
+// DriverFactory), and (Plan 4 Task 6) an EntitlementsProvider — android's `KoinBootstrap.android.kt`
+// resolves the real gate (RevenueCatEntitlements when a key is configured, AlwaysFreeEntitlements
+// otherwise — this repo's actual state throughout Task 6, no RC account yet); jvm/wasmJs's own
+// main()s always pass AlwaysFreeEntitlements directly (Android-only runtime scope directive).
 // kotlinx.datetime.Clock is now a deprecated typealias for kotlin.time.Clock (Kotlin 2.1+, still
 // @ExperimentalTime as of Kotlin 2.2) — same migration as kotlinx.datetime.Instant elsewhere in
 // this codebase (see EmscParser.kt). Importing the stdlib type directly avoids a typealias
 // nested-object resolution quirk seen when going through the kotlinx.datetime alias.
 @OptIn(ExperimentalTime::class)
-fun appModule(http: HttpClient, dao: QuakeStore, locationProvider: LocationProvider): Module = module {
+fun appModule(
+    http: HttpClient,
+    dao: QuakeStore,
+    locationProvider: LocationProvider,
+    entitlementsProvider: EntitlementsProvider,
+): Module = module {
     single { UsgsApi(http) }
     single { EmscLiveSource(http) }
     // Plan 4 Task 5: GDELT DOC 2.0 API client - a separate HttpClient dependency reuse (same `http`
@@ -67,6 +76,12 @@ fun appModule(http: HttpClient, dao: QuakeStore, locationProvider: LocationProvi
     // — nothing else in this graph needs it.
     single { OnboardingStore(get()) }
     single { locationProvider }
+    // Plan 4 Task 6: resolved via koinInject<EntitlementsProvider>() at AppNav's composition root
+    // (same non-ViewModel "plain single, plain koinInject()" shape OnboardingStore above already
+    // uses) for the ad-slot gate, AND through SettingsViewModel's constructor for the "TerraWatch
+    // Plus" row's mirrored isPlusActive — same "platform entry point builds it, hands in an
+    // already-constructed instance" shape locationProvider itself already establishes just above.
+    single { entitlementsProvider }
     // Task 2 (Plan 3): unlike locationProvider above (built at each platform's entry point and
     // handed in, since android's actual needs a Context the shared expect signature can't carry),
     // LocationRequester's no-arg constructor is uniform across every target — see its own kdoc —
@@ -139,5 +154,7 @@ fun appModule(http: HttpClient, dao: QuakeStore, locationProvider: LocationProvi
     viewModel { InsightsNewsViewModel(get(), get(), clock = { Clock.System.now().toEpochMilliseconds() }) }
     // Task 7 (Plan 3): Settings' own tab-scoped ViewModel — resolved via SettingsScreen's own
     // defaulted `= koinViewModel()` param, same shape as HistoryViewModel/InsightsViewModel above.
-    viewModel { SettingsViewModel(get(), get(), get()) }
+    // Plan 4 Task 6: 4th constructor param (EntitlementsProvider) backs the new "TerraWatch Plus"
+    // row's mirrored isPlusActive — get() resolves the SAME single registered just above.
+    viewModel { SettingsViewModel(get(), get(), get(), get()) }
 }

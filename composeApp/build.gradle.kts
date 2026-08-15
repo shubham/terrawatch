@@ -1,6 +1,7 @@
 @file:OptIn(org.jetbrains.compose.ExperimentalComposeLibrary::class)
 
 import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
@@ -8,6 +9,28 @@ plugins {
     alias(libs.plugins.composeMultiplatform)
     alias(libs.plugins.composeCompiler)
 }
+
+// Plan 4 Task 6: RevenueCat + AdMob local config. `monetization.properties` is gitignored (no real
+// RevenueCat/AdMob account exists yet — both are USER-GATED prerequisites, plan's own Global
+// Constraints); `monetization.properties.example` (committed) is the template. Every checked-in
+// build must compile and run correctly with this file simply ABSENT — that's this repo's actual
+// state throughout Task 6, not a hypothetical to guard against speculatively.
+private val monetizationProperties = Properties().apply {
+    val file = rootProject.file("composeApp/monetization.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+
+// Google's own official AdMob TEST app id (developers.google.com/admob/android/test-ads) — used
+// whenever ADMOB_APP_ID is absent/blank, so the manifest's own
+// `com.google.android.gms.ads.APPLICATION_ID` meta-data (AndroidManifest.xml, below) is NEVER a
+// blank/invalid string: MobileAds throws at initialize time without a well-formed app id, and this
+// substitution happens once, at BUILD time, specifically so that can never happen. REVENUECAT_API_KEY
+// and ADMOB_BANNER_UNIT are deliberately NOT defaulted here — both stay raw/possibly-blank strings
+// read at RUNTIME instead (`KoinBootstrap.android.kt` / `BannerAdSlot.android.kt`), because their
+// absent/blank-vs-configured DECISION is a pure, TDD'd function
+// (`revenueCatKeyIsConfigured`/`TEST_BANNER_AD_UNIT_ID`'s own fallback), not something this build
+// script should bake in ahead of time.
+private val TEST_ADMOB_APP_ID = "ca-app-pub-3940256099942544~3347511713"
 
 kotlin {
     androidTarget()
@@ -28,6 +51,12 @@ kotlin {
             // Task 8: HomeScreen wraps in TerraTheme and QuakeMap's Android actual sources pin
             // colors from magnitudeColor(band) — both live in core:ui.
             implementation(projects.core.ui)
+            // Plan 4 Task 6: EntitlementsProvider/AlwaysFreeEntitlements (AppModule.kt's DI wiring,
+            // SettingsViewModel's mirrored isPlusActive) and BannerAdSlot/adSlotVisible (AppNav.kt's
+            // ad-slot gate) — both compile on all 3 targets (androidTarget/jvm/wasmJs), matching
+            // every other core:* module this app already depends on from commonMain.
+            implementation(projects.core.monetization)
+            implementation(projects.core.ads)
             implementation(libs.koin.core)
             implementation(libs.koin.compose.viewmodel)
             implementation(libs.androidx.lifecycle.viewmodel)
@@ -76,6 +105,18 @@ kotlin {
             // for the worker class itself (only the thin scheduling/state-query surface UI screens
             // touch is expect/actual — see AlertDigestScheduler.kt).
             implementation(libs.androidx.work.runtime.ktx)
+            // Plan 4 Task 6: KoinBootstrap.android.kt calls MobileAds.initialize(...) directly —
+            // core:ads' own play-services-ads dependency is `implementation`, not `api` (same
+            // per-target-explicit-dependency convention this file's own comments already document
+            // for ktor-client-websockets/okhttp above), so it doesn't leak transitively here.
+            // SAME exclusion as core:ads/build.gradle.kts's identical declaration, for the identical
+            // reason (see that file's own kdoc for the real ListenableFuture/Guava compile failure
+            // this works around) — this is a SEPARATE Gradle dependency declaration on a different
+            // module, so the exclusion must be repeated here rather than assumed to apply once.
+            implementation("com.google.android.gms:play-services-ads:${libs.versions.playServicesAds.get()}") {
+                exclude(group = "androidx.privacysandbox.ads", module = "ads-adservices-java")
+                exclude(group = "androidx.privacysandbox.ads", module = "ads-adservices")
+            }
         }
         jvmMain.dependencies {
             implementation(compose.desktop.currentOs)
@@ -150,6 +191,21 @@ android {
         // Task 13: required for connectedDebugAndroidTest to resolve a runner at all — AGP's
         // default is the deprecated android.test.InstrumentationTestRunner otherwise.
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // Plan 4 Task 6: 3 manifest placeholders (AndroidManifest.xml, below) sourced from
+        // `monetizationProperties` above. `admobAppId` always resolves to a well-formed value (real
+        // or TEST) — see TEST_ADMOB_APP_ID's own kdoc for why that one specifically can't be left
+        // blank. `revenueCatApiKey`/`admobBannerUnit` are left as their raw (possibly-blank) config
+        // value on purpose — `RevenueCatEntitlements`'s gate and `BannerAdSlot`'s TEST-id fallback
+        // both read them at RUNTIME via manifest metadata (not BuildConfig — this project enables
+        // no `buildFeatures.buildConfig` anywhere, see `QuakeMap.android.kt`'s own kdoc for that
+        // established precedent, and Task 6 doesn't need to break it: manifest meta-data reaches
+        // BOTH this module's own androidMain AND core:ads/core:monetization's separate androidMain
+        // source sets via the same merged-manifest mechanism, where a per-module BuildConfig class
+        // would only ever be visible inside the one module that generated it).
+        manifestPlaceholders["admobAppId"] =
+            monetizationProperties.getProperty("ADMOB_APP_ID")?.takeIf { it.isNotBlank() } ?: TEST_ADMOB_APP_ID
+        manifestPlaceholders["revenueCatApiKey"] = monetizationProperties.getProperty("REVENUECAT_API_KEY").orEmpty()
+        manifestPlaceholders["admobBannerUnit"] = monetizationProperties.getProperty("ADMOB_BANNER_UNIT").orEmpty()
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

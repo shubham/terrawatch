@@ -12,7 +12,11 @@ import com.yugma.terrawatch.data.ThemeStore
 import com.yugma.terrawatch.database.QuakeDao
 import com.yugma.terrawatch.database.TerraWatchDb
 import com.yugma.terrawatch.model.GeoPoint
+import com.yugma.terrawatch.monetization.AlwaysFreeEntitlements
+import com.yugma.terrawatch.monetization.EntitlementsProvider
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.job
 import kotlinx.coroutines.runBlocking
@@ -34,8 +38,13 @@ class SettingsViewModelTest {
         alertRuleStore: AlertRuleStore = AlertRuleStore(freshDao()),
         themeStore: ThemeStore = ThemeStore(freshDao()),
         homeLocationStore: HomeLocationStore = HomeLocationStore(freshDao()),
+        // Plan 4 Task 6: defaulted so every pre-existing test below (none of which care about
+        // entitlements) keeps compiling and passing unchanged — same "add a new store, default it"
+        // shape this helper's own 3 pre-existing params already established.
+        entitlementsProvider: EntitlementsProvider = AlwaysFreeEntitlements,
     ): SettingsViewModel =
-        SettingsViewModel(alertRuleStore, themeStore, homeLocationStore).also { createdViewModels += it }
+        SettingsViewModel(alertRuleStore, themeStore, homeLocationStore, entitlementsProvider)
+            .also { createdViewModels += it }
 
     private fun freshDao(): QuakeDao {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
@@ -143,6 +152,40 @@ class SettingsViewModelTest {
             vm.setNearbyRadius(500.0)
             assertEquals(500.0, awaitItem())
             cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    // --- Plan 4 Task 6: isPlusActive mirrors the injected EntitlementsProvider directly ----------
+
+    @Test fun `isPlusActive reflects AlwaysFreeEntitlements' constant false by default`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val vm = createVm()
+        vm.isPlusActive.test {
+            assertEquals(false, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `isPlusActive is a direct passthrough, not a snapshot copy - a live provider flip is reflected`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val fakeProvider = FakeEntitlementsProvider()
+        val vm = createVm(entitlementsProvider = fakeProvider)
+        vm.isPlusActive.test {
+            assertEquals(false, awaitItem())
+            fakeProvider.setPlusActive(true)
+            assertEquals(true, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    /** A directly-controllable [EntitlementsProvider] fake — [AlwaysFreeEntitlements] itself is a
+     * constant `false` by design and can't exercise the "live flip" half of the passthrough claim
+     * above. */
+    private class FakeEntitlementsProvider : EntitlementsProvider {
+        private val _isPlusActive = MutableStateFlow(false)
+        override val isPlusActive: StateFlow<Boolean> = _isPlusActive
+        fun setPlusActive(value: Boolean) {
+            _isPlusActive.value = value
         }
     }
 }

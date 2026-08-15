@@ -68,6 +68,43 @@
 # treating a handful of classes as plain Java for its Kotlin-specific shrinking heuristics (still
 # fully correct, just marginally less aggressive for those classes) — not a missing-class error, not
 # fixable by a keep rule, and orthogonal to anything this app's own code does.
+#
+# Plan 4 Task 6 UPDATE: `assembleRelease` after adding play-services-ads 25.4.0 +
+# purchases-kmp-core/purchases-kmp-models 3.5.0 emits MANY MORE lines of this exact same message
+# class (both SDKs' own internal modules were compiled with a newer Kotlin metadata version, 2.3.0,
+# than this R8's bundled parser expects, 2.1.0) — confirmed to be the identical cosmetic condition
+# this paragraph already documents, not a new problem: `assembleRelease` still exits 0, a real
+# `composeApp-release.apk` is produced (61 MB, up from Task 1's release build — expected, two
+# substantial SDKs added), and — same verification method this file's own "RESULT" paragraph above
+# already establishes — no `missing_rules.txt` was generated (confirmed directly: `find
+# composeApp/build/outputs/mapping -iname "*missing*"` returns nothing). Zero new keep rules were
+# needed for either SDK.
+
+# Plan 4 Task 6: RevenueCat purchases-kmp-core's AndroidX App Startup auto-init (Context capture)
+# and play-services-ads' own AdMob SDK internals both ship their OWN bundled consumer-rules.pro
+# (same "well-maintained library, no explicit keep needed" default this file's header already states
+# for AndroidX/Compose/Koin/Ktor/SQLDelight/kotlinx-serialization/maplibre-compose) — confirmed by
+# the clean `assembleRelease` result above, not assumed. `RevenueCatEntitlements` itself
+# (core:monetization androidMain) is UNREACHABLE at runtime throughout Task 6 (no RevenueCat API key
+# configured — see that class's own kdoc), so this is a compile/shrink-time-only proof for now; a
+# real on-device purchase-flow smoke pass is Task 8's job, once a real account/product exists to
+# smoke-test against.
+#
+# One real, non-cosmetic dependency-resolution issue Task 6 DID hit and fix (not an R8/proguard-rule
+# concern — recorded here for proximity, fixed in core:ads/build.gradle.kts and
+# composeApp/build.gradle.kts instead): play-services-ads transitively pulls
+# `androidx.privacysandbox.ads:ads-adservices(-java)`, which depends on full `com.google.guava:
+# guava`. Guava's own metadata then forces `com.google.guava:listenablefuture` (the tiny
+# interface-only shim `androidx.work:work-runtime`'s `ListenableFuture`-returning APIs need — see
+# `AlertDigestScheduler.android.kt`) to its deliberately EMPTY "9999.0-empty-to-avoid-conflict-with-
+# guava" variant across BOTH runtime and (via AGP's cross-configuration consistency check) COMPILE
+# classpaths — but full Guava itself is only ever a RUNTIME dependency of `ads-adservices-java`, so
+# at COMPILE time the empty shim wins with nothing left to supply the real class, and
+# `:composeApp:compileDebugKotlinAndroid` failed outright with "Cannot access class
+# 'ListenableFuture'" (reproduced directly, confirmed gone after the fix). Fixed by excluding both
+# Privacy Sandbox modules from both of this app's `play-services-ads` dependency declarations — this
+# app has no ad-attribution/conversion-reporting need at all (one plain anchored banner, spec §8),
+# so neither module was ever needed.
 
 # Plan 4 Task 3: AlertDigestWorker, WorkManager's own reflection-based instantiation.
 #

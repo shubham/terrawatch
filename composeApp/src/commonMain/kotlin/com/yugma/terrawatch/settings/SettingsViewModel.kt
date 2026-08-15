@@ -7,6 +7,7 @@ import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.data.ThemeSetting
 import com.yugma.terrawatch.data.ThemeStore
 import com.yugma.terrawatch.model.GeoPoint
+import com.yugma.terrawatch.monetization.EntitlementsProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,11 +28,19 @@ import kotlinx.coroutines.launch
  * read — see that store's own kdoc), plus a live [HomeLocationStore.updates] collector so a city
  * pick from THIS screen's own "Change" button (or a location grant landing while Settings happens
  * to be open) updates the saved-place row immediately, no navigation-away-and-back needed.
+ *
+ * Plan 4 Task 6: [isPlusActive] backs the new "TerraWatch Plus" row/status text — unlike
+ * [nearbyRadiusKm]/[minMag]/[theme]/[homeLocation] above, it needs no separate `viewModelScope`
+ * mirroring collector at all: [EntitlementsProvider.isPlusActive] is ALREADY a live `StateFlow`
+ * (not a suspend-`get()`-plus-`Flow`-`updates` split the way the store classes are), so exposing it
+ * directly is both simpler and more correct than reinventing that mirroring ceremony for a value
+ * that's already exactly the right shape.
  */
 class SettingsViewModel(
     private val alertRuleStore: AlertRuleStore,
     private val themeStore: ThemeStore,
     private val homeLocationStore: HomeLocationStore,
+    entitlementsProvider: EntitlementsProvider,
 ) : ViewModel() {
     private val _nearbyRadiusKm = MutableStateFlow(AlertRuleStore.DEFAULT_RADIUS_KM)
     val nearbyRadiusKm: StateFlow<Double> = _nearbyRadiusKm
@@ -44,6 +53,8 @@ class SettingsViewModel(
 
     private val _homeLocation = MutableStateFlow<GeoPoint?>(null)
     val homeLocation: StateFlow<GeoPoint?> = _homeLocation
+
+    val isPlusActive: StateFlow<Boolean> = entitlementsProvider.isPlusActive
 
     init {
         viewModelScope.launch { alertRuleStore.nearbyRadiusKm.collect { _nearbyRadiusKm.value = it } }

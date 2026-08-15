@@ -5,6 +5,7 @@ import androidx.compose.ui.window.ComposeViewport
 import com.yugma.terrawatch.database.InMemoryQuakeStore
 import com.yugma.terrawatch.di.appModule
 import com.yugma.terrawatch.location.LocationProvider
+import com.yugma.terrawatch.monetization.AlwaysFreeEntitlements
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.js.Js
 import io.ktor.client.plugins.HttpTimeout
@@ -50,6 +51,7 @@ fun main() {
         }
     }
     val store = InMemoryQuakeStore(clock = { Clock.System.now().toEpochMilliseconds() })
-    startKoin { modules(appModule(http, store, LocationProvider())) }
+    // Plan 4 Task 6: same "web never shows ads/sells Plus" reasoning as jvmMain's own main.kt.
+    startKoin { modules(appModule(http, store, LocationProvider(), AlwaysFreeEntitlements)) }
     ComposeViewport(viewportContainerId = "app") { App() }
 }

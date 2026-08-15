@@ -130,6 +130,10 @@ internal const val APP_VERSION = "0.9.0"
  * elsewhere in this codebase. */
 internal const val SETTINGS_BACK_TAG = "settings-back"
 
+/** Plan 4 Task 6: `testTag` for the PLUS section's "TerraWatch Plus" row — same "internal, so a
+ * test/device-verification pass can pin it" convention as [SETTINGS_BACK_TAG] just above. */
+internal const val SETTINGS_PLUS_ROW_TAG = "settings-plus-row"
+
 /**
  * Task 7 (Plan 3): the Settings screen — replaces `AppNav.kt`'s `PlaceholderScreen("Settings —
  * Task 7")`. Four sections per the plan brief: ALERTS (the flagship user-settable "nearby" radius
@@ -151,16 +155,22 @@ internal const val SETTINGS_BACK_TAG = "settings-back"
  * reserved first and the now-smaller remaining area is what scrolls) fixes BOTH the header's
  * back-chevron/title (top, under the status bar) and the final bottom `Spacer` (under the
  * navigation bar) in one change, rather than patching each edge separately.
+ *
+ * Plan 4 Task 6: [onPlusClick] backs the new PLUS section's "TerraWatch Plus" row — a defaulted
+ * no-op, same "so this composable stays callable without a NavController in scope" shape [onBack]
+ * already uses; `AppNav.kt`'s real call site overrides it to `navController.navigate(Routes.PAYWALL)`.
  */
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit = {},
+    onPlusClick: () -> Unit = {},
     viewModel: SettingsViewModel = koinViewModel(),
 ) {
     val nearbyRadiusKm by viewModel.nearbyRadiusKm.collectAsState()
     val minMag by viewModel.minMag.collectAsState()
     val theme by viewModel.theme.collectAsState()
     val homeLocation by viewModel.homeLocation.collectAsState()
+    val isPlusActive by viewModel.isPlusActive.collectAsState()
     var showCityPicker by remember { mutableStateOf(false) }
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -189,6 +199,10 @@ fun SettingsScreen(
                         homeLocation = homeLocation,
                         onChangeClick = { showCityPicker = true },
                     )
+                }
+                SettingsCard {
+                    SettingsSectionLabel("PLUS")
+                    PlusRow(isPlusActive = isPlusActive, onClick = onPlusClick)
                 }
                 SettingsCard {
                     SettingsSectionLabel("THEME")
@@ -441,6 +455,37 @@ private fun PlaceRow(
         if (canRequestLocation()) {
             UseMyLocationAction(modifier = Modifier.padding(top = 4.dp))
         }
+    }
+}
+
+/**
+ * Task 6 (Plan 4): the "TerraWatch Plus" row — [onClick] pushes `AppNav.kt`'s new `Routes.PAYWALL`
+ * stub (see `PaywallScreen`'s own kdoc for why it's a stub, not a real `purchases-kmp-ui` paywall,
+ * this task). Status text mirrors `PlaceRow`'s own "value + chevron-like affordance" shape —
+ * "Active"/"Free" rather than a bare label, so this row is honest about current state at a glance,
+ * same as `AlertsPermissionRow`'s own "On"/"Off" trailing text.
+ */
+@Composable
+private fun PlusRow(isPlusActive: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .testTag(SETTINGS_PLUS_ROW_TAG),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "TerraWatch Plus",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = if (isPlusActive) "Active" else "Free",
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
     }
 }
 

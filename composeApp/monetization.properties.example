@@ -1,0 +1,18 @@
+# Plan 4 Task 6: RevenueCat + AdMob local config template.
+#
+# Copy this file to `monetization.properties` (same directory) and fill in real values once the
+# RevenueCat and AdMob accounts exist (both USER-GATED prerequisites — Task 8). `monetization.
+# properties` itself is gitignored; never commit real keys here or there.
+#
+# Every value below is read by composeApp/build.gradle.kts at build time and forwarded into the
+# merged AndroidManifest.xml as meta-data (see that file's own comment). Leave any line blank (or
+# delete this file entirely) and the app falls back safely:
+#   - REVENUECAT_API_KEY blank/absent -> AlwaysFreeEntitlements (core:monetization) — free tier,
+#     ads showing, exactly like every jvm/wasm build.
+#   - ADMOB_BANNER_UNIT blank/absent  -> Google's official TEST banner unit id (core:ads).
+#   - ADMOB_APP_ID blank/absent       -> Google's official TEST app id (this repo's real state as
+#     of Task 6 — no AdMob account exists yet).
+
+REVENUECAT_API_KEY=
+ADMOB_APP_ID=
+ADMOB_BANNER_UNIT=

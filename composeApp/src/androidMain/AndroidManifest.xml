@@ -36,6 +36,28 @@
         android:label="TerraWatch"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:enableOnBackInvokedCallback="true">
+        <!-- Plan 4 Task 6: OS/SDK-mandated — MobileAds throws at initialize time without this
+             exact meta-data name present. Value comes from composeApp/build.gradle.kts's
+             `manifestPlaceholders["admobAppId"]`, which always resolves to a well-formed id (real
+             or Google's own official TEST id — never blank; see that build script's own kdoc). -->
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="${admobAppId}" />
+        <!-- Plan 4 Task 6: this app's own config keys (NOT SDK-mandated names) — read at runtime
+             via PackageManager.GET_META_DATA (KoinBootstrap.android.kt for the RC key,
+             BannerAdSlot.android.kt for the banner unit id) rather than a per-module BuildConfig
+             field, since a merged manifest's meta-data is visible to every module's androidMain the
+             same way, where a BuildConfig class only exists inside the module that generated it —
+             see composeApp/build.gradle.kts's own kdoc for the full reasoning. Both may be empty
+             strings (monetization.properties absent/blank) — each reader treats blank exactly like
+             absent (`revenueCatKeyIsConfigured`/BannerAdSlot's own `TEST_BANNER_AD_UNIT_ID`
+             fallback), never a crash. -->
+        <meta-data
+            android:name="com.yugma.terrawatch.REVENUECAT_API_KEY"
+            android:value="${revenueCatApiKey}" />
+        <meta-data
+            android:name="com.yugma.terrawatch.ADMOB_BANNER_UNIT"
+            android:value="${admobBannerUnit}" />
         <!-- Plan 4 Task 3: singleTask, a digest notification's PendingIntent (FLAG_ACTIVITY_NEW_TASK,
              AlertDigestWorker.android.kt) must re-front the SAME existing MainActivity instance via
              onNewIntent when the app is already running, rather than stacking a second instance on
