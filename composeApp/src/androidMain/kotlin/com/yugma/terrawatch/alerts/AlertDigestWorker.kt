@@ -141,11 +141,13 @@ import org.koin.core.context.GlobalContext
  * skipped outright). The radius applied to every favorite rule is [AlertRuleStore.nearbyRadiusKm]'s
  * OWN current value — read via its public `Flow` (`.first()`), not [AlertRuleStore]'s
  * `internal`-to-`core:data` `currentRadiusKm()`/`currentMinMag()` escape hatch, which this
- * androidMain class (a different Gradle module) can't see. "One notification per quake max across
- * home+all favorites, first matching place wins, prefer home" needs ZERO changes to
- * [AlertRuleEngine.evaluate] itself — see [buildDigestRules]'s own kdoc for why simply ordering
- * home's rules ahead of the favorites' own is the entire mechanism, leaning on that function's
- * pre-existing first-match-wins `for` loop.
+ * androidMain class (a different Gradle module) can't see. "One notification per quake max
+ * across home+all favorites, first matching place wins, prefer home > favorites > world" needs
+ * ZERO changes to [AlertRuleEngine.evaluate] itself — see [buildDigestRules]'s own kdoc (Fix
+ * Round 1, Review 1 MAJOR-1) for why home's OWN "near" rule stays first, favorites come next, and
+ * "world" moves LAST (not second, as this originally shipped — "world"'s unconditional
+ * M6+/unbounded-radius match used to shadow every MAJOR_ONLY favorite, which shares that exact
+ * threshold), leaning on that function's pre-existing first-match-wins `for` loop either way.
  */
 class AlertDigestWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
@@ -207,10 +209,11 @@ class AlertDigestWorker(context: Context, params: WorkerParameters) : CoroutineW
         val home = withContext(Dispatchers.IO) { homeLocationStore.get() }
         // Task 2 (Plan 5): multi-place evaluation -- evaluate home's own rules (unchanged) PLUS one
         // additional rule per favorite (per-place alertType honored: ALL/MAJOR_ONLY/OFF), via
-        // buildDigestRules (core:data, TDD'd) -- see that function's own kdoc for why simply
-        // prepending home's rules ahead of the favorites' own is the ENTIRE "one notification per
-        // quake max, first matching place wins, prefer home" dedupe mechanism: AlertRuleEngine.
-        // evaluate's existing first-match-wins loop does the rest, unchanged.
+        // buildDigestRules (core:data, TDD'd) -- see that function's own kdoc (Fix Round 1, Review
+        // 1 MAJOR-1) for why home's own "near" rule stays first, favorites come next, and "world"
+        // moves LAST -- this is the ENTIRE "one notification per quake max, first matching place
+        // wins, prefer home > favorites > world" dedupe mechanism: AlertRuleEngine.evaluate's
+        // existing first-match-wins loop does the rest, unchanged.
         val favorites = withContext(Dispatchers.IO) { favoritePlaceStore.favorites.first() }
         val favoriteRadiusKm = withContext(Dispatchers.IO) { alertRuleStore.nearbyRadiusKm.first() }
         val favoriteMinMag = withContext(Dispatchers.IO) { alertRuleStore.minMag.first() }

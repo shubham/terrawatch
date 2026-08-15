@@ -164,19 +164,35 @@ fun favoriteLabelFromRuleId(ruleId: String): String? =
     ruleId.takeIf { it.startsWith(FAVORITE_RULE_PREFIX) }?.removePrefix(FAVORITE_RULE_PREFIX)
 
 /**
- * Task 2 (Plan 5): the worker's own multi-place rule list — [homeRules] (unchanged; `AlertDigestWorker`'s
- * existing `repository.currentRules()` result, [DEFAULT_RULES]-shaped: "near" + "world", both
- * `center = null`, relying on [AlertRuleEngine.evaluate]'s own `home` fallback) come FIRST, followed
- * by one additional rule per favorite in [favorites] whose own [FavoritePlace.alertType] isn't
- * [FavoriteAlertType.OFF] (an OFF favorite contributes NOTHING — not a disabled rule, an absent one).
+ * Task 2 (Plan 5): the worker's own multi-place rule list — one additional rule per favorite in
+ * [favorites] whose own [FavoritePlace.alertType] isn't [FavoriteAlertType.OFF] (an OFF favorite
+ * contributes NOTHING — not a disabled rule, an absent one), combined with [homeRules] (`AlertDigest
+ * Worker`'s existing `repository.currentRules()` result, [DEFAULT_RULES]-shaped: "near" + "world",
+ * both `center = null`, relying on [AlertRuleEngine.evaluate]'s own `home` fallback).
+ *
+ * **Fix Round 1 (Review 1, MAJOR-1): re-pinned ordering — `near, <favorite rules>, world` — NOT
+ * `homeRules + favoriteRules` (i.e. NOT `near, world, <favorite rules>`) as this function originally
+ * shipped.** The original ordering put "world" (mag >=6.0, `radiusKm = null` i.e. UNBOUNDED) ahead of
+ * every favorite rule; since [FavoriteAlertType.MAJOR_ONLY] uses that exact same 6.0 threshold
+ * (`majorOnlyMinMag`, bounded only to that one favorite's radius), "world"'s condition was a strict
+ * superset of any `MAJOR_ONLY` favorite's condition and, being earlier in the list, intercepted
+ * 100% of the quakes a `MAJOR_ONLY` favorite could ever match — the notification still fired (world
+ * fires unconditionally), but the favorite's OWN attribution could never win, making the whole
+ * `MAJOR_ONLY` mode indistinguishable from `ALL` at that magnitude and from having no favorite at
+ * all. See `review-1-findings.md`'s MAJOR-1 for the full reasoning this fix closes.
  *
  * **This ordering is the entire mechanism behind the "one notification per quake max, first matching
- * place wins, prefer home" dedupe ruling** — [AlertRuleEngine.evaluate]'s own `for (rule in rules)`
- * loop already returns on the FIRST rule that matches and never considers the rest, so feeding it
- * `homeRules + favoriteRules` (in that order) makes home win any overlap with a favorite, and the
- * earliest-listed of several overlapping favorites win among themselves — zero changes needed to
+ * place wins, prefer home > favorites > world" dedupe ruling** — [AlertRuleEngine.evaluate]'s own
+ * `for (rule in rules)` loop already returns on the FIRST rule that matches and never considers the
+ * rest, so feeding it `homeRules.take(1) + favoriteRules + homeRules.drop(1)` makes home's own "near"
+ * win any overlap with a favorite (unchanged from before this fix), a more SPECIFIC (radius-bound)
+ * favorite rule win over the unconditional "world" catch-all, and the earliest-listed of several
+ * overlapping favorites win among themselves (also unchanged) — zero changes needed to
  * [AlertRuleEngine] itself (see AlertDigestSupportTest's own "dedupe" section for the proof, run
  * against the real engine, not just an assertion about this function's own output list).
+ * `homeRules.take(1) + homeRules.drop(1)` reproduces `homeRules` exactly regardless of its size (the
+ * zero-favorites regression test below pins this), so this split is safe even if [homeRules] is ever
+ * anything other than exactly `[near, world]`.
  *
  * Each favorite's own [AlertRule] always centers on [FavoritePlace.point] (so [AlertRuleEngine.
  * evaluate]'s `home` parameter is irrelevant to it — only home's OWN `center = null` rules ever
@@ -194,11 +210,14 @@ fun buildDigestRules(
     favoriteRadiusKm: Double,
     favoriteMinMag: Double,
     majorOnlyMinMag: Double = 6.0,
-): List<AlertRule> = homeRules + favorites.mapNotNull { favorite ->
-    val minMag = when (favorite.alertType) {
-        FavoriteAlertType.OFF -> return@mapNotNull null
-        FavoriteAlertType.ALL -> favoriteMinMag
-        FavoriteAlertType.MAJOR_ONLY -> majorOnlyMinMag
+): List<AlertRule> {
+    val favoriteRules = favorites.mapNotNull { favorite ->
+        val minMag = when (favorite.alertType) {
+            FavoriteAlertType.OFF -> return@mapNotNull null
+            FavoriteAlertType.ALL -> favoriteMinMag
+            FavoriteAlertType.MAJOR_ONLY -> majorOnlyMinMag
+        }
+        AlertRule(id = favoriteRuleId(favorite.label), minMag = minMag, radiusKm = favoriteRadiusKm, center = favorite.point)
     }
-    AlertRule(id = favoriteRuleId(favorite.label), minMag = minMag, radiusKm = favoriteRadiusKm, center = favorite.point)
+    return homeRules.take(1) + favoriteRules + homeRules.drop(1)
 }

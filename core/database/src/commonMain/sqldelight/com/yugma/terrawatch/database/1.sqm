@@ -1,0 +1,37 @@
+-- Fix Round 1 (Review 1, BLOCKER-1): the migration this project has needed since FavoritePlace.sq
+-- first landed (Plan 5 Task 2) but never got -- see that file's own (now-corrected) header comment,
+-- and review-1-findings.md's BLOCKER-1 for the full crash reproduction this closes.
+--
+-- An already-installed device's `terrawatch.db` (any build from Plan 1-4, before FavoritePlace.sq
+-- existed) only ever had `quake`+`meta` -- its stored `user_version` is `1`, stamped there by
+-- `AndroidSqliteDriver`'s own `Callback` back when that device first installed the app. This file's
+-- mere PRESENCE is what bumps `TerraWatchDb.Schema.version` from `1` to `2` (confirmed against the
+-- actual SQLDelight compiler bytecode, `app.cash.sqldelight.core.lang.MigrationFile.getVersion()` in
+-- `core-2.1.0.jar`: it parses a migration file's own name, digits-only, before `.sqm`, so this file
+-- being named `1.sqm` means "the migration FROM version 1 TO version 2") -- which is what makes
+-- `AndroidSqliteDriver`'s `SupportSQLiteOpenHelper.Callback.onUpgrade` actually fire at all (Android
+-- only invokes `onUpgrade` when the requested version is greater than the file's stored
+-- `user_version`; a version that never changes, as it never has until now, never triggers it,
+-- regardless of what `.sq` files declare). `DriverFactory.android.kt` itself needed ZERO code
+-- changes -- `Callback.onUpgrade` already calls `schema.migrate(driver, oldVersion, newVersion, ...)`
+-- unconditionally (confirmed directly against `android-driver-2.1.0-release.aar`'s
+-- `AndroidSqliteDriver$Callback.class` bytecode) -- the driver-level wiring always existed; only the
+-- schema/migration files were missing.
+--
+-- `IF NOT EXISTS`: defensive, not load-bearing for the real production scenario (a genuine v1 device
+-- never had this table, so a bare `CREATE TABLE` would also work) -- costs nothing and guards against
+-- any edge case where this statement runs twice against the same physical file (e.g. a future
+-- `verifyMigrations`/squash tooling replay).
+--
+-- Column list copied verbatim from FavoritePlace.sq's own `CREATE TABLE favoritePlace` (the "current
+-- schema" a fresh install's `Schema.create()` still produces directly from that file) -- both must
+-- stay in sync for `verifyMigrations.set(true)` (core/database/build.gradle.kts) to keep passing: that
+-- task fails the build if replaying every `.sqm` from scratch ever produces a schema that doesn't
+-- byte-for-byte match what `Schema.create()` produces from the `.sq` files directly.
+CREATE TABLE IF NOT EXISTS favoritePlace (
+  id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+  label TEXT NOT NULL,
+  lat REAL NOT NULL,
+  lon REAL NOT NULL,
+  alertType TEXT NOT NULL DEFAULT 'ALL'
+);

@@ -122,6 +122,26 @@ class GdeltClientTest {
         val result = client.searchEarthquakeNews(place = "Colombia", eventTimeMillis = 0)
         assertEquals(NewsResult.Success(emptyList()), result)
     }
+
+    // Fix Round 1 (Review 1, MINOR-1): a leading U+FEFF (UTF-8 BOM) survives `String.trimStart()`
+    // (Char.isWhitespace() deliberately excludes it -- documented JDK behavior) -- so a genuinely
+    // successful, BOM-prefixed JSON response used to fail `looksLikeJson`'s leading-brace sniff and
+    // get misclassified as Failure ("Couldn't load news" for a fetch that actually had real
+    // articles). This environment sits behind a corporate proxy that can alter response framing
+    // (this project's own recorded Zscaler TLS notes), making a stray BOM plausible, not exotic.
+    @Test fun `a BOM-prefixed JSON body still resolves to Success, not a false Failure`() = runTest {
+        val engine = MockEngine {
+            respond(
+                "﻿" + """{"articles":[{"title":"t","url":"https://a.com","domain":"a.com","seendate":"20260815T041500Z"}]}""",
+                HttpStatusCode.OK,
+                headersOf("Content-Type", "application/json"),
+            )
+        }
+        val client = GdeltClient(HttpClient(engine))
+        val result = client.searchEarthquakeNews(place = "Colombia", eventTimeMillis = 0)
+        val success = assertIs<NewsResult.Success>(result, "a BOM before the leading '{' must not be misread as a malformed/HTML failure")
+        assertEquals(1, success.articles.size)
+    }
 }
 
 class GdeltPlaceQueryTest {
@@ -158,6 +178,35 @@ class GdeltPlaceQueryTest {
 
     @Test fun `collapses whitespace left behind by stripped punctuation`() {
         assertEquals("Ende Indonesia earthquake", gdeltPlaceQuery("  Ende,   Indonesia  "))
+    }
+
+    // Fix Round 1 (Review 1, MINOR-2): comma and dash are the only two characters GDELT's own live
+    // error text named as illegal -- apostrophe (Xi'an, Hawai'i, Cote d'Ivoire) was never verified
+    // live either way, but is a common query-syntax special character in search APIs generally, so
+    // this is disclosed the same way dash was before its own live A/B: assumed illegal, not
+    // confirmed. Per GDELT-semantics safety, the sanitizer strips to alphanumerics+spaces for the
+    // place tokens rather than growing a hand-picked blocklist one punctuation mark at a time.
+    @Test fun `strips an apostrophe -- assumed illegal per general search-API convention, not live-verified`() {
+        assertEquals("Xi an China earthquake", gdeltPlaceQuery("Xi'an, China"))
+    }
+
+    @Test fun `strips an apostrophe with no following space too`() {
+        assertEquals("Hawai i earthquake", gdeltPlaceQuery("Hawai'i"))
+    }
+
+    @Test fun `strips every apostrophe in a multi-apostrophe place name`() {
+        assertEquals("Cote d Ivoire earthquake", gdeltPlaceQuery("Cote d'Ivoire"))
+    }
+
+    // Diacritics were never named illegal by GDELT and are NOT search-API punctuation -- this proves
+    // the alphanumerics+spaces allowlist doesn't over-strip real (non-ASCII) place names while it's
+    // busy stripping comma/dash/apostrophe.
+    @Test fun `preserves diacritics -- never named illegal, must not be over-stripped by the allowlist`() {
+        assertEquals("São Paulo Brazil earthquake", gdeltPlaceQuery("15 km ESE of São Paulo, Brazil"))
+    }
+
+    @Test fun `preserves diacritics in a place with no distance prefix or illegal chars`() {
+        assertEquals("Réunion Island earthquake", gdeltPlaceQuery("Réunion Island"))
     }
 }
 

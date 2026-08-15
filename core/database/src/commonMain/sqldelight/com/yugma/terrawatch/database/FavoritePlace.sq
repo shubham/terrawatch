@@ -12,16 +12,18 @@
 -- `Favorite_place` row class, an ugly, inconsistent-with-this-file's-own-style identifier for zero
 -- benefit, since no test or caller ever references the raw SQL table name string itself).
 --
--- NEW TABLE, NO MIGRATION PATH — same accepted gap Quake.sq's own `origin` column/`quake_fetchedAt`
--- index already documented at length (see that file): this project has never added a SQLDelight
--- `.sqm` migration file, so `TerraWatchDb.Schema.version` has stayed 1 since Plan 1, and both real
--- drivers only ever call `Schema.create` — `DriverFactory.jvm.kt` gates it behind `!dbFile.exists()`,
--- and `DriverFactory.android.kt`'s bare `AndroidSqliteDriver(TerraWatchDb.Schema, context, name)`
--- constructor fires `onCreate` only when the underlying db file is missing. This table therefore
--- lands ONLY on a brand-new database file — any already-installed app (including 98bc1cd8's own,
--- from earlier Plan 2-4 verification passes) has no `favoritePlace` table at all until that install
--- is uninstalled and reinstalled. Accepted pre-release, identical reasoning Quake.sq's own notes give:
--- no shipped user base yet, so no real migration is being skipped for anyone.
+-- Fix Round 1 (Review 1, BLOCKER-1) CORRECTION: this table's own header used to claim "NEW TABLE,
+-- NO MIGRATION PATH" and reasoned (wrongly) that skipping a migration was safe pre-release because
+-- "there is no silent data-loss risk... nothing tries to read/write it on an old schema in a way
+-- that would crash." That was wrong for the READ path — `HomeViewModel.init`/`SettingsViewModel.init`
+-- both unconditionally `collect` `favoritePlaceStore.favorites` on every cold start, with no
+-- `.catch{}` — so an already-installed (Plan 1-4) device opening this table via a bare
+-- `SELECT * FROM favoritePlace` crashed instantly (`SQLiteException: no such table: favoritePlace`,
+-- fatal, no installed `CoroutineExceptionHandler`) the moment `HomeScreen` composed. See
+-- `review-1-findings.md`'s BLOCKER-1 for the full reproduction and `1.sqm` (this same directory) for
+-- the actual fix: `TerraWatchDb.Schema.version` is now `2`, and `1.sqm`'s own
+-- `CREATE TABLE IF NOT EXISTS favoritePlace` is what an upgrade-installed device's `onUpgrade` path
+-- now runs to create this table without ever losing its existing `quake`/`meta` data.
 CREATE TABLE favoritePlace (
   id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
   label TEXT NOT NULL,

@@ -223,7 +223,10 @@ class AlertDigestSupportTest {
 
     @Test fun `buildDigestRules ALL favorite gets a rule centered on it, using the current radius and minMag`() {
         val rules = buildDigestRules(DEFAULT_RULES, listOf(tokyo), favoriteRadiusKm = 250.0, favoriteMinMag = 5.0)
-        val favoriteRule = rules.last()
+        // Fix Round 1 (Review 1, MAJOR-1): looked up by id, not `.last()` -- with the corrected
+        // `near, <favorites>, world` ordering, a single favorite now sits in the MIDDLE, not last
+        // (world moved there instead) -- see buildDigestRules' own kdoc for why.
+        val favoriteRule = rules.first { it.id == favoriteRuleId("Tokyo") }
         assertEquals(GeoPoint(35.6762, 139.6503), favoriteRule.center)
         assertEquals(250.0, favoriteRule.radiusKm)
         assertEquals(5.0, favoriteRule.minMag)
@@ -231,20 +234,28 @@ class AlertDigestSupportTest {
 
     @Test fun `buildDigestRules MAJOR_ONLY favorite always uses M6point0, regardless of favoriteMinMag`() {
         val rules = buildDigestRules(DEFAULT_RULES, listOf(delhi), favoriteRadiusKm = 100.0, favoriteMinMag = 3.0)
-        val favoriteRule = rules.last()
+        // Fix Round 1 (Review 1, MAJOR-1): looked up by id, not `.last()` -- see the identical note
+        // on the ALL-favorite test just above.
+        val favoriteRule = rules.first { it.id == favoriteRuleId("Delhi") }
         assertEquals(6.0, favoriteRule.minMag)
         assertEquals(GeoPoint(28.6139, 77.2090), favoriteRule.center)
     }
 
-    @Test fun `buildDigestRules appends home rules first, then one rule per eligible favorite in order`() {
+    // Fix Round 1 (Review 1, MAJOR-1): re-pinned ordering -- home's OWN first rule ("near") still
+    // comes first (untouched "prefer home" guarantee), but favorites now come BEFORE "world", not
+    // after it. Before this fix, "world" (mag>=6.0, unbounded radius) sat between "near" and every
+    // favorite, so it intercepted every quake a MAJOR_ONLY favorite could ever match (identical
+    // mag>=6.0 threshold, home rules always first) -- see the dedicated "dedupe" tests below for the
+    // end-to-end proof through the real AlertRuleEngine.
+    @Test fun `buildDigestRules orders near first, then one rule per eligible favorite, then world last`() {
         val rules = buildDigestRules(DEFAULT_RULES, listOf(tokyo, delhi, mumbai), favoriteRadiusKm = 100.0, favoriteMinMag = 4.5)
-        // DEFAULT_RULES (near, world) first, then Tokyo (ALL), then Delhi (MAJOR_ONLY) -- Mumbai
-        // (OFF) contributes nothing, so it's absent entirely, not merely disabled.
+        // near, Tokyo (ALL), Delhi (MAJOR_ONLY), world -- Mumbai (OFF) contributes nothing, so it's
+        // absent entirely, not merely disabled.
         assertEquals(4, rules.size)
-        assertEquals(DEFAULT_RULES[0].id, rules[0].id)
-        assertEquals(DEFAULT_RULES[1].id, rules[1].id)
-        assertEquals(favoriteRuleId("Tokyo"), rules[2].id)
-        assertEquals(favoriteRuleId("Delhi"), rules[3].id)
+        assertEquals(DEFAULT_RULES[0].id, rules[0].id, "near stays first -- home is still preferred")
+        assertEquals(favoriteRuleId("Tokyo"), rules[1].id)
+        assertEquals(favoriteRuleId("Delhi"), rules[2].id)
+        assertEquals(DEFAULT_RULES[1].id, rules[3].id, "world moves LAST -- it must never shadow a favorite")
     }
 
     // --- Task 2 (Plan 5): the dedupe ruling, proven end-to-end through the REAL AlertRuleEngine ---
@@ -303,5 +314,52 @@ class AlertDigestSupportTest {
         // DEFAULT_RULES' own "world" rule also needs M6.0+, so a 5.5 matches NOTHING here.
         val result = AlertRuleEngine().evaluate(previous = null, current = moderateQuake, rules = rules, home = null)
         assertEquals(null, result)
+    }
+
+    // --- Fix Round 1 (Review 1, MAJOR-1): MAJOR_ONLY was permanently unreachable -- "world" (mag
+    // >=6.0, unbounded) always sat ahead of every favorite in the old ordering, and shared MAJOR_
+    // ONLY's own exact 6.0 threshold, so "world" intercepted 100% of the quakes that could ever
+    // match a MAJOR_ONLY favorite's own rule, with the notification still firing but the favorite's
+    // OWN attribution (its label in the copy) never actually winning. These three tests are this
+    // fix's own TDD spec: a MAJOR_ONLY favorite must win for a matching M6+ quake near it, "world"
+    // must remain the correct fallback when nothing more specific matches, and the favorite's own
+    // floor must still gate correctly below 6.0 (no false-early fire).
+
+    @Test fun `dedupe -- a mag 6point5 quake near a MAJOR_ONLY favorite is attributed to that favorite, not swallowed by world`() {
+        val rules = buildDigestRules(DEFAULT_RULES, listOf(delhi), favoriteRadiusKm = 100.0, favoriteMinMag = 4.5)
+        val majorQuakeNearDelhi = Quake(
+            "q5", 1000, delhi.point.lat, delhi.point.lon, 10.0, 6.5, "mww", "Delhi area", false, null,
+            QuakeStatus.AUTOMATIC, mapOf(Source.USGS to "q5"), emptyList(), 1000,
+        )
+        // home is far from Delhi, so "near" (500km default) can't reach it either -- isolates this
+        // down to exactly the favorite-vs-world contest this fix is about.
+        val result = AlertRuleEngine().evaluate(
+            previous = null, current = majorQuakeNearDelhi, rules = rules, home = GeoPoint(0.0, 0.0),
+        )
+        assertEquals(favoriteRuleId("Delhi"), result?.matchedRuleId, "the MAJOR_ONLY favorite's own rule must win, not 'world'")
+    }
+
+    @Test fun `dedupe -- a mag 6point5 quake far from every configured place still fires world, unchanged`() {
+        val rules = buildDigestRules(DEFAULT_RULES, listOf(delhi), favoriteRadiusKm = 100.0, favoriteMinMag = 4.5)
+        val farAwayMajorQuake = Quake(
+            "q6", 1000, -33.0, -70.0, 10.0, 6.5, "mww", "Somewhere far from every place", false, null,
+            QuakeStatus.AUTOMATIC, mapOf(Source.USGS to "q6"), emptyList(), 1000,
+        )
+        val result = AlertRuleEngine().evaluate(
+            previous = null, current = farAwayMajorQuake, rules = rules, home = GeoPoint(0.0, 0.0),
+        )
+        assertEquals("world", result?.matchedRuleId, "world must still be the correct fallback when nothing more specific matches")
+    }
+
+    @Test fun `dedupe -- a MAJOR_ONLY favorite plus a mag 5point5 quake near it fires neither the favorite nor world`() {
+        val rules = buildDigestRules(DEFAULT_RULES, listOf(delhi), favoriteRadiusKm = 100.0, favoriteMinMag = 4.5)
+        val moderateQuakeNearDelhi = Quake(
+            "q7", 1000, delhi.point.lat, delhi.point.lon, 10.0, 5.5, "mb", "Delhi area", false, null,
+            QuakeStatus.AUTOMATIC, mapOf(Source.USGS to "q7"), emptyList(), 1000,
+        )
+        val result = AlertRuleEngine().evaluate(
+            previous = null, current = moderateQuakeNearDelhi, rules = rules, home = GeoPoint(0.0, 0.0),
+        )
+        assertEquals(null, result, "5.5 is below both the favorite's MAJOR_ONLY floor (6.0) and world's own floor (6.0)")
     }
 }

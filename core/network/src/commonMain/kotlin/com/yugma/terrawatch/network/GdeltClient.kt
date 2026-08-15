@@ -127,7 +127,16 @@ class GdeltClient(
         if (!resp.status.isSuccess()) {
             NewsResult.Failure
         } else {
-            val body = resp.bodyAsText()
+            // Fix Round 1 (Review 1, MINOR-1): stripped ONCE, upstream of BOTH consumers below --
+            // a leading U+FEFF surviving into [parseArticles] is just as much of a live bug as it
+            // reaching [looksLikeJson]'s own sniff: kotlinx.serialization's `Json.decodeFromString`
+            // doesn't tolerate a leading BOM before `{` either (confirmed live via this fix's own RED
+            // test -- fixing looksLikeJson alone produced a `NewsResult.Success` that had silently
+            // dropped every article, which is not a real fix, just a relabeled one). Stripping here
+            // means [looksLikeJson]'s own BOM-aware trim below is now belt-and-suspenders (kept
+            // anyway -- harmless, and correct in isolation if that function is ever called directly
+            // with a not-yet-stripped body), not the only line of defense.
+            val body = resp.bodyAsText().removePrefix("\uFEFF")
             if (!looksLikeJson(resp, body)) NewsResult.Failure else NewsResult.Success(parseArticles(body))
         }
     } catch (ce: CancellationException) {
@@ -152,10 +161,18 @@ class GdeltClient(
  * [NewsResult.Success], which a body-shape-blind `Json.decodeFromString` failure alone can't do.
  * Two independent signals, either sufficient on its own: an explicit `text/html` content-type, or a
  * body whose first non-whitespace character isn't JSON's own leading `{`.
+ *
+ * Fix Round 1 (Review 1, MINOR-1): `body.trimStart()` (no predicate) uses `Char.isWhitespace()`,
+ * which deliberately excludes U+FEFF (the UTF-8 byte-order-mark) -- documented JDK/Kotlin behavior,
+ * not an oversight of this call site specifically. A response arriving with a leading BOM (plausible
+ * behind this project's own recorded corporate-proxy environment, which can alter response framing)
+ * would otherwise leave the BOM in front of JSON's own leading `{`, fail this sniff, and misclassify
+ * a genuinely successful response as [NewsResult.Failure]. The trim predicate below strips U+FEFF
+ * alongside ordinary whitespace so a leading BOM can never cause that false negative.
  */
 internal fun looksLikeJson(resp: HttpResponse, body: String): Boolean {
     if (resp.contentType()?.match(ContentType.Text.Html) == true) return false
-    return body.trimStart().startsWith("{")
+    return body.trimStart { it.isWhitespace() || it == '\uFEFF' }.startsWith("{")
 }
 
 // Strips a leading USGS "<N> km <compass> of " distance/direction prefix (e.g. "68 km NNW of ")
@@ -167,26 +184,55 @@ private val DISTANCE_PREFIX = Regex("""^\d+(\.\d+)?\s*km\s+[NSEW]{1,3}\s+of\s+""
 // literal comma in `query` outright, responding HTTP 200 with an HTML body ("One or more of your
 // keywords contained an illegal character..."). That same live response names the dash as equally
 // illegal unless quoted ("place it in quotes like \"f-16\""). A raw USGS place string is near-
-// universally "City, Region" shaped (and occasionally hyphenated, e.g. "Port-au-Prince, Haiti"), so
-// both characters are stripped to a space here rather than quoted — GDELT's own suggested escape
-// (quoting) would demand an exact substring match in that literal order, which international
-// coverage rarely echoes verbatim, where the live A/B in that report already proved a plain
-// space-separated keyword list ("earthquake Indonesia", no comma) returns real, relevant results.
-private val GDELT_ILLEGAL_CHARS = Regex("[,-]")
+// universally "City, Region" shaped (and occasionally hyphenated, e.g. "Port-au-Prince, Haiti").
+//
+// Fix Round 1 (Review 1, MINOR-2): comma and dash were the only two characters GDELT's own live
+// error text ever named — USGS place strings can also carry an apostrophe (Xi'an, Hawai'i, Cote
+// d'Ivoire), a common query-syntax special character in search APIs generally, but never itself
+// live-verified against GDELT either way (same "assumed illegal, not confirmed" evidentiary status
+// dash had before its own live A/B — see [sanitizeForGdelt]'s own kdoc). Rather than growing a
+// hand-picked punctuation blocklist one character at a time — an ever-lengthening pile of
+// individually-unverified assumptions — [sanitizeForGdelt] switched to the inverse: an ALLOWLIST of
+// Unicode letters/digits/whitespace for the place portion of the query. Comma/dash (live-verified
+// above) are subsumed by that same allowlist (neither is a letter/digit/space), so nothing
+// regresses; apostrophe and any OTHER not-yet-discovered illegal punctuation (semicolons, slashes,
+// parens, ...) are now handled the same uniform way, without needing a live A/B against every single
+// one before shipping a fix for it. Both stay stripped to a space (not deleted outright) — GDELT's
+// own suggested escape for dash (quoting) would demand an exact substring match in that literal
+// order, which international coverage rarely echoes verbatim, where the live A/B already proved a
+// plain space-separated keyword list ("earthquake Indonesia", no comma) returns real, relevant
+// results.
 private val EXTRA_WHITESPACE = Regex("""\s+""")
+
+/**
+ * Fix Round 1 (Review 1, MINOR-2): the place-token sanitizer — every character that is NEITHER a
+ * Unicode letter/digit NOR whitespace becomes a space (comma, dash, apostrophe, and anything else
+ * GDELT might reject that hasn't been individually catalogued). [Char.isLetterOrDigit]/
+ * [Char.isWhitespace] are common Kotlin stdlib, Unicode-aware on every target (JVM/Android/wasmJs
+ * alike) — deliberately NOT a `Regex` Unicode-property-escape (`\p{L}`) for this, which would tie
+ * correctness to whichever regex engine backs `Regex` on each individual Kotlin target.
+ *
+ * Diacritics (é, ō, ñ, São, ...) are Unicode LETTERS, so [Char.isLetterOrDigit] keeps them untouched
+ * — GDELT's own error text never named them illegal, and this app's own place strings (interna-
+ * tional quakes) legitimately contain them; over-stripping them would be a new, self-inflicted
+ * regression this fix must not introduce (see GdeltClientTest's own diacritic-preserving cases).
+ */
+private fun sanitizeForGdelt(text: String): String =
+    text.map { if (it.isLetterOrDigit() || it.isWhitespace()) it else ' ' }.joinToString("")
 
 /**
  * Plan 4 Task 5: the pure half of [GdeltClient.searchEarthquakeNews]'s query-building — TDD'd
  * directly (GdeltClientTest), no HTTP/MockEngine needed. Strips USGS's own distance/direction
  * prefix (a literal place name reads better in a news search than "68 km NNW of Ende, Indonesia
- * earthquake"), sanitizes GDELT-illegal punctuation ([GDELT_ILLEGAL_CHARS] — Task 2b, see that
- * val's own kdoc), then appends "earthquake" UNLESS [place] already names one (case-insensitive
- * check — USGS titles named events, e.g. "The 2026 Kumamoto Region, Japan Earthquake", already
- * contain the word; appending a second one would just read oddly, not search any better).
+ * earthquake"), sanitizes GDELT-illegal punctuation ([sanitizeForGdelt] — Task 2b + Fix Round 1, see
+ * that function's own kdoc), then appends "earthquake" UNLESS [place] already names one
+ * (case-insensitive check — USGS titles named events, e.g. "The 2026 Kumamoto Region, Japan
+ * Earthquake", already contain the word; appending a second one would just read oddly, not search
+ * any better).
  */
 internal fun gdeltPlaceQuery(place: String): String {
     val stripped = DISTANCE_PREFIX.replace(place, "").trim().ifBlank { place.trim() }
-    val sanitized = GDELT_ILLEGAL_CHARS.replace(stripped, " ").replace(EXTRA_WHITESPACE, " ").trim()
+    val sanitized = sanitizeForGdelt(stripped).replace(EXTRA_WHITESPACE, " ").trim()
     return if (sanitized.contains("earthquake", ignoreCase = true)) sanitized else "$sanitized earthquake"
 }
 
