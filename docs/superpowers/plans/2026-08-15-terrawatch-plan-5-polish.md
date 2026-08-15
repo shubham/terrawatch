@@ -1,0 +1,31 @@
+# TerraWatch Plan 5: UX Polish, Favorites & Launch Presence
+
+> **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development. Checkbox steps.
+
+**Goal:** Close the user's dogfooding feedback (location UX, favorites, ad jank), rebrand with a researched logo, and produce the launch-presence kit (store visuals, video, social pages) — while Task 8 (account keys) stays open in parallel.
+
+**Source:** user feedback 2026-08-15 (7 items) + plan-4-backlog carried rows.
+
+## Global Constraints
+All prior constraints carry (Android-only runtime, device 98bc1cd8, evidence integrity, TDD logic, trailers, `GIT_CONFIG_GLOBAL=/tmp/tw-gitconfig`, `JAVA_HOME=jbr-17.0.14`). Branch `feat/plan-5-polish` off main. Social-page CREATION is user-gated (accounts); we produce every asset + copy ready-to-post.
+
+### Task 1: Map opens at my location + my-location CTA (feedback items 1+2)
+Camera policy: on app open, if location permission granted → one-shot `LocationProvider.current()` → camera centers there (zoom ~6) INSTEAD of last-camera-restore when the fix differs >50km from saved camera target (avoid fighting deliberate pans: only auto-center on cold start, never mid-session). If no permission/fix → existing behavior (saved camera / world view). TDD the camera-decision pure fn `startupCameraTarget(savedTarget, homeFix, permissionGranted)`. My-location FAB: MapLibre-style circular button bottom-right above sheet peek (Icons.Filled.MyLocation), visible when permission granted; tap → animateTo(current fix, zoom 8) (reduced-motion: snap); no permission → tap routes to the Settings location row (in-context ask). Blue current-location dot on map if maplibre location-component is cheap (spike ≤30min, else skip w/ note — the FAB is the feature). Device: cold-open centers on you; FAB recenter after pan; permission-denied FAB path.
+
+### Task 2: Favorite cities + per-city alert types (feedback items 3+5)
+Data: `favorite_place(id, label, lat, lon, alertType TEXT)` — NEW TABLE (schema change, reinstall note); alertType enum: ALL (any M≥minMag in radius), MAJOR_ONLY (M≥6), OFF. Home location becomes "current focus" — favorites list lives in Settings ("Places" section rewrite): add city (CityPickerDialog reuse + "Use my location"), per-row alert-type segmented control, star/remove, tap → map flies there + pill recomputes vs that place... SCOPE CONTROL: pill stays bound to primary home; favorites drive ALERTS (worker evaluates each favorite w/ its alertType against its own radius=nearbyRadiusKm) + a quick-switch row on Home (chips above sheet: Home + favorites; tap = camera fly + pill target swap for the session). Free tier: 1 favorite beyond home; Plus: unlimited (REAL Plus gate — first genuine one; update paywall copy + PLUS_BENEFITS honestly, drop "(coming soon)" from that item). TDD: store CRUD, worker multi-place evaluation (per-place alertType honored, dedupe across overlapping places — one notification per quake max), gate logic. Device matrix: add/remove/type-switch/alert-from-favorite (debug inject near favorite)/free-tier gate.
+
+### Task 3: Ad-slot layout stability (feedback item 4)
+Glitch = layout jump when banner loads/appears. Fix: reserve FIXED height for the slot whenever ads are eligible (AdSize.getCurrentOrientationAnchoredAdaptiveBannerAdSize height precomputed — reserve exact dp) so content never reflows on fill; banner fades in (alpha animation) inside the reserved box instead of pushing layout; slot collapses ONLY on eligibility change (Plus/detail/onboarding), never on fill-state change. Also fix hide→show AdView reload jank (persist AdView across visibility within eligibility — the Task 6 review's noted simplification gets fixed). TDD reserve-height decision fn. Device: record before/after of first-fill (screenrecord via scrcpy if OxygenOS still SIGSEGVs native).
+
+### Task 4: Logo research + unique brand mark (feedback item 6)
+Research pass (WebSearch/WebFetch): earthquake/monitoring app logos (LastQuake, MyShake, Earthquake Network, USGS) + Play top-charts weather/safety category conventions — document what's taken/clichéd (seismograph waves, cracked earth, generic pins). Design 3 distinct original directions as SVG (constraints: works at 48dp, monochrome-able, Calm Guardian palette, NOT derivative of researched marks): e.g. (a) shield+ring evolution of current, (b) concentric-rings epicenter w/ negative-space "T", (c) abstract fault-line forming a calm horizon. User picks (present as committed PNG renders + one-line rationale each). Winner replaces adaptive icon set + notification glyph + store icon + feature graphic (regenerate). Device: icon on launcher + shade.
+
+### Task 5: Store visuals v2 — mockups, screenshots, video (feedback item 7a)
+Framed screenshots: device-frame the 6 matrix captures (dark bezel frame + caption strip headline per screenshot — "Live quakes worldwide", "Honest alerts", etc.) via Pillow scripting — Play-spec 1080×1920 (crop to 2:1-compliant) → store-assets/screenshots-framed/. Demo VIDEO: 90-120s screen recording via scrcpy (OxygenOS screenrecord broken): script the walkthrough (cold open on map → live pins → tap quake → news → radius slider ring grow → alert notification arriving → history filters → insights) — record, cut dead frames via ffmpeg (available? verify), export 1080p MP4 → store-assets/video/demo.mp4 + a 30s cut for Shorts/Reels. Honest footage only — real data, no staged fakes beyond the sanctioned debug-inject (labeled in a corner overlay if used).
+
+### Task 6: Social launch kit (feedback item 7b) [PAGE CREATION USER-GATED]
+Produce ready-to-post assets + copy in store-assets/social/: YouTube (channel art 2560×1440, video title/description/tags for the demo upload), Instagram (profile 320², 3 launch posts 1080² — map/alerts/radius visuals + captions), X/Twitter (header 1500×500, pinned-thread draft: 5-tweet launch story), Threads (reuse IG). Handle recommendation: @terrawatchapp (check availability via WebFetch where possible, note conflicts). Bio copy per platform. User creates the accounts; everything else is done.
+
+### Task 7: Close-out
+Full jvmTest + instrumented + CI + docs; merge. (Task 8 of Plan 4 — key swap + upload — executes whenever accounts arrive, on its own mini-branch.)
