@@ -223,6 +223,18 @@ class InMemoryQuakeStoreTest {
         assertNull(InMemoryQuakeStore().strongest(sinceMillis = 0L))
     }
 
+    // --- Task 2 (Plan 4), Fix Round 1 (review finding): originOf -- backs the origin-flip-on-merge
+    // protection in QuakeRepository.ingest(), see QuakeStore.originOf's own kdoc ------------------
+
+    @Test fun `originOf returns the stored origin`() {
+        store.replace(quake(id = "a"), origin = "archive")
+        assertEquals("archive", store.originOf("a"))
+    }
+
+    @Test fun `originOf returns null for missing id`() {
+        assertNull(store.originOf("missing"))
+    }
+
     // --- Task 2 (Plan 4), M1 torn-write fix: metaPutAll -----------------------------------------
 
     @Test fun `metaPutAll writes multiple pairs`() {

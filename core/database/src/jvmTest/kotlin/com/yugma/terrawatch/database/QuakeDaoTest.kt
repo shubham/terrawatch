@@ -321,6 +321,17 @@ class QuakeDaoTest {
         assertEquals("live", db.quakeQueries.byId("new").executeAsOne().origin)
     }
 
+    // Task 2 (Plan 4), Fix Round 1 (review finding): originOf backs the origin-flip-on-merge
+    // protection in QuakeRepository.ingest() -- see QuakeStore.originOf's own kdoc.
+    @Test fun `originOf returns the stored origin`() {
+        dao.replace(quake(id = "a"), origin = "archive")
+        assertEquals("archive", dao.originOf("a"))
+    }
+
+    @Test fun `originOf returns null for missing id`() {
+        assertNull(dao.originOf("missing"))
+    }
+
     // Task 2 (Plan 4), M1 torn-write fix: metaPutAll -----------------------------------------------
 
     @Test fun `metaPutAll writes multiple pairs`() {

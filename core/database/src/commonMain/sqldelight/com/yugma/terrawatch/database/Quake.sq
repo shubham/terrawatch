@@ -122,6 +122,14 @@ INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?);
 lastFetchedAt:
 SELECT MAX(fetchedAtMillis) FROM quake;
 
+-- Task 2 (Plan 4), Fix Round 1 (review finding): backs the origin-flip-on-merge protection in
+-- QuakeRepository.ingest() -- see QuakeStore.originOf's own kdoc for the full mechanism. A bare
+-- scalar read, same shape as meta_get above; returns no row (null, via executeAsOneOrNull on the
+-- Kotlin side) when `id` isn't stored, rather than an empty-string/default value that could be
+-- mistaken for a real origin.
+originOf:
+SELECT origin FROM quake WHERE id = ?;
+
 -- Task 6 (Plan 3): Insights' three aggregates. All three share the same `WHERE timeMillis >=
 -- :sinceMillis` window-clip — the caller (QuakeDao) always passes the period's own start-of-day
 -- millis, never a raw "now minus N millis" cutoff, so results align exactly on calendar-day

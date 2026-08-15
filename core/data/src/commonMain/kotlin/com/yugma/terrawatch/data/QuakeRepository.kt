@@ -399,11 +399,38 @@ class QuakeRepository(
                     result.replacesId,
                     incoming.id.takeIf { it != result.canonical.id },
                 ).distinct().filter { it != result.canonical.id }
+                // Task 2 (Plan 4), Fix Round 1 (review finding): origin-flip-on-merge protection —
+                // see QuakeStore.pruneOldRows's own kdoc for the full reproduction this closes (an
+                // 'archive' row silently downgraded to 'feed'/'live' by a same-event merge, then
+                // wrongly deleted by a MUCH later pruneOldRows pass). Protection priority, never
+                // downgrade: an existing row's ORIGIN_ARCHIVE/ORIGIN_DEBUG tag always survives a
+                // merge, regardless of which origin the CALLER passed in; anything else (feed/live,
+                // neither ever protected) lets the caller's own origin win exactly as before.
+                //
+                // Checks BOTH lookup shapes, independently — NOT just `previous`'s own resolved id:
+                //  - same-id update: the row already stored at incoming.id (previousById above).
+                //  - cross-id merge: the row `result.replacesId` points at.
+                // These are the identical two ids `deleteIds` just above already has to reason about
+                // for the exact same "not mutually exclusive" reason its own comment documents — a
+                // single call can supersede BOTH simultaneously (previousById != null AND
+                // result.replacesId != null at once). `previous` itself only ever resolves to ONE of
+                // them (the elvis chain's first hit, previousById when present) — checking only
+                // `previous`'s origin would silently miss a protected replacesId row exactly in that
+                // dual-stale-row case (QuakeRepositoryTest's "checks the replaced row too" pins this).
+                val existingOrigins = listOfNotNull(
+                    previous?.let { dao.originOf(it.id) },
+                    result.replacesId?.let { dao.originOf(it) },
+                )
+                val effectiveOrigin = when {
+                    QuakeStore.ORIGIN_ARCHIVE in existingOrigins -> QuakeStore.ORIGIN_ARCHIVE
+                    QuakeStore.ORIGIN_DEBUG in existingOrigins -> QuakeStore.ORIGIN_DEBUG
+                    else -> origin
+                }
                 // Delete + write as ONE transaction (Task 9 review, Important 2): separate calls are
                 // separate commits, so a live recentQuakes() collector observes the transient state in
                 // between (an empty list, if a deleted row was the only one in view), and a crash
                 // between commits can permanently lose the quake.
-                dao.replaceAndDelete(result.canonical, deleteIds, origin = origin)   // NOT upsert() — reconciler already resolved recency; see Task 9 DAO notes
+                dao.replaceAndDelete(result.canonical, deleteIds, origin = effectiveOrigin)   // NOT upsert() — reconciler already resolved recency; see Task 9 DAO notes
                 if (previous == null) _insertedQuakeIds.tryEmit(result.canonical.id)
                 alerts.evaluate(previous, result.canonical, rules, home)?.let { _alertEvents.tryEmit(it) }
             }

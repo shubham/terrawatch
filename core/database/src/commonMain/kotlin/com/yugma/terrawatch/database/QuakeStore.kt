@@ -41,8 +41,17 @@ import kotlinx.coroutines.flow.Flow
  *  - **origin tagging** (the mechanism [pruneOldRows] itself relies on): [replace]/
  *    [replaceAndDelete] both gain a defaulted `origin` parameter (see the [Companion] constants).
  *    Deliberately DB-layer-only, per controller decision — [DomainQuake] itself gains no `origin`
- *    field, and no READ method on this interface ever surfaces one back out; see `Quake.sq`'s own
- *    schema-comment for the full ruling.
+ *    field, and no OTHER read method on this interface ever surfaces one back out (updated below —
+ *    Fix Round 1 adds exactly one narrow exception); see `Quake.sq`'s own schema-comment for the
+ *    full ruling.
+ *
+ * Fix Round 1 (review finding) grew this to 16: [originOf] is a deliberate, narrow crack in the
+ * "no read method surfaces origin" rule stated above — added purely so
+ * [com.yugma.terrawatch.data.QuakeRepository.ingest]'s own merge-write path can decide whether a
+ * row it's about to overwrite is protected ([ORIGIN_ARCHIVE]/[ORIGIN_DEBUG]) before choosing what
+ * origin to write next; see [pruneOldRows]'s own kdoc for the bug this closes. Still never reaches
+ * [DomainQuake] or any UI-facing read path — the one caller is [QuakeRepository]'s internal
+ * bookkeeping, not a new public capability for this data to leak through.
  */
 interface QuakeStore {
     fun byId(id: String): DomainQuake?
@@ -66,6 +75,21 @@ interface QuakeStore {
     fun metaGet(key: String): String?
 
     fun metaPut(key: String, value: String)
+
+    /**
+     * Task 2 (Plan 4), Fix Round 1 (review finding): the read side of the origin-flip-on-merge
+     * protection — returns the `origin` currently stored for [id], or `null` when no row exists
+     * there. [com.yugma.terrawatch.data.QuakeRepository.ingest]'s merge-write path calls this on
+     * every row a merge is about to supersede (the row already at the incoming quake's own id, and
+     * — separately — the row a cross-id merge's `replacesId` points at, since a single ingest can
+     * supersede BOTH at once) to decide [ORIGIN_ARCHIVE]/[ORIGIN_DEBUG] protection: see
+     * [pruneOldRows]'s own kdoc for the full reproduction this closes. Deliberately returns the raw
+     * origin string, not a Boolean "is this protected" — the protection POLICY (which origins count
+     * as protected, and what wins when two superseded rows disagree) belongs in the repository, the
+     * one place that already knows which rows are in play for a given ingest call; this method's
+     * only job is the DB-layer lookup.
+     */
+    fun originOf(id: String): String?
 
     /**
      * Task 2 (Plan 4), M1 torn-write fix: writes every (key, value) pair in [pairs] as ONE
@@ -111,13 +135,33 @@ interface QuakeStore {
      *
      * Origin-tagging caveat, documented honestly rather than silently accepted: a row's `origin`
      * reflects whichever [replace]/[replaceAndDelete] call MOST RECENTLY wrote it, including a
-     * later DedupeEngine merge — an [ORIGIN_ARCHIVE] row that later gets merged with a same-event
-     * [ORIGIN_LIVE]/[ORIGIN_FEED] arrival adopts the merge's origin, not its original one. In
-     * practice this is rare and low-stakes: [com.yugma.terrawatch.data.DedupeEngine]'s own match
-     * window is ±90 SECONDS of real event time, so only two variants of the exact same real-world
-     * quake can ever merge, regardless of when each was fetched — an archive-backfilled event and a
-     * live/feed arrival for that SAME event necessarily share a recent `timeMillis`, so the merged
-     * row is nowhere near this function's 30-day cutoff by the time the origin-flip could matter.
+     * later DedupeEngine merge.
+     *
+     * Task 2 (Plan 4), Fix Round 1 (review finding): the ORIGINAL version of this note argued the
+     * flip was "rare and low-stakes" because [com.yugma.terrawatch.data.DedupeEngine]'s own match
+     * window is ±90 SECONDS of the quake's own reported `timeMillis` — true, but the wrong
+     * mechanism to reason from, and it understated the real risk. That ±90s window bounds how
+     * close two merge candidates' EVENT times must be; it says nothing about how soon after
+     * ingestion a merge can actually occur, because DedupeEngine only ever compares the stored
+     * row's `timeMillis` against the incoming one, never "how long ago was this row written." A
+     * late-arriving EMSC "update" revision for the exact same event can match and re-merge a row on
+     * ANY day after its first ingestion — the merge is unbounded in wall-clock terms even though
+     * it's tightly bounded in event-time terms. So the tag this function reads is simply whatever
+     * the LAST merge happened to freeze it to, decided completely independently of when that merge
+     * fell relative to the 30-day window this function later judges it by: an [ORIGIN_ARCHIVE] row
+     * could sit untouched for 29 days, get silently re-tagged [ORIGIN_FEED] by a same-event merge
+     * on day 29, and be deleted by THIS function on day 30 — a row the user had actually browsed via
+     * History, gone, in violation of that screen's own "cached pages browse offline" contract.
+     *
+     * Mitigated, not just documented, as of Fix Round 1:
+     * [com.yugma.terrawatch.data.QuakeRepository.ingest]'s merge-write path now reads [originOf] on
+     * every row a merge is about to supersede — both the row already stored at the incoming
+     * quake's own id, and (separately, since one ingest call can supersede both at once — see that
+     * function's own `deleteIds` comment) the row a cross-id merge's `replacesId` points at — and
+     * keeps [ORIGIN_ARCHIVE]/[ORIGIN_DEBUG] whenever either already carries it, regardless of which
+     * origin the CALLER passed in. A merge can still freely move a row between [ORIGIN_FEED] and
+     * [ORIGIN_LIVE] (neither is protected, and this function prunes both identically anyway), but
+     * an archived/debug row can no longer be silently downgraded into a prunable one.
      */
     fun pruneOldRows(cutoffMillis: Long)
 

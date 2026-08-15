@@ -137,6 +137,9 @@ class QuakeDao(private val db: TerraWatchDb, private val clock: () -> Long = { 0
 
     override fun metaPut(key: String, value: String) { db.quakeQueries.meta_put(key, value) }
 
+    /** Task 2 (Plan 4), Fix Round 1 (review finding): see [QuakeStore.originOf]'s own kdoc. */
+    override fun originOf(id: String): String? = db.quakeQueries.originOf(id).executeAsOneOrNull()
+
     /**
      * Task 2 (Plan 4), M1 torn-write fix: every pair lands inside ONE `db.transaction {}`, so
      * SQLDelight defers its invalidation notification until commit — a listener on any query

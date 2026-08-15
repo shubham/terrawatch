@@ -113,12 +113,23 @@ class InMemoryQuakeStore(private val clock: () -> Long = { 0L }) : QuakeStore {
         meta[key] = value
     }
 
-    // Task 2 (Plan 4), M1 torn-write fix: QuakeDao's own transactional implementation is what
-    // actually matters for THAT class (a real SqlDriver, real concurrent readers) — this class's own
-    // kdoc already documents why no equivalent guard is needed here (single-writer-in-practice, no
-    // separate lock, `meta` is a plain synchronous Map with no reactive readers of its own to observe
-    // a torn intermediate state). A plain loop is therefore both correct and sufficient; this method
-    // exists mainly so QuakeStore's interface is satisfied identically across every implementation.
+    /** Task 2 (Plan 4), Fix Round 1 (review finding): see [QuakeStore.originOf]'s own kdoc. */
+    override fun originOf(id: String): String? = originById[id]
+
+    // Task 2 (Plan 4), M1 torn-write fix. Fix Round 1 (review finding): the ORIGINAL version of
+    // this note pointed at "this class's own kdoc" for why no guard is needed here — meaning the
+    // class-level Concurrency section's QuakeRepository.ingestMutex reasoning above. That's the
+    // WRONG class and the wrong path for THIS method: ingestMutex only ever serializes writes to
+    // `quakes` (via QuakeRepository.ingest's replace/replaceAndDelete calls) — it has nothing to do
+    // with `meta`, and metaPutAll's own real callers (HomeLocationStore.set, ThemeStore,
+    // AlertRuleStore, OnboardingStore) never touch QuakeRepository or acquire that mutex at all. The
+    // actual reason a plain loop is safe here: this class only ever ships to the single-threaded
+    // wasmJs target (see class kdoc), and the loop body itself (`meta[key] = value`, a plain
+    // synchronous Map write) has NO suspension point — nothing else can run on that one JS thread
+    // until this whole forEach returns, so no reader can ever observe a torn intermediate state,
+    // with or without a lock. [QuakeDao]'s real `db.transaction {}` (a genuine multi-threaded,
+    // concurrent-reader environment) is what actually needs, and gets, its own transactional guard
+    // — see that method's own kdoc.
     override fun metaPutAll(vararg pairs: Pair<String, String>) {
         pairs.forEach { (key, value) -> meta[key] = value }
     }

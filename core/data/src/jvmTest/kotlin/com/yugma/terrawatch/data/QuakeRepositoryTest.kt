@@ -3,6 +3,7 @@ package com.yugma.terrawatch.data
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import app.cash.turbine.test
 import com.yugma.terrawatch.database.QuakeDao
+import com.yugma.terrawatch.database.QuakeStore
 import com.yugma.terrawatch.database.TerraWatchDb
 import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.model.MagRevision
@@ -433,9 +434,11 @@ class QuakeRepositoryTest {
 
     // Task 2 (Plan 4), origin tagging: loadArchivePage's rows must be tagged 'archive' — proven
     // end-to-end via pruneOldRows' own exemption rather than a direct read (origin is deliberately
-    // DB-layer-only, no QuakeStore read method ever surfaces it — see QuakeStore's own kdoc), which
-    // is also exactly the real-world property that matters: an archive-backfilled row must survive
-    // retention even when it's decades old, while a feed-ingested row of the identical age must not.
+    // DB-layer-only; QuakeStore.originOf, added Fix Round 1, is a narrow exception for internal
+    // merge-protection bookkeeping only, not a general-purpose read — see QuakeStore's own kdoc),
+    // which is also exactly the real-world property that matters: an archive-backfilled row must
+    // survive retention even when it's decades old, while a feed-ingested row of the identical age
+    // must not.
     @Test fun `pruneOldRows protects an archive-origin row but deletes a feed-origin row of the same age`() = runTest {
         val oldTime = 1_000_000L // ancient relative to the cutoff below
         val feedRepo = repoNoop(clockValue = 50_000_000_000L)
@@ -463,6 +466,99 @@ class QuakeRepositoryTest {
         assertEquals(1, dao.countAll())
         assertNull(dao.byId("feed1"))
         assertNotNull(dao.byId("arch1"))
+    }
+
+    // Task 2 (Plan 4), Fix Round 1 (review finding): origin-flip-on-merge protection ---------------
+    // Reproduction this closes: History archives a quake (origin='archive') -> the very next
+    // all_day feed poll re-ingests the SAME quake (same USGS id -- stable across archive vs.
+    // realtime USGS queries for one real-world event) -> pre-fix, ingest()'s merge-write path
+    // unconditionally stamped the CALLER's origin ('feed'), silently downgrading the row -> a
+    // pruneOldRows pass 30 days later deletes a row the user had actually viewed via History,
+    // violating that screen's own "cached pages browse offline" contract. See
+    // QuakeStore.pruneOldRows's own kdoc for the full mechanism this now mitigates.
+
+    @Test fun `origin protection - a same-id feed re-ingest does not downgrade an archived row`() = runTest {
+        val r = repoNoop(2_000_000)
+        r.ingest(quake("us1", Source.USGS, 5.0, t = 1_000_000), origin = QuakeStore.ORIGIN_ARCHIVE)
+        assertEquals(QuakeStore.ORIGIN_ARCHIVE, dao.originOf("us1"))
+
+        // Same real-world event re-ingested via the feed poll under the identical id -- previousById
+        // (dao.byId(incoming.id)) resolves non-null, the "same-id update" lookup shape.
+        r.ingest(quake("us1", Source.USGS, 5.1, t = 1_000_000, updated = 1_010_000), origin = QuakeStore.ORIGIN_FEED)
+
+        assertEquals(1, dao.countAll())
+        assertEquals(QuakeStore.ORIGIN_ARCHIVE, dao.originOf("us1"))
+    }
+
+    @Test fun `origin protection - an archive-path ingest may still upgrade an existing feed row`() = runTest {
+        val r = repoNoop(2_000_000)
+        r.ingest(quake("us1", Source.USGS, 5.0, t = 1_000_000), origin = QuakeStore.ORIGIN_FEED)
+        assertEquals(QuakeStore.ORIGIN_FEED, dao.originOf("us1"))
+
+        r.ingest(quake("us1", Source.USGS, 5.1, t = 1_000_000, updated = 1_010_000), origin = QuakeStore.ORIGIN_ARCHIVE)
+
+        assertEquals(1, dao.countAll())
+        assertEquals(
+            QuakeStore.ORIGIN_ARCHIVE, dao.originOf("us1"),
+            "feed carries no protection of its own -- archive may freely overwrite it",
+        )
+    }
+
+    @Test fun `origin protection - feed and live carry no protection between each other, caller's origin always wins`() = runTest {
+        val r = repoNoop(2_000_000)
+        r.ingest(quake("us1", Source.USGS, 5.0, t = 1_000_000), origin = QuakeStore.ORIGIN_FEED)
+        r.ingest(quake("us1", Source.USGS, 5.1, t = 1_000_000, updated = 1_010_000), origin = QuakeStore.ORIGIN_LIVE)
+        assertEquals(QuakeStore.ORIGIN_LIVE, dao.originOf("us1"))
+
+        // Reverse direction too -- neither origin is ever "protected" against the other.
+        r.ingest(quake("us2", Source.USGS, 5.0, t = 1_100_000), origin = QuakeStore.ORIGIN_LIVE)
+        r.ingest(quake("us2", Source.USGS, 5.1, t = 1_100_000, updated = 1_110_000), origin = QuakeStore.ORIGIN_FEED)
+        assertEquals(QuakeStore.ORIGIN_FEED, dao.originOf("us2"))
+    }
+
+    // Fix Round 1 (review finding), "check the replaced row too": mirrors "divergent usgs id and
+    // sources id cannot orphan the incoming row" above -- same dual-stale-row shape, where a SINGLE
+    // ingest call supersedes BOTH the row already at incoming.id AND a separately dedupe-matched row
+    // under a DIFFERENT id at once -- but stacks origins on the two rows so they disagree. `previous`
+    // itself resolves to the row at incoming.id here (the elvis chain's first hit, previousById) --
+    // protection logic that only ever consulted `previous`'s own origin would see 'feed'
+    // (unprotected) and let the caller's origin win, silently discarding the OTHER superseded row's
+    // 'archive' protection. Checking `result.replacesId`'s own origin independently, in addition to
+    // `previous`'s, is what catches it.
+    @Test fun `origin protection checks the replaced row too, not just whichever row previous resolved to`() = runTest {
+        val r = repoNoop(10_000_000)
+
+        // "X"'s own id differs from its sources[USGS] value ("Y") -- the same divergent-id shape as
+        // the pre-existing dual-delete test above, needed here so the eventual merge's canonical.id
+        // ("Y") ends up a THIRD id, distinct from both "X" (incoming.id) and "e1" (the dedupe match).
+        val divergent = Quake(
+            "X", 1_000_000, 0.0, 0.0, 10.0, 5.5, "mw", "P", false, null, QuakeStatus.AUTOMATIC,
+            mapOf(Source.USGS to "Y"), listOf(MagRevision(5.5, "mw", 1_000_000, Source.USGS)), 1_000_000,
+        )
+        r.ingest(divergent, home = null, origin = QuakeStore.ORIGIN_FEED)
+        r.ingest(
+            quake("e1", Source.EMSC, 5.5, t = 1_000_000, updated = 1_000_000).copy(lat = 50.0, lon = 50.0),
+            home = null, origin = QuakeStore.ORIGIN_ARCHIVE,
+        )
+        assertEquals(QuakeStore.ORIGIN_FEED, dao.originOf("X"))
+        assertEquals(QuakeStore.ORIGIN_ARCHIVE, dao.originOf("e1"))
+
+        // Revision of "X": epicenter moves onto e1's location, newer timestamp. dedupe matches "e1"
+        // (lacks USGS) against this incoming (has USGS) -> canonical.id = incoming.sources[USGS] =
+        // "Y" -- replacesId = "e1", AND the stale row at incoming.id = "X" both get deleted in the
+        // same call. previousById = dao.byId("X") is non-null, so `previous` resolves to "X" (origin
+        // 'feed') WITHOUT ever looking at "e1" -- only a separate, explicit replacesId origin check
+        // finds "e1"'s 'archive' tag.
+        val revision = divergent.copy(lat = 50.0, lon = 50.0, timeMillis = 1_010_000, updatedAtMillis = 1_010_000)
+        r.ingest(revision, home = null, origin = QuakeStore.ORIGIN_FEED)
+
+        assertEquals(1, dao.countAll())
+        assertNull(dao.byId("X"))
+        assertNull(dao.byId("e1"))
+        assertEquals(
+            QuakeStore.ORIGIN_ARCHIVE, dao.originOf("Y"),
+            "e1's archive protection must survive even though it was found via replacesId, not via previous",
+        )
     }
 
     private fun oneFeatureGeoJson(id: String, lat: Double, lon: Double, mag: Double, timeMillis: Long = 1_950_000L) = """
