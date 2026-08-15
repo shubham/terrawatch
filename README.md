@@ -14,13 +14,32 @@ Data: USGS realtime feeds + FDSN archive, EMSC WebSocket live stream. Free APIs,
 
 Note: corporate TLS-intercepting proxies require the proxy root CA in the JVM truststore for live-data runs; tests use recorded fixtures and MockEngine — no network needed.
 
+## Features
+
+- **Live map:** Real-time earthquake pins color-coded by magnitude (CALM/ALERT colors). Clustering for crowded regions. Tap pins to detail sheet.
+- **Status pill:** Live connection indicator (LIVE/Offline). Safety status based on nearby alerts (default 100km, configurable 50–1000km).
+- **Feed sheet:** Recent earthquakes with magnitude, distance, and timestamps. Pull-to-refresh. Infinite scroll through USGS archive.
+- **History archive:** Full searchable archive with filters (magnitude ≥4.5, year select). Browse all quakes with month-group headers.
+- **Insights:** Trends from recent activity (7d/30d views). Daily event count chart, magnitude distribution, strongest quake link-to-detail.
+- **Settings:** Adjust nearby radius 50–1000km (live ring on map). Theme switcher (System/Light/Dusk). Launch permission flow.
+- **Onboarding:** 3-step walkthrough (earthquake intro, location opt-in with city picker, default alert rule explanation). Skip anytime.
+- **Detail sheet:** Full quake data with revision history. Links to USGS. Magnitude badge, distance, time. Accessible TalkBack support.
+- **Data:** USGS realtime feeds + FDSN archive API + EMSC WebSocket stream. Free APIs, no keys. Cross-agency dedupe. Offline cache.
+- **Accessibility:** TalkBack labels on all interactive elements. Magnitude badges, status pill, live indicator, navigation tabs. Reduced-motion support.
+- **Dark mode:** System/Light/Dusk theme. Adaptive Calm Guardian design system.
+- **Platforms:** Android (real-time). Desktop + Web deferred (compiles green; runtime polish deferred to Plan 4).
+
 ## Screenshots
 
-| Map · Pins | Sheet · Expanded | Detail · Real Quake |
+| Cold start: live map + status pill | History archive with filters | Insights trends + strongest detail |
 |---|---|---|
-| ![Cold launch: live map with magnitude-banded pins and clustering](docs/qa/plan-2-device-matrix/cold-launch-map-pins.png) | ![Feed sheet expanded showing recent quakes with status pill](docs/qa/plan-2-device-matrix/sheet-expanded.png) | ![Detail sheet for real USGS quake with revision honesty](docs/qa/plan-2-device-matrix/detail-sheet-real-quake.png) |
+| ![Cold launch: live map with magnitude-banded pins and clustering](docs/qa/plan-3-device-matrix/task13-cold-start-home-live-map.png) | ![History archive filtered by magnitude ≥4.5, showing FDSN data](docs/qa/plan-3-device-matrix/task13-history-filter-m45.png) | ![Insights 7-day chart, card showing strongest quake link](docs/qa/plan-3-device-matrix/task13-insights-7d.png) |
 
-**Features:** Live map with magnitude-banded pins + clustering. USGS fetch on launch + live EMSC WebSocket stream with cross-agency dedupe. Safety status pill · LIVE connection indicator in the feed sheet. Feed sheet with recent events. Detail sheet with revision history. Dark mode support. Offline cache. Adaptive desktop two-pane layout. Web wasm placeholder.
+| Onboarding walkthrough | Settings radius 100km ring | Cluster tap-zoom & labels |
+|---|---|---|
+| ![Onboarding step 2: location picker showing Tokyo city choice](docs/qa/plan-3-device-matrix/task13-onboarding-step2-tokyo-picked.png) | ![Settings screen showing radius ring on home map at 100km](docs/qa/plan-3-device-matrix/task13-home-radius-ring-100km.png) | ![Map cluster bubble with "62" label, after tap-zoom animation](docs/qa/plan-3-device-matrix/task13-cluster-tap-zoom-after.png) |
+
+See `docs/qa/plan-3-device-matrix/` for full device verification matrix (31 screenshots, real device 98bc1cd8).
 
 ## Architecture
 
