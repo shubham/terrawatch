@@ -52,9 +52,17 @@ class HomeLocationStore(private val dao: QuakeStore) {
         return GeoPoint(lat, lon)
     }
 
+    // Task 2 (Plan 4), M1 torn-write fix (plan-3-exit-conditions.md carried item, "Investigate"
+    // ledger minor since Plan 2, raised to an Important at Plan 3's close): this used to be two
+    // separate dao.metaPut() calls — a get() racing between them (a concurrent read, e.g. another
+    // coroutine's HomeViewModel.init load) could observe a torn point, a NEW lat paired with the
+    // STALE lon (or vice versa), since each metaPut was its own independent commit with no shared
+    // transaction. dao.metaPutAll() wraps both rows in one QuakeDao transaction (see that method's
+    // own kdoc), so any reader sees either the complete old pair or the complete new one, never a
+    // mix — closing the exact gap plan-3-entry-conditions.md's own "Investigate" ledger first
+    // flagged for this same pair of calls.
     fun set(point: GeoPoint) {
-        dao.metaPut(LAT_KEY, point.lat.toString())
-        dao.metaPut(LON_KEY, point.lon.toString())
+        dao.metaPutAll(LAT_KEY to point.lat.toString(), LON_KEY to point.lon.toString())
         _updates.tryEmit(point)
     }
 

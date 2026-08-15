@@ -40,6 +40,8 @@ private fun bandFromLabel(label: String?): MagnitudeBand =
 // spike this extraction came from. Purely mechanical here: `: QuakeStore` plus `override` on the 13
 // methods that interface declares; every method body below is untouched, byte-for-byte, from before
 // this task (verified by the full jvmTest suite staying green with zero edits to this class's logic).
+// Task 2 (Plan 4) grew the interface to 15 methods (metaPutAll, pruneOldRows) — see QuakeStore's
+// own kdoc for the three carried Plan 3 exit-condition items (F1/M1/origin-tagging) that closes.
 class QuakeDao(private val db: TerraWatchDb, private val clock: () -> Long = { 0L }) : QuakeStore {
     private val json = Json
 
@@ -136,6 +138,19 @@ class QuakeDao(private val db: TerraWatchDb, private val clock: () -> Long = { 0
     override fun metaPut(key: String, value: String) { db.quakeQueries.meta_put(key, value) }
 
     /**
+     * Task 2 (Plan 4), M1 torn-write fix: every pair lands inside ONE `db.transaction {}`, so
+     * SQLDelight defers its invalidation notification until commit — a listener on any query
+     * reading the `meta` table observes exactly one notification for this whole call, not one per
+     * pair (QuakeDaoTest's own atomicity test proves this by counting notifications, the same
+     * technique `replaceAndDelete is atomic` already uses for the quake-row write path below).
+     * [InMemoryQuakeStore]'s own implementation has no equivalent transaction concept — see that
+     * class's kdoc for why a synchronous single-threaded map write needs none.
+     */
+    override fun metaPutAll(vararg pairs: Pair<String, String>) = db.transaction {
+        pairs.forEach { (key, value) -> db.quakeQueries.meta_put(key, value) }
+    }
+
+    /**
      * Unconditional write for DedupeEngine-reconciled rows. The reconciler has already
      * resolved recency (updatedAtMillis = max of both sides) and merged sources/revisions,
      * so the upsert() recency gate must NOT run — it would silently drop a merge whenever
@@ -143,7 +158,7 @@ class QuakeDao(private val db: TerraWatchDb, private val clock: () -> Long = { 0
      * a lagging timestamp). Idempotent for self-merges: reconcile() of an already-stored
      * row reproduces the stored row byte-for-byte.
      */
-    override fun replace(quake: DomainQuake) = replaceAndDelete(quake, deleteIds = emptyList())
+    override fun replace(quake: DomainQuake, origin: String) = replaceAndDelete(quake, deleteIds = emptyList(), origin = origin)
 
     /**
      * Atomically delete every id in [deleteIds] and write [quake], as ONE transaction — one
@@ -165,12 +180,26 @@ class QuakeDao(private val db: TerraWatchDb, private val clock: () -> Long = { 0
      * the feed's `ids` alias list — differs from its `sources[USGS]` value — taken from the
      * feed's top-level feature id; see Task 9 review round 3). Both stale rows must go.
      */
-    override fun replaceAndDelete(quake: DomainQuake, deleteIds: List<String>) = db.transaction {
+    override fun replaceAndDelete(quake: DomainQuake, deleteIds: List<String>, origin: String) = db.transaction {
         deleteIds.forEach { db.quakeQueries.delete(it) }
-        db.quakeQueries.insertOrReplace(quake.toRow())
+        db.quakeQueries.insertOrReplace(quake.toRow(origin))
     }
 
-    private fun DomainQuake.toRow() = Quake(
+    /**
+     * Task 2 (Plan 4): retention — deletes every row whose `timeMillis` is strictly before
+     * [cutoffMillis] and whose `origin` is 'feed' or 'live'; 'archive'/'debug' rows are exempt. See
+     * `Quake.sq`'s own `pruneOldRows` query kdoc and [QuakeStore.pruneOldRows]'s interface kdoc for
+     * the full ruling (F1, plan-3-exit-conditions.md).
+     */
+    // Block body, not `=`: same reasoning as deleteByIdPrefix above — the generated mutator
+    // returns the affected-row count (Long), which would mismatch QuakeStore's declared Unit.
+    override fun pruneOldRows(cutoffMillis: Long) { db.quakeQueries.pruneOldRows(cutoffMillis) }
+
+    // [origin] defaults to QuakeStore.ORIGIN_FEED so upsert()/upsertAll() (QuakeDao-only test
+    // helpers, never on the QuakeStore interface — see that interface's own kdoc) keep compiling
+    // unchanged; every real production write goes through replace()/replaceAndDelete() above, which
+    // always pass an explicit origin through to here.
+    private fun DomainQuake.toRow(origin: String = QuakeStore.ORIGIN_FEED) = Quake(
         id = id, timeMillis = timeMillis, lat = lat, lon = lon, depthKm = depthKm,
         mag = mag, magType = magType, place = place, tsunami = if (tsunami) 1 else 0,
         felt = felt?.toLong(), status = status.name,
@@ -182,6 +211,7 @@ class QuakeDao(private val db: TerraWatchDb, private val clock: () -> Long = { 0
             revisions.map { RevisionJson(it.mag, it.magType, it.atMillis, it.source.name) }),
         updatedAtMillis = updatedAtMillis,
         fetchedAtMillis = clock(),
+        origin = origin,
     )
 
     /**

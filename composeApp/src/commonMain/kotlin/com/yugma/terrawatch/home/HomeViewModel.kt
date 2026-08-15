@@ -37,6 +37,10 @@ import kotlin.time.ExperimentalTime
 // a no-op tick is one small conditional-GET, not a full re-download.
 private const val POLL_INTERVAL_MILLIS = 60_000L
 
+// Task 2 (Plan 4), F1 retention ruling (plan-3-exit-conditions.md carried item): pruneOldRows's
+// cutoff window — see HomeViewModel.init's own comment for the call site.
+private const val RETENTION_WINDOW_MILLIS = 30L * 24 * 60 * 60 * 1000 // 30 days = 2_592_000_000
+
 sealed interface HomeUiState {
     data object Loading : HomeUiState
 
@@ -64,13 +68,22 @@ private data class HomeSnapshot(
 // Task 1 (Plan 3): flatMapLatest below (the sliding-window re-subscription) is the only
 // experimental-API surface this class touches — opted in at the class level rather than the
 // function level because it's used inside init{}, which (unlike a named function) cannot itself
-// carry an @OptIn annotation.
-@OptIn(ExperimentalCoroutinesApi::class)
+// carry an @OptIn annotation. Task 2 (Plan 4) adds ExperimentalTime to this same class-level
+// opt-in — [clock]'s default value expression below needs it, same reason [injectDebugQuake]'s own
+// (now redundant-but-harmless) local `@OptIn(ExperimentalTime::class)` already needed it.
+@OptIn(ExperimentalCoroutinesApi::class, ExperimentalTime::class)
 class HomeViewModel(
     private val repository: QuakeRepository,
     private val homeLocationStore: HomeLocationStore,
     private val locationProvider: LocationProvider,
     private val alertRuleStore: AlertRuleStore,
+    // Task 2 (Plan 4): retention's cutoff clock — real wall-clock by default (matches
+    // QuakeRepository/HistoryPager/InsightsViewModel's own injectable-clock-at-the-platform-
+    // boundary convention exactly), overridable by tests. Appended as a 5th, DEFAULTED param
+    // specifically so it doesn't disturb any existing positional 4-arg construction (AppModule.kt's
+    // Koin wiring, HomeFlowTest/OnboardingGateTest's androidInstrumentedTest call sites) — none of
+    // them need to change to keep compiling.
+    private val clock: () -> Long = { Clock.System.now().toEpochMilliseconds() },
 ) : ViewModel() {
     private val _state = MutableStateFlow<HomeUiState>(HomeUiState.Loading)
     val state: StateFlow<HomeUiState> = _state
@@ -171,7 +184,24 @@ class HomeViewModel(
         // cost that doesn't exist. Independent top-level launch — nothing else in this class
         // depends on it completing, and it must not block/delay the cache-driven or refresh loops
         // below.
-        viewModelScope.launch { repository.purgeDebugQuakes() }
+        //
+        // Task 2 (Plan 4), F1 retention ruling (plan-3-exit-conditions.md carried item): folded
+        // into this SAME launch (not a third one) — pruneOldRows is the identical "startup
+        // housekeeping, unconditional, nothing else waits on it" concern purgeDebugQuakes already
+        // is, just a different retention rule (age-based, feed/live-origin-only, vs.
+        // prefix-based). cutoff = clock() - RETENTION_WINDOW_MILLIS (30 days); see
+        // QuakeDao.pruneOldRows/Quake.sq's own kdoc for the full 'archive'/'debug'-exemption
+        // ruling. [clock] (not a direct Clock.System.now() call, unlike injectDebugQuake below) is
+        // required here specifically because this runs unconditionally on EVERY construction — an
+        // unguarded real-clock cutoff would judge every test fixture in this whole codebase's suite
+        // (which all use tiny epoch-relative timeMillis, not real wall-clock timestamps) as
+        // decades-old and silently prune it the instant any HomeViewModel is built; confirmed by
+        // actually wiring it that way first and watching nearly every HomeViewModelTest case fail
+        // (EVIDENCE INTEGRITY) before adding this seam.
+        viewModelScope.launch {
+            repository.purgeDebugQuakes()
+            repository.pruneOldRows(clock() - RETENTION_WINDOW_MILLIS)
+        }
 
         // The refresh loop. Fix Round 2 (review finding, still true here): this runs in a
         // SEPARATE coroutine from `repository.recentQuakes().collect { ... }` below — since

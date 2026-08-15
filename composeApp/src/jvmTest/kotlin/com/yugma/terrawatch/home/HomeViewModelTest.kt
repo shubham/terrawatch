@@ -104,8 +104,18 @@ class HomeViewModelTest {
         homeLocationStore: HomeLocationStore = emptyHomeLocationStore(),
         locationProvider: LocationProvider = LocationProvider(),
         alertRuleStore: AlertRuleStore = emptyAlertRuleStore(),
+        // Task 2 (Plan 4): HomeViewModel.init now unconditionally calls repository.pruneOldRows(
+        // clock() - 30d) alongside purgeDebugQuakes() -- every quake this whole suite seeds uses a
+        // tiny epoch-relative timeMillis (900, 1_950_000, 2_000_000, ...), not a real wall-clock
+        // timestamp, so HomeViewModel's own real-clock default would judge every one of them as
+        // decades-old and prune it out from under whichever test seeded it. clock() = 0L makes
+        // pruneOldRows' cutoff deeply NEGATIVE (0 - 2_592_000_000), so `timeMillis < cutoff` never
+        // holds for any non-negative test timeMillis -- a safe, guaranteed no-op default for every
+        // test below that isn't specifically exercising retention (that one test passes its own
+        // clock explicitly instead of relying on this default).
+        clock: () -> Long = { 0L },
     ): HomeViewModel =
-        HomeViewModel(repository, homeLocationStore, locationProvider, alertRuleStore).also { createdViewModels += it }
+        HomeViewModel(repository, homeLocationStore, locationProvider, alertRuleStore, clock).also { createdViewModels += it }
 
     @AfterTest fun tearDown() {
         Dispatchers.resetMain()
@@ -753,6 +763,42 @@ class HomeViewModelTest {
             assertEquals(6.0, awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
+    }
+
+    // Task 2 (Plan 4), F1 retention ruling: init's new pruneOldRows(clock() - 30d) call, wired
+    // end-to-end through the real ViewModel/repository/DAO stack (not just at QuakeDaoTest/
+    // QuakeRepositoryTest's lower levels, which pin the mechanism itself). ioDispatcher is pinned to
+    // the SAME UnconfinedTestDispatcher instance backing Dispatchers.Main, so the purge+prune
+    // launch{} block (no genuine suspension point anywhere in either call — a synchronous SQLite
+    // read/write through a `withContext` hop onto a dispatcher that's already current is a no-op
+    // re-dispatch) runs eagerly to completion inline, before createVm() even returns.
+    // `runCurrent()` right after is a defensive flush, not a load-bearing wait — NOT
+    // `advanceUntilIdle()`: this ViewModel's OWN refresh-loop coroutine (`while (isActive) {
+    // delay(POLL_INTERVAL_MILLIS); refreshOnce() }`) never terminates by construction, so
+    // `advanceUntilIdle()` fast-forwards through that delay, runs another tick, schedules the next
+    // delay, and repeats forever — confirmed by actually running it that way first and watching the
+    // whole test JVM OOM (EVIDENCE INTEGRITY). `runCurrent()` only drains work already due at the
+    // CURRENT virtual instant, never fast-forwarding past a future delay, so it can't hit that trap.
+    @Test fun `init prunes old feed rows but protects archive rows, via the injected clock`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        TerraWatchDb.Schema.create(driver)
+        val dao = QuakeDao(TerraWatchDb(driver))
+        val now = 100_000_000_000L
+        val old = now - 40L * 24 * 60 * 60 * 1000 // 40 days before `now` -- past the 30-day cutoff
+        dao.replace(freshQuake("old-feed", timeMillis = old))                     // origin defaults "feed"
+        dao.replace(freshQuake("old-archive", timeMillis = old), origin = "archive")
+        val engine = MockEngine { respond("", HttpStatusCode.InternalServerError) }
+        val repository = QuakeRepository(
+            UsgsApi(HttpClient(engine)), EmscLiveSource(HttpClient(engine)), dao,
+            clock = { now }, ioDispatcher = testDispatcher,
+        )
+        createVm(repository, clock = { now })
+        testDispatcher.scheduler.runCurrent()
+
+        assertEquals(null, dao.byId("old-feed"), "40-day-old feed row must be pruned")
+        assertEquals("old-archive", dao.byId("old-archive")?.id, "archive rows are exempt regardless of age")
     }
 }
 

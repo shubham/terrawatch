@@ -114,7 +114,7 @@ class QuakeRepository(
                 // fetchedAtMillis] across its own forEach below rather than re-reading per row.
                 val rules = currentRules()
                 val home = currentHome()
-                result.quakes.forEach { ingest(it, rules = rules, home = home) }
+                result.quakes.forEach { ingest(it, rules = rules, home = home, origin = QuakeStore.ORIGIN_FEED) }
                 result.etag?.let { dao.metaPut(FEED_ETAG_KEY, it) }
                 RefreshStatus.UPDATED
             }
@@ -128,7 +128,11 @@ class QuakeRepository(
         // one at a time, potentially hours apart - currentRules()/currentHome() are read fresh for
         // EACH event, so a radius/home change the user makes mid-session is honored by the very
         // next live arrival, not just the next poll tick.
-        scope.launch { live.events().collect { ingest(it, rules = currentRules(), home = currentHome()) } }
+        scope.launch {
+            live.events().collect {
+                ingest(it, rules = currentRules(), home = currentHome(), origin = QuakeStore.ORIGIN_LIVE)
+            }
+        }
     }
 
     /**
@@ -152,7 +156,7 @@ class QuakeRepository(
     suspend fun ingestDebugBypassingDedupe(quake: Quake) {
         withContext(ioDispatcher) {
             ingestMutex.withLock {
-                dao.replace(quake)
+                dao.replace(quake, origin = QuakeStore.ORIGIN_DEBUG)
                 _insertedQuakeIds.tryEmit(quake.id)
             }
         }
@@ -171,6 +175,18 @@ class QuakeRepository(
     }
 
     /**
+     * Task 2 (Plan 4), F1 retention ruling (plan-3-exit-conditions.md carried item): deletes every
+     * 'feed'/'live'-origin row older than [cutoffMillis] — 'archive' rows (History's backfill) and
+     * 'debug' rows stay exempt. See [QuakeDao.pruneOldRows]/[QuakeStore.pruneOldRows]'s own kdoc
+     * for the full ruling. Called unconditionally from `HomeViewModel.init` alongside
+     * [purgeDebugQuakes], with `cutoffMillis = now - 30 days` — same "independent housekeeping,
+     * nothing else waits on it" shape that function's own kdoc documents.
+     */
+    suspend fun pruneOldRows(cutoffMillis: Long) = withContext(ioDispatcher) {
+        dao.pruneOldRows(cutoffMillis)
+    }
+
+    /**
      * Task 5 (Plan 3): returns the actual ingested batch, not just a count — [HistoryPager] needs
      * the batch's own oldest [Quake.timeMillis] to advance its paging cursor, and the raw network
      * response is the only unambiguous place to read that from. Re-deriving it from the DB after
@@ -185,17 +201,26 @@ class QuakeRepository(
      * free via `.size`.
      *
      * Task 7 (Plan 3) note: deliberately NOT wired to [currentRules]/[currentHome] the way
-     * [refreshFeed]/[startLive] are (see [currentRules]'s own kdoc) — this task's brief names only
-     * "startLive/refresh paths" for store-fed rules, and there is a real reason beyond just
-     * following that literally: this is History's archive-backfill path, which can page in quakes
-     * from years ago as the user scrolls. Evaluating live alert rules against a years-old event
-     * arriving because someone scrolled History has no sensible "alert" meaning (nothing currently
-     * surfaces [alertEvents] to the user either way — Plan 4 territory), so it stays on [ingest]'s
-     * own compile-time [DEFAULT_RULES]/`home = null` defaults, unchanged from before this task.
+     * [refreshFeed]/[startLive] are (see [currentRules]'s own kdoc) — this is History's
+     * archive-backfill path, which can page in quakes from years ago as the user scrolls.
+     *
+     * Task 2 (Plan 4), F5 guard (plan-3-exit-conditions.md carried item, closed this task): this
+     * used to fall through to [ingest]'s own compile-time `rules = DEFAULT_RULES` default, which
+     * DID evaluate [AlertRuleEngine] (harmless only because nothing consumed [alertEvents] yet) —
+     * the exact hazard that carried item flagged: "the instant Plan 4 wires real notifications off
+     * [alertEvents], a user deep-scrolling History past old M6+ quakes will notification-storm on
+     * events years old." Now passes `rules = emptyList()` explicitly, not merely "unwired from the
+     * store" — [AlertRuleEngine.evaluate]'s own `for (rule in rules)` loop never runs at all here,
+     * so archive ingestion cannot alert regardless of magnitude/home/store state, a stronger and
+     * simpler guarantee than any store-wiring choice could give (QuakeRepositoryTest's own
+     * `loadArchivePage never alerts` case pins this against a quake that WOULD otherwise trip the
+     * "world" rule). Also tags every row [QuakeStore.ORIGIN_ARCHIVE] — see [pruneOldRows]'s own
+     * kdoc for why that matters: History's "cached pages browse offline" contract wants these rows
+     * kept, exempt from retention, unlike a 'feed'/'live' row of the same age.
      */
     suspend fun loadArchivePage(beforeMillis: Long, minMag: Double? = null): List<Quake> = withContext(ioDispatcher) {
         val page = api.queryArchive(endTimeMillis = beforeMillis, minMagnitude = minMag)
-        page.forEach { ingest(it) }
+        page.forEach { ingest(it, rules = emptyList(), origin = QuakeStore.ORIGIN_ARCHIVE) }
         page
     }
 
@@ -335,6 +360,14 @@ class QuakeRepository(
         incoming: Quake,
         rules: List<AlertRule> = DEFAULT_RULES,
         home: GeoPoint? = null,
+        // Task 2 (Plan 4): which write path this call came from — see QuakeStore's own kdoc for the
+        // four values and why this stays a plain DB-layer tag ([Quake] itself never carries it).
+        // Defaulted to ORIGIN_FEED (not e.g. an unlabeled/empty string) so every pre-existing test
+        // call site across this whole module (QuakeRepositoryTest, QuakeRepositoryConcurrencyTest,
+        // HomeViewModelTest's freshQuake()-seeded ingests, QuakeSelectionViewModelTest, ...) keeps
+        // compiling AND keeps behaving as "feed" — the correct default, since none of those omit it
+        // to mean anything else.
+        origin: String = QuakeStore.ORIGIN_FEED,
     ) {
         withContext(ioDispatcher) {
             ingestMutex.withLock {
@@ -370,7 +403,7 @@ class QuakeRepository(
                 // separate commits, so a live recentQuakes() collector observes the transient state in
                 // between (an empty list, if a deleted row was the only one in view), and a crash
                 // between commits can permanently lose the quake.
-                dao.replaceAndDelete(result.canonical, deleteIds)   // NOT upsert() — reconciler already resolved recency; see Task 9 DAO notes
+                dao.replaceAndDelete(result.canonical, deleteIds, origin = origin)   // NOT upsert() — reconciler already resolved recency; see Task 9 DAO notes
                 if (previous == null) _insertedQuakeIds.tryEmit(result.canonical.id)
                 alerts.evaluate(previous, result.canonical, rules, home)?.let { _alertEvents.tryEmit(it) }
             }

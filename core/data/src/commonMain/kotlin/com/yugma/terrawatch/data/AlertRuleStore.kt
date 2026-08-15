@@ -75,13 +75,36 @@ class AlertRuleStore(private val dao: QuakeStore) {
     /** See [currentRadiusKm]'s kdoc — the same synchronous escape hatch for [minMag]. */
     internal fun currentMinMag(): Double = readMinMag()
 
-    private fun readRadiusKm(): Double = dao.metaGet(RADIUS_KEY)?.toDoubleOrNull() ?: DEFAULT_RADIUS_KM
+    /**
+     * Task 2 (Plan 4), M2 ruling (plan-3-exit-conditions.md carried item): clamps to
+     * [[MIN_RADIUS_KM], [MAX_RADIUS_KM]] — 50–1000km, matching `SettingsScreen.kt`'s own
+     * `RADIUS_STEPS_KM = [50.0, 100.0, 250.0, 500.0, 1000.0]` slider bounds exactly (that file
+     * can't be referenced directly from this module — composeApp depends on core:data, not the
+     * reverse — so the two bounds are duplicated by value here, not by reference; keep them in
+     * sync by hand if the slider's range ever changes). Before this fix, the UI slider's own
+     * snap-to-step behavior was the ONLY thing keeping a stored radius in range — a hand-corrupted
+     * meta row, or any future non-slider caller (a deep link, a debug tool, a restored backup),
+     * round-tripped straight through every reader ([nearbyRadiusKm], [currentRadiusKm], and
+     * therefore the pill and [QuakeRepository.currentRules]) with zero validation. Deliberately a
+     * READ-side clamp only, not a write-side one: [setNearbyRadius] still stores whatever it's
+     * given verbatim (every real caller is the slider itself, already pre-snapped to a valid step),
+     * matching this ruling's own scope exactly rather than also constraining a write path nothing
+     * asked to change.
+     */
+    private fun readRadiusKm(): Double =
+        (dao.metaGet(RADIUS_KEY)?.toDoubleOrNull() ?: DEFAULT_RADIUS_KM).coerceIn(MIN_RADIUS_KM, MAX_RADIUS_KM)
 
     private fun readMinMag(): Double = dao.metaGet(MIN_MAG_KEY)?.toDoubleOrNull() ?: DEFAULT_MIN_MAG
 
     companion object {
         const val DEFAULT_RADIUS_KM = 100.0
         const val DEFAULT_MIN_MAG = 4.5
+
+        // Task 2 (Plan 4), M2 ruling: the same 50/1000 floor/ceiling `SettingsScreen.kt`'s
+        // RADIUS_STEPS_KM slider already enforces at the UI layer — see [readRadiusKm]'s own kdoc.
+        const val MIN_RADIUS_KM = 50.0
+        const val MAX_RADIUS_KM = 1000.0
+
         private const val RADIUS_KEY = "rule_radiuskm"
         private const val MIN_MAG_KEY = "rule_minmag"
     }

@@ -123,8 +123,15 @@ class OnboardingGateTest {
         val engine = MockEngine { respond("", HttpStatusCode.InternalServerError) }
         val http = HttpClient(engine)
         val repository = QuakeRepository(UsgsApi(http), EmscLiveSource(http), dao, clock = { FAKE_CLOCK_MILLIS })
-        val homeViewModel = HomeViewModel(repository, HomeLocationStore(dao), LocationProvider(context), AlertRuleStore(dao))
-            .also { createdViewModels += it }
+        // Task 2 (Plan 4): clock pinned to this file's own FAKE_CLOCK_MILLIS — see HomeFlowTest.kt's
+        // identical fix for why HomeViewModel.init's new pruneOldRows() call needs a non-real clock
+        // in any test. This class never ingests a quake at all, so the risk is purely hygienic here
+        // (nothing for an unguarded real clock to prune), but keeping it consistent with every other
+        // HomeViewModel construction site in this codebase's test suites is worth one extra arg.
+        val homeViewModel = HomeViewModel(
+            repository, HomeLocationStore(dao), LocationProvider(context), AlertRuleStore(dao),
+            clock = { FAKE_CLOCK_MILLIS },
+        ).also { createdViewModels += it }
         val selectionViewModel = QuakeSelectionViewModel(repository, SavedStateHandle())
             .also { createdViewModels += it }
         return TestGraph(homeViewModel, selectionViewModel, OnboardingStore(dao))

@@ -20,6 +20,21 @@ data class PillStatus(val kind: Kind, val quake: Quake?) {
  * (via [HomeLocationStore]) has resolved a fix. Otherwise: the nearest quake within [radiusKm]
  * (inclusive), that occurred within [windowMs] of [nowMillis] (inclusive), at or above [minMag]
  * (inclusive) becomes an [PillStatus.Kind.ALERT]; if none qualify, [PillStatus.Kind.CALM].
+ *
+ * **M4 ruling (Task 2, Plan 4; plan-3-exit-conditions.md carried item), recorded here per that
+ * item's own request — do not re-litigate without a new decision:** this function is, and stays,
+ * **nearby-only**. It has no notion of [AlertRuleEngine.DEFAULT_RULES]'s independent "world" rule
+ * (M6.0+, unbounded radius, matches a major quake anywhere on Earth) — that rule already populates
+ * [QuakeRepository.alertEvents] today via [AlertRuleEngine.evaluate] with zero pill-visible effect,
+ * and this ruling makes that split deliberate rather than an oversight. The reconciliation Plan 3
+ * left open ("a third pill state for world-rule matches, or notifications scoped to near-rule
+ * only") resolves as: **notifications (Plan 4 Task 3) will consume [AlertRuleEngine]'s full rule
+ * set, world rule included — the pill stays exactly this narrow.** A user can therefore see a
+ * "calm" pill (nothing qualifies within [radiusKm]/[windowMs]/[minMag] of home) at the same moment
+ * a distant M6.5 has already fired a "world" [com.yugma.terrawatch.data.AlertEvent] and will, once
+ * Task 3 ships, raise a real notification — this is the intended vocabulary split, not a bug: the
+ * pill answers "should I be worried about MY area right now," notifications answer "did something
+ * globally significant just happen." See [AlertRuleEngine]'s own kdoc for the mirror of this note.
  */
 fun pillStatus(
     quakes: List<Quake>,

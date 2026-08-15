@@ -222,4 +222,70 @@ class InMemoryQuakeStoreTest {
 
         assertNull(InMemoryQuakeStore().strongest(sinceMillis = 0L))
     }
+
+    // --- Task 2 (Plan 4), M1 torn-write fix: metaPutAll -----------------------------------------
+
+    @Test fun `metaPutAll writes multiple pairs`() {
+        store.metaPutAll("k1" to "v1", "k2" to "v2")
+        assertEquals("v1", store.metaGet("k1"))
+        assertEquals("v2", store.metaGet("k2"))
+    }
+
+    @Test fun `metaPutAll overwrites existing keys`() {
+        store.metaPut("k1", "old")
+        store.metaPutAll("k1" to "new", "k2" to "v2")
+        assertEquals("new", store.metaGet("k1"))
+        assertEquals("v2", store.metaGet("k2"))
+    }
+
+    // --- Task 2 (Plan 4), F1 retention ruling: pruneOldRows -- mirrors QuakeDaoTest's own matrix
+    // exactly (same contract, other QuakeStore implementation) ------------------------------------
+
+    @Test fun `pruneOldRows deletes old feed and live rows`() {
+        store.replace(quake(id = "old-feed", timeMillis = 100), origin = "feed")
+        store.replace(quake(id = "old-live", timeMillis = 100), origin = "live")
+        store.pruneOldRows(cutoffMillis = 1000)
+        assertNull(store.byId("old-feed"))
+        assertNull(store.byId("old-live"))
+    }
+
+    @Test fun `pruneOldRows protects old archive rows`() {
+        store.replace(quake(id = "old-archive", timeMillis = 100), origin = "archive")
+        store.pruneOldRows(cutoffMillis = 1000)
+        assertNotNull(store.byId("old-archive"))
+    }
+
+    @Test fun `pruneOldRows protects old debug rows too`() {
+        store.replace(quake(id = "debug-old", timeMillis = 100), origin = "debug")
+        store.pruneOldRows(cutoffMillis = 1000)
+        assertNotNull(store.byId("debug-old"))
+    }
+
+    @Test fun `pruneOldRows protects young feed and live rows`() {
+        store.replace(quake(id = "young-feed", timeMillis = 2000), origin = "feed")
+        store.replace(quake(id = "young-live", timeMillis = 2000), origin = "live")
+        store.pruneOldRows(cutoffMillis = 1000)
+        assertNotNull(store.byId("young-feed"))
+        assertNotNull(store.byId("young-live"))
+    }
+
+    @Test fun `pruneOldRows cutoff comparison is strict less-than — a row exactly AT cutoff survives`() {
+        store.replace(quake(id = "at-cutoff", timeMillis = 1000), origin = "feed")
+        store.pruneOldRows(cutoffMillis = 1000)
+        assertNotNull(store.byId("at-cutoff"))
+    }
+
+    @Test fun `pruneOldRows on an empty store is a no-op`() {
+        InMemoryQuakeStore().pruneOldRows(cutoffMillis = 1000) // must not throw
+    }
+
+    @Test fun `pruneOldRows leaves non-expired rows of mixed origin untouched in one pass`() {
+        store.replace(quake(id = "old-feed", timeMillis = 100), origin = "feed")
+        store.replace(quake(id = "old-archive", timeMillis = 100), origin = "archive")
+        store.replace(quake(id = "young-live", timeMillis = 5000), origin = "live")
+        store.pruneOldRows(cutoffMillis = 1000)
+        assertNull(store.byId("old-feed"))
+        assertNotNull(store.byId("old-archive"))
+        assertNotNull(store.byId("young-live"))
+    }
 }

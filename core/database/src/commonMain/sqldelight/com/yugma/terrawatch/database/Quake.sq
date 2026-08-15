@@ -13,7 +13,34 @@ CREATE TABLE quake (
   sourcesJson TEXT NOT NULL,
   revisionsJson TEXT NOT NULL,
   updatedAtMillis INTEGER NOT NULL,
-  fetchedAtMillis INTEGER NOT NULL
+  fetchedAtMillis INTEGER NOT NULL,
+  -- Task 2 (Plan 4), F1 retention ruling (plan-3-exit-conditions.md): which write path produced
+  -- this row -- 'feed' (QuakeRepository.refreshFeed's poll), 'archive' (History's loadArchivePage
+  -- backfill -- MUST stay protected from pruneOldRows below, per that same F1 note: "History's
+  -- 'cached pages browse offline' contract implicitly wants old rows kept"), 'live' (the EMSC
+  -- WebSocket collector in startLive), or 'debug' (the long-press debug-inject hook -- already
+  -- swept separately and unconditionally by deleteByIdPrefix/purgeDebugQuakes, but also exempted
+  -- here so a debug row surviving between purges is never silently pruned as if it were real data).
+  -- DEFAULT 'feed' is a schema-level safety net only -- every real write path
+  -- (QuakeDao.replace/replaceAndDelete, via QuakeStore's own `origin` parameter) always passes an
+  -- explicit value; this is a full `INSERT OR REPLACE ... VALUES ?` row bind, not a partial
+  -- column-list insert SQLite's own DEFAULT clause could actually apply to.
+  --
+  -- Deliberately DB-layer-only, by controller decision: com.yugma.terrawatch.model.Quake (the
+  -- domain model DedupeEngine/AlertRuleEngine/every UI screen actually sees) gains NO `origin`
+  -- field of its own -- QuakeStore's write methods carry the value instead, and no read method
+  -- (byId/recent/pageBefore/pageBetween/strongest/...) ever surfaces it back out. Keeps this a
+  -- pure storage/retention concern, not a domain concept every consumer has to learn.
+  --
+  -- NO MIGRATION PATH for this column -- same accepted gap F2's own index addition already
+  -- documented at this table's CREATE INDEX statements below: DriverFactory.jvm.kt's
+  -- `!dbFile.exists()` gate and DriverFactory.android.kt's AndroidSqliteDriver (onCreate fires only
+  -- when the underlying db file is missing) both mean this column, like that index, only actually
+  -- lands on a BRAND-NEW db file. Any already-installed on-device db (including 98bc1cd8's own,
+  -- from earlier Plan 2/3/4 verification passes) has no `origin` column at all until that install
+  -- is uninstalled and reinstalled -- accepted pre-release, same reasoning F2 already accepted: no
+  -- shipped user base yet, so no real migration is being skipped for anyone.
+  origin TEXT NOT NULL DEFAULT 'feed'
 );
 
 CREATE TABLE meta (
@@ -70,6 +97,22 @@ DELETE FROM quake WHERE id = ?;
 deleteByIdPrefix:
 DELETE FROM quake WHERE id LIKE :prefix || '%';
 
+-- Task 2 (Plan 4), F1 retention ruling (plan-3-exit-conditions.md carried item): the retention
+-- policy that item flagged as needed but unfixed — keep feed/live rows for 30 days, called
+-- unconditionally from HomeViewModel.init (alongside purgeDebugQuakes) with cutoffMillis = now -
+-- 30d. 'archive' rows are exempt (History's own loadArchivePage kdoc: "cached pages browse
+-- offline" implicitly wants old rows kept indefinitely) and so are 'debug' rows (already purged
+-- separately, unconditionally, by deleteByIdPrefix — exempting them here too is redundant-but-
+-- harmless belt-and-suspenders, not load-bearing). `timeMillis < :cutoffMillis` is strict
+-- less-than, so a row exactly AT the cutoff survives this pass (QuakeDaoTest pins this boundary).
+pruneOldRows:
+DELETE FROM quake WHERE timeMillis < :cutoffMillis AND origin IN ('feed', 'live');
+
+-- Task 2 (Plan 4), M1 torn-write ruling (plan-3-exit-conditions.md carried item): backs both
+-- meta_put (a lone call) and QuakeDao.metaPutAll (several calls to this SAME statement, wrapped in
+-- one `Transacter.transaction {}` so HomeLocationStore's home_lat/home_lon pair commits together —
+-- no separate SQL needed for the "many" case, just this statement invoked more than once inside
+-- one transaction instead of each call committing independently).
 meta_get:
 SELECT value FROM meta WHERE key = ?;
 

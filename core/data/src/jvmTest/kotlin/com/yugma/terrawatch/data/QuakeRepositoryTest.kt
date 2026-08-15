@@ -398,12 +398,19 @@ class QuakeRepositoryTest {
         }
     }
 
-    // loadArchivePage deliberately stays unwired (see that function's own Task 7 kdoc) - proves the
-    // exclusion is real, not accidental: a store-configured radius that would exclude this quake
-    // from the "near" rule has no effect here, because loadArchivePage never reads the store at all.
-    @Test fun `loadArchivePage does not honor the store - it always uses DEFAULT_RULES`() = runTest {
+    // Task 2 (Plan 4), F5 guard (plan-3-exit-conditions.md carried item) — SUPERSEDES the old
+    // "loadArchivePage does not honor the store - it always uses DEFAULT_RULES" test that used to
+    // live here: that test asserted loadArchivePage's M6.5 fixture quake FIRED the "world" alert —
+    // exactly the hazard F5 flags ("the instant Plan 4 wires real notifications off alertEvents, a
+    // user deep-scrolling History past old M6+ quakes will notification-storm on events years
+    // old"). Now proves the opposite: archive ingestion emits NO alertEvents at all, for a quake
+    // that would otherwise trip both the "near" rule (store configured to a tiny 10km radius that
+    // still contains 0,0 relative to itself is irrelevant here) AND DEFAULT_RULES' "world" rule
+    // (minMag 6.0, unbounded) — proving `rules = emptyList()` really does suppress evaluation
+    // entirely, not just "unwired from the store" the way the superseded test only showed.
+    @Test fun `loadArchivePage never alerts, even for a world-rule-qualifying quake`() = runTest {
         val home = GeoPoint(12.9716, 77.5946)
-        val quakePoint = GeoPoint(0.0, 0.0) // far outside any "near" radius, well within "world" territory
+        val quakePoint = GeoPoint(0.0, 0.0) // far outside any "near" radius, well within old "world" territory
         val homeLocationStore = HomeLocationStore(dao).apply { set(home) }
         val alertRuleStore = AlertRuleStore(dao).apply { setNearbyRadius(10.0) }
         val engine = MockEngine {
@@ -419,12 +426,43 @@ class QuakeRepositoryTest {
         )
         r.alertEvents.test {
             r.loadArchivePage(beforeMillis = 2_000_000)
-            // DEFAULT_RULES' "world" rule (minMag 6.0, no radius) fires regardless of home/store -
-            // proving alerts were evaluated at all (not silently skipped) using the compile-time
-            // defaults, not the store.
-            assertEquals("world", awaitItem().matchedRuleId)
+            expectNoEvents()
             cancelAndIgnoreRemainingEvents()
         }
+    }
+
+    // Task 2 (Plan 4), origin tagging: loadArchivePage's rows must be tagged 'archive' — proven
+    // end-to-end via pruneOldRows' own exemption rather than a direct read (origin is deliberately
+    // DB-layer-only, no QuakeStore read method ever surfaces it — see QuakeStore's own kdoc), which
+    // is also exactly the real-world property that matters: an archive-backfilled row must survive
+    // retention even when it's decades old, while a feed-ingested row of the identical age must not.
+    @Test fun `pruneOldRows protects an archive-origin row but deletes a feed-origin row of the same age`() = runTest {
+        val oldTime = 1_000_000L // ancient relative to the cutoff below
+        val feedRepo = repoNoop(clockValue = 50_000_000_000L)
+        feedRepo.ingest(quake("feed1", Source.USGS, 5.0, t = oldTime))   // origin defaults "feed"
+
+        val archiveEngine = MockEngine {
+            respond(
+                oneFeatureGeoJson(id = "arch1", lat = 10.0, lon = 20.0, mag = 5.0, timeMillis = oldTime),
+                HttpStatusCode.OK,
+                headersOf(HttpHeaders.ContentType to listOf("application/json")),
+            )
+        }
+        // A second QuakeRepository sharing the SAME dao -- loadArchivePage's own network call needs
+        // a real 200 response (unlike feedRepo's always-404 MockEngine), but both writes must land
+        // in the one shared table this test asserts against.
+        val archiveRepo = QuakeRepository(
+            UsgsApi(HttpClient(archiveEngine)), EmscLiveSource(HttpClient(archiveEngine)), dao,
+            clock = { 50_000_000_000L },
+        )
+        archiveRepo.loadArchivePage(beforeMillis = oldTime + 1)
+        assertEquals(2, dao.countAll())
+
+        feedRepo.pruneOldRows(cutoffMillis = oldTime + 1)
+
+        assertEquals(1, dao.countAll())
+        assertNull(dao.byId("feed1"))
+        assertNotNull(dao.byId("arch1"))
     }
 
     private fun oneFeatureGeoJson(id: String, lat: Double, lon: Double, mag: Double, timeMillis: Long = 1_950_000L) = """

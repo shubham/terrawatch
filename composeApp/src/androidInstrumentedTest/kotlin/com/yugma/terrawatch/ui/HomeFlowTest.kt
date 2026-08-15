@@ -125,7 +125,16 @@ class HomeFlowTest {
         // exercise radius/minMag wiring (that's HomeViewModelTest's jvmTest job), only that
         // HomeViewModel still constructs and reaches Content/the offline banner end to end.
         val alertRuleStore = AlertRuleStore(QuakeDao(TerraWatchDb(freshDriver(context))))
-        return HomeViewModel(repository, homeLocationStore, LocationProvider(context), alertRuleStore)
+        // Task 2 (Plan 4): clock pinned to the same 2_000_000L every repository built in this file
+        // already uses — HomeViewModel.init's own retention pruneOldRows() call now runs
+        // unconditionally on construction, and an unguarded real-wall-clock default would judge the
+        // network-fetched fixture quake (timeMillis 1_950_000, see ONE_FEATURE_GEOJSON below) as
+        // decades-old the instant it lands, pruning it out from under
+        // homeScreen_movesFromLoadingToContentWithTheSeededQuake before the test's own
+        // waitUntil(...) ever observes it. See HomeViewModelTest.kt's jvmTest suite (createVm's own
+        // clock param) for the identical fix, with the fuller "confirmed by actually breaking every
+        // test first" rationale.
+        return HomeViewModel(repository, homeLocationStore, LocationProvider(context), alertRuleStore, clock = { 2_000_000L })
             .also { createdViewModels += it }
     }
 

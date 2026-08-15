@@ -1,5 +1,6 @@
 package com.yugma.terrawatch.database
 
+import app.cash.sqldelight.Query
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import app.cash.turbine.test
 import com.yugma.terrawatch.model.MagRevision
@@ -11,6 +12,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.BeforeTest
 
 class QuakeDaoTest {
@@ -302,5 +304,113 @@ class QuakeDaoTest {
             quake(id = "newer", updated = 1, mag = 7.0).copy(timeMillis = 2_000),
         ))
         assertEquals("newer", dao.strongest(sinceMillis = 0L)?.id)
+    }
+
+    // Task 2 (Plan 4), origin tagging -------------------------------------------------------------
+
+    @Test fun `replace writes the given origin, defaulting to feed when omitted`() {
+        dao.replace(quake(id = "a"))
+        assertEquals("feed", db.quakeQueries.byId("a").executeAsOne().origin)
+        dao.replace(quake(id = "b"), origin = "archive")
+        assertEquals("archive", db.quakeQueries.byId("b").executeAsOne().origin)
+    }
+
+    @Test fun `replaceAndDelete writes the given origin on the surviving canonical row`() {
+        dao.replace(quake(id = "old"), origin = "feed")
+        dao.replaceAndDelete(quake(id = "new", updated = 2000), deleteIds = listOf("old"), origin = "live")
+        assertEquals("live", db.quakeQueries.byId("new").executeAsOne().origin)
+    }
+
+    // Task 2 (Plan 4), M1 torn-write fix: metaPutAll -----------------------------------------------
+
+    @Test fun `metaPutAll writes multiple pairs`() {
+        dao.metaPutAll("k1" to "v1", "k2" to "v2")
+        assertEquals("v1", dao.metaGet("k1"))
+        assertEquals("v2", dao.metaGet("k2"))
+    }
+
+    @Test fun `metaPutAll overwrites existing keys`() {
+        dao.metaPut("k1", "old")
+        dao.metaPutAll("k1" to "new", "k2" to "v2")
+        assertEquals("new", dao.metaGet("k1"))
+        assertEquals("v2", dao.metaGet("k2"))
+    }
+
+    // Proves the ACTUAL fix (one transaction, not "call metaPut twice"): SQLDelight defers its
+    // invalidation notification until a transaction commits, so a listener on a query reading the
+    // `meta` table sees exactly one notification for this whole call — a naive "just call metaPut
+    // in a loop, no shared transaction" implementation would commit each pair independently and
+    // notify twice. Same technique `replaceAndDelete is atomic` above already uses (counting
+    // emissions instead of guessing at internal implementation), applied to the meta table instead
+    // of the quake table's own reactive recent() query.
+    @Test fun `metaPutAll commits both writes in a single transaction — one notification, not two`() {
+        var notifications = 0
+        val listener = object : Query.Listener {
+            override fun queryResultsChanged() { notifications++ }
+        }
+        val query = db.quakeQueries.meta_get("k1")
+        query.addListener(listener)
+        try {
+            dao.metaPutAll("k1" to "v1", "k2" to "v2")
+            assertEquals(1, notifications, "one transaction commit -> one notification, not one per meta_put call")
+        } finally {
+            query.removeListener(listener)
+        }
+        assertEquals("v1", dao.metaGet("k1"))
+        assertEquals("v2", dao.metaGet("k2"))
+    }
+
+    // Task 2 (Plan 4), F1 retention ruling: pruneOldRows --------------------------------------------
+    // TDD per the task brief: prune deletes old feed/live rows, PROTECTS archive rows + young rows.
+
+    @Test fun `pruneOldRows deletes old feed and live rows`() {
+        dao.replace(quake(id = "old-feed").copy(timeMillis = 100), origin = "feed")
+        dao.replace(quake(id = "old-live").copy(timeMillis = 100), origin = "live")
+        dao.pruneOldRows(cutoffMillis = 1000)
+        assertEquals(0, dao.countAll())
+    }
+
+    @Test fun `pruneOldRows protects old archive rows`() {
+        dao.replace(quake(id = "old-archive").copy(timeMillis = 100), origin = "archive")
+        dao.pruneOldRows(cutoffMillis = 1000)
+        assertEquals(1, dao.countAll())
+        assertNotNull(dao.byId("old-archive"))
+    }
+
+    // Debug rows are already swept separately/unconditionally by deleteByIdPrefix -- this pins that
+    // pruneOldRows ALSO leaves them alone rather than double-handling (or worse, mishandling) them.
+    @Test fun `pruneOldRows protects old debug rows too`() {
+        dao.replace(quake(id = "debug-old").copy(timeMillis = 100), origin = "debug")
+        dao.pruneOldRows(cutoffMillis = 1000)
+        assertEquals(1, dao.countAll())
+    }
+
+    @Test fun `pruneOldRows protects young feed and live rows`() {
+        dao.replace(quake(id = "young-feed").copy(timeMillis = 2000), origin = "feed")
+        dao.replace(quake(id = "young-live").copy(timeMillis = 2000), origin = "live")
+        dao.pruneOldRows(cutoffMillis = 1000)
+        assertEquals(2, dao.countAll())
+    }
+
+    @Test fun `pruneOldRows cutoff comparison is strict less-than — a row exactly AT cutoff survives`() {
+        dao.replace(quake(id = "at-cutoff").copy(timeMillis = 1000), origin = "feed")
+        dao.pruneOldRows(cutoffMillis = 1000)
+        assertEquals(1, dao.countAll())
+    }
+
+    @Test fun `pruneOldRows on an empty table is a no-op`() {
+        dao.pruneOldRows(cutoffMillis = 1000)
+        assertEquals(0, dao.countAll())
+    }
+
+    @Test fun `pruneOldRows leaves non-expired rows of mixed origin untouched in one pass`() {
+        dao.replace(quake(id = "old-feed").copy(timeMillis = 100), origin = "feed")
+        dao.replace(quake(id = "old-archive").copy(timeMillis = 100), origin = "archive")
+        dao.replace(quake(id = "young-live").copy(timeMillis = 5000), origin = "live")
+        dao.pruneOldRows(cutoffMillis = 1000)
+        assertEquals(2, dao.countAll())
+        assertNull(dao.byId("old-feed"))
+        assertNotNull(dao.byId("old-archive"))
+        assertNotNull(dao.byId("young-live"))
     }
 }

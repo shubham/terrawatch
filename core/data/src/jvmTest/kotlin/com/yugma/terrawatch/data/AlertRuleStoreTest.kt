@@ -123,4 +123,39 @@ class AlertRuleStoreTest {
         val secondInstance = AlertRuleStore(dao)
         assertEquals(700.0, secondInstance.nearbyRadiusKm.first())
     }
+
+    // --- Task 2 (Plan 4), M2 ruling: radius READ clamps to [50, 1000] -----------------------------
+    // (plan-3-exit-conditions.md carried item — "a corrupted row or any future non-slider caller
+    // round-trips an out-of-range value straight through to every reader ... with no validation").
+    // TDD per the task brief: corrupt/out-of-range -> clamped.
+
+    @Test fun `corrupt stored radius above the max clamps to 1000`() = runTest {
+        dao.metaPut("rule_radiuskm", "50000")
+        assertEquals(1000.0, store.nearbyRadiusKm.first())
+        assertEquals(AlertRuleStore.MAX_RADIUS_KM, store.nearbyRadiusKm.first())
+    }
+
+    @Test fun `corrupt stored radius below the min clamps to 50`() = runTest {
+        dao.metaPut("rule_radiuskm", "-5")
+        assertEquals(50.0, store.nearbyRadiusKm.first())
+        assertEquals(AlertRuleStore.MIN_RADIUS_KM, store.nearbyRadiusKm.first())
+    }
+
+    // Not just a parse-failure case: a value that parses FINE as a Double but sits outside the
+    // slider's own 50-1000 range (e.g. a future non-slider caller, or a stale value carried over
+    // from before this range existed) must be clamped too, not merely defaulted.
+    @Test fun `a well-formed but out-of-range radius written by a non-slider caller is clamped on read`() = runTest {
+        store.setNearbyRadius(2000.0) // bypasses the UI's own 50-1000 snap entirely
+        assertEquals(1000.0, store.nearbyRadiusKm.first())
+    }
+
+    @Test fun `currentRadiusKm sync escape hatch also clamps out-of-range values`() {
+        dao.metaPut("rule_radiuskm", "9999")
+        assertEquals(1000.0, store.currentRadiusKm())
+    }
+
+    @Test fun `a radius already within range round-trips unchanged, clamping is not lossy in the normal case`() = runTest {
+        store.setNearbyRadius(250.0)
+        assertEquals(250.0, store.nearbyRadiusKm.first())
+    }
 }
