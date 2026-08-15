@@ -3,14 +3,17 @@ package com.yugma.terrawatch.home
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yugma.terrawatch.data.AlertRuleStore
+import com.yugma.terrawatch.data.FavoritePlaceStore
 import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.data.QuakeRepository
 import com.yugma.terrawatch.data.RefreshStatus
+import com.yugma.terrawatch.database.InMemoryQuakeStore
 import com.yugma.terrawatch.location.LocationAskUiState
 import com.yugma.terrawatch.location.LocationProvider
 import com.yugma.terrawatch.location.LocationRequester
 import com.yugma.terrawatch.location.reduceLocationPermissionState
 import com.yugma.terrawatch.map.QuakePin
+import com.yugma.terrawatch.model.FavoritePlace
 import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.model.MagRevision
 import com.yugma.terrawatch.model.Quake
@@ -98,6 +101,17 @@ class HomeViewModel(
     // either; it simply keeps falling through to this default, exactly like it already does for
     // [clock].
     private val locationRequester: LocationRequester = LocationRequester(),
+    // Task 2 (Plan 5): appended as an 8th, DEFAULTED param — same "doesn't disturb any existing
+    // positional construction" reasoning [clock]/[locationRequester] already established above.
+    // Unlike [locationRequester] (a real, uniform-across-targets no-arg constructor), there is no
+    // equivalent no-arg [FavoritePlaceStore] — its own constructor always needs a [QuakeStore]
+    // [com.yugma.terrawatch.database.QuakeStore]. [InMemoryQuakeStore] (core:database, commonMain,
+    // pure Kotlin — no SqlDriver needed) is what makes a REAL, working default possible here
+    // regardless of target: a genuinely functioning, empty [FavoritePlaceStore], not a mock — same
+    // spirit as [locationRequester]'s own default, just backed by a throwaway in-memory map instead
+    // of the real persisted store production Koin wiring always supplies explicitly (`AppModule.kt`'s
+    // `favoritePlaceStore = get()`).
+    private val favoritePlaceStore: FavoritePlaceStore = FavoritePlaceStore(InMemoryQuakeStore()),
 ) : ViewModel() {
     private val _state = MutableStateFlow<HomeUiState>(HomeUiState.Loading)
     val state: StateFlow<HomeUiState> = _state
@@ -139,6 +153,24 @@ class HomeViewModel(
     // that caused it must never re-show the same snackbar.
     private val _locationUnavailableEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val locationUnavailableEvents: SharedFlow<Unit> = _locationUnavailableEvents
+
+    // Task 2 (Plan 5): the Home quick-switch chip row — mirrored live from [FavoritePlaceStore],
+    // same "MutableStateFlow seeded empty, then updated by a live collector in init{}" shape
+    // [homeLocation]/[nearbyRadiusKm] already use for their own store-backed values.
+    private val _favorites = MutableStateFlow<List<FavoritePlace>>(emptyList())
+    val favorites: StateFlow<List<FavoritePlace>> = _favorites
+
+    // Task 2 (Plan 5): the quick-switch chips' own session-only pill-target override — `null` means
+    // "home is the pill's reference point" (the default, and the ONLY persisted binding: neither
+    // this field nor [focusFavorite]/[focusHome] below ever write [homeLocationStore]). A non-null
+    // value is a favorite's [GeoPoint], set by [focusFavorite] and cleared back to `null` by
+    // [focusHome] — plain in-memory ViewModel state, gone the moment this ViewModel is (process
+    // death, not persisted anywhere), exactly matching this task's own dispatch: "pill primary
+    // binding stays home; session swap = ViewModel state, not persisted." `HomeScreen`'s own
+    // `pillStatus(...)` call sites read `focusTarget ?: homeLocation` instead of `homeLocation`
+    // directly — see that composable's own kdoc note at those call sites.
+    private val _focusTarget = MutableStateFlow<GeoPoint?>(null)
+    val focusTarget: StateFlow<GeoPoint?> = _focusTarget
 
     // Task 7 (Plan 3), USER REQUIREMENT: the pill's radius/minMag are now user-settable (Settings
     // screen slider -> AlertRuleStore) - every real pillStatus() call site (HomeScreen) threads that
@@ -338,6 +370,15 @@ class HomeViewModel(
             alertRuleStore.minMag.collect { minMag -> _minMag.value = minMag }
         }
 
+        // Task 2 (Plan 5): the quick-switch chip row — FavoritePlaceStore.favorites is itself a
+        // reactive Flow (SQLDelight's own asFlow()/InMemoryQuakeStore's MutableStateFlow, see
+        // QuakeStore.favoritePlaces' own kdoc), so a plain collect{} is all this needs: no separate
+        // one-shot initial read, same reasoning the nearbyRadiusKm/minMag collectors just above
+        // already give for AlertRuleStore's identically-shaped Flows.
+        viewModelScope.launch {
+            favoritePlaceStore.favorites.collect { places -> _favorites.value = places }
+        }
+
         // The cache-driven state loop. Starts collecting immediately — does NOT wait on the
         // refresh-loop launch above (see its comment).
         viewModelScope.launch {
@@ -516,6 +557,33 @@ class HomeViewModel(
             val fix = locationProvider.current()
             if (fix != null) _recenterTarget.value = fix else _locationUnavailableEvents.emit(Unit)
         }
+    }
+
+    /**
+     * Task 2 (Plan 5), USER REQUIREMENT: a Home quick-switch chip tap on a FAVORITE — flies the
+     * camera there (reuses [recenterTarget], same one-shot "consume once" contract
+     * [recenterToCurrentLocation]'s own fixes already establish for that flow — `QuakeMap`'s
+     * existing `recenterTarget`/`onRecenterApplied` wiring needs no change at all) AND swaps the
+     * pill's own reference point to [point] for the rest of this session ([focusTarget]).
+     *
+     * Deliberately never touches [homeLocationStore]/[_homeLocation] — see [focusTarget]'s own kdoc
+     * for the "session swap = ViewModel state, not persisted" ruling this method exists to honor.
+     */
+    fun focusFavorite(point: GeoPoint) {
+        _recenterTarget.value = point
+        _focusTarget.value = point
+    }
+
+    /**
+     * Task 2 (Plan 5): the Home quick-switch chip row's "Home" chip — flies the camera back to
+     * whatever [homeLocation] currently resolves to (a no-op camera move, not a crash, when home
+     * itself isn't resolved yet — `null.let{}` below simply skips setting [recenterTarget] in that
+     * case) and clears [focusTarget] back to `null`, restoring the pill's default home-relative
+     * reading.
+     */
+    fun focusHome() {
+        homeLocation.value?.let { home -> _recenterTarget.value = home }
+        _focusTarget.value = null
     }
 
     /**

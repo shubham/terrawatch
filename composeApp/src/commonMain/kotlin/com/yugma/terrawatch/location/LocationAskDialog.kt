@@ -1,6 +1,7 @@
 package com.yugma.terrawatch.location
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -14,11 +15,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.model.GeoPoint
+import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 
 /** One of [PRESET_CITIES]' entries — a name paired with the coordinates [CityPickerDialog] writes
@@ -110,35 +113,61 @@ fun LocationAskDialog(onDismiss: () -> Unit) {
 
 /**
  * The manual location picker — reused directly by [LocationAskDialog]'s "Choose city" button today,
- * and named as the reuse target for Settings' saved-place row later (Plan 3 Task 7's own brief:
- * "tap → CityPicker/location flow from Task 2"). Public and self-contained — writes
- * [HomeLocationStore] itself via Koin rather than threading a callback back up — for exactly that
- * future reuse.
+ * and (Task 2, Plan 5) by Settings' "Add place" row for the favorites list, via [onCityPicked].
+ * Public and self-contained — writes [HomeLocationStore] itself via Koin rather than threading a
+ * callback back up for the DEFAULT (home-change) path — for exactly the reuse [PlaceRow][com.yugma.
+ * terrawatch.settings.PlaceRow]'s own "Change" button already exercises.
  *
- * [com.yugma.terrawatch.home.HomeViewModel.homeLocation] picks up the write via
- * [HomeLocationStore.updates] (this task's other half) — this composable's only job is the
+ * [com.yugma.terrawatch.home.HomeViewModel.homeLocation] picks up the default path's write via
+ * [HomeLocationStore.updates] (this task's other half) — this composable's only job there is the
  * tap-to-write-and-dismiss itself, not telling anyone about it directly.
+ *
+ * Task 2 (Plan 5): [onCityPicked], when non-null, is called INSTEAD of the default
+ * `store.set(...)` write — every existing call site (this file's own [LocationAskDialog], Settings'
+ * "Change" home row) omits it and keeps its exact pre-existing behavior unchanged. Settings' "Add
+ * place" row passes a non-null one that adds a NEW favorite instead of overwriting home. [onDismiss]
+ * still fires either way — picking a place (a preset tap, or a resolved "Use my location" fix) always
+ * closes this dialog, regardless of which path handled the pick.
+ *
+ * The "Use my location" row ([UseMyLocationRow]) only renders when [onCityPicked] is non-null AND
+ * [canRequestLocation] is true (android only) — the default home-"Change" path already has its OWN
+ * dedicated "Use my location" entry point (`SettingsScreen.kt`'s `UseMyLocationAction`, next to the
+ * "Change" button itself), so adding a second one here for that same path would be a redundant,
+ * confusing second affordance for the identical action; the favorites "Add place" path has no
+ * existing equivalent, which is exactly the gap this row closes, per this task's own dispatch
+ * ("'Add place' → CityPickerDialog reuse + 'Use my location' option").
  */
 @Composable
-fun CityPickerDialog(onDismiss: () -> Unit) {
+fun CityPickerDialog(onDismiss: () -> Unit, onCityPicked: ((PresetCity) -> Unit)? = null) {
     val store = koinInject<HomeLocationStore>()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Choose a city") },
         text = {
-            LazyColumn(modifier = Modifier.height(CITY_LIST_HEIGHT)) {
-                items(PRESET_CITIES, key = { it.name }) { city ->
-                    Text(
-                        text = city.name,
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                store.set(city.point)
-                                onDismiss()
-                            }
-                            .padding(vertical = 12.dp),
+            Column {
+                if (onCityPicked != null && canRequestLocation()) {
+                    UseMyLocationRow(
+                        onPicked = { fix ->
+                            onCityPicked(PresetCity(CURRENT_LOCATION_LABEL, fix))
+                            onDismiss()
+                        },
+                        modifier = Modifier.padding(bottom = 8.dp),
                     )
+                }
+                LazyColumn(modifier = Modifier.height(CITY_LIST_HEIGHT)) {
+                    items(PRESET_CITIES, key = { it.name }) { city ->
+                        Text(
+                            text = city.name,
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    if (onCityPicked != null) onCityPicked(city) else store.set(city.point)
+                                    onDismiss()
+                                }
+                                .padding(vertical = 12.dp),
+                        )
+                    }
                 }
             }
         },
@@ -146,4 +175,85 @@ fun CityPickerDialog(onDismiss: () -> Unit) {
             TextButton(onClick = onDismiss) { Text("Cancel") }
         },
     )
+}
+
+/** [CityPickerDialog]'s synthesized label for a resolved "Use my location" fix — a fixed,
+ * point-in-time coordinate snapshot, not a live-tracking favorite, so "Current location" (not "My
+ * location", which would misleadingly suggest it stays up to date as the device moves) is the
+ * honest description added to the favorites list. `internal` so a future device-verification pass
+ * can pin it without a Compose runtime. */
+internal const val CURRENT_LOCATION_LABEL = "Current location"
+
+/**
+ * Task 2 (Plan 5): the add-favorite reuse's own "Use my location" row — mirrors `SettingsScreen.kt`'s
+ * `UseMyLocationAction` GRANTED/CAN_ASK/NEEDS_SETTINGS state machine (same [rememberLocationCondition]/
+ * [reduceLocationPermissionState] pair, same rationale-then-ask shape for [LocationAskUiState.CAN_ASK])
+ * rather than reusing that `private` composable directly — it writes [HomeLocationStore] unconditionally,
+ * where this needs to hand a resolved [GeoPoint] to [onPicked] instead (this dialog's own add-favorite
+ * caller, not home). GRANTED taps resolve a fresh [LocationProvider.current] fix — `null` (no fix
+ * cached, e.g. an emulator with no location provider enabled) shows a brief inline "Location
+ * unavailable" line rather than silently doing nothing.
+ */
+@Composable
+private fun UseMyLocationRow(onPicked: (GeoPoint) -> Unit, modifier: Modifier = Modifier) {
+    val locationRequester = koinInject<LocationRequester>()
+    val locationProvider = koinInject<LocationProvider>()
+    val condition = rememberLocationCondition(locationRequester)
+    var showRationale by remember { mutableStateOf(false) }
+    var unavailable by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    Column(modifier) {
+        when (reduceLocationPermissionState(condition)) {
+            LocationAskUiState.GRANTED -> {
+                TextButton(
+                    onClick = {
+                        unavailable = false
+                        scope.launch {
+                            val fix = locationProvider.current()
+                            if (fix != null) onPicked(fix) else unavailable = true
+                        }
+                    },
+                ) { Text("Use my location") }
+                if (unavailable) {
+                    Text(
+                        text = "Location unavailable",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            LocationAskUiState.CAN_ASK -> {
+                if (showRationale) {
+                    Text(
+                        text = "TerraWatch only uses your location to compare it against nearby " +
+                            "earthquakes — it never leaves this device.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    TextButton(onClick = { showRationale = false; locationRequester.request() }) {
+                        Text("Continue")
+                    }
+                } else {
+                    TextButton(
+                        onClick = {
+                            if (locationRequester.shouldShowRationale()) {
+                                showRationale = true
+                            } else {
+                                locationRequester.request()
+                            }
+                        },
+                    ) { Text("Use my location") }
+                }
+            }
+            LocationAskUiState.NEEDS_SETTINGS -> {
+                Text(
+                    text = "Location is off — enable it in system Settings.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(onClick = { locationRequester.openSettings() }) { Text("Open Settings") }
+            }
+        }
+    }
 }

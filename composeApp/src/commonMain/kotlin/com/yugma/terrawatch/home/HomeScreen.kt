@@ -1,6 +1,8 @@
 package com.yugma.terrawatch.home
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -16,10 +18,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.BottomSheetScaffold
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SheetValue
 import androidx.compose.material3.SnackbarHost
@@ -60,6 +64,7 @@ import com.yugma.terrawatch.location.LocationRequester
 import com.yugma.terrawatch.location.reduceLocationPermissionState
 import com.yugma.terrawatch.location.rememberLocationCondition
 import com.yugma.terrawatch.map.QuakeMap
+import com.yugma.terrawatch.model.FavoritePlace
 import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.model.haversineKm
 import com.yugma.terrawatch.motion.LocalReducedMotion
@@ -221,6 +226,16 @@ fun HomeScreen(
     // TwoPaneLayout below, whose QuakeMap call sites actually apply them.
     val startupCameraTarget by viewModel.startupCameraTarget.collectAsState()
     val recenterTarget by viewModel.recenterTarget.collectAsState()
+    // Task 2 (Plan 5): the quick-switch chip row (Home + favorites) and its own session-only pill
+    // override — see PlaceQuickSwitchChips' own kdoc for the chips themselves, and
+    // HomeViewModel.focusTarget's kdoc for the "session swap = ViewModel state, not persisted"
+    // ruling this pair implements. pillFocusPoint (below) is what both PhoneLayout/TwoPaneLayout's
+    // pillStatus() calls read INSTEAD of homeLocation directly — QuakeMap's own homeLocation/ring
+    // stays bound to the real, persisted home unconditionally (the ring's whole meaning is "home's
+    // radius"; only the pill's verdict is meant to preview a different place for the session).
+    val favorites by viewModel.favorites.collectAsState()
+    val focusTarget by viewModel.focusTarget.collectAsState()
+    val pillFocusPoint = focusTarget ?: homeLocation
     // Task 1 (Plan 5): the FAB's own live visibility gate — "visible only when permission granted"
     // (the brief's own words), reactive to a grant/revoke made in system Settings while this app
     // was merely paused (rememberLocationCondition's own ON_RESUME re-check — same helper
@@ -290,6 +305,7 @@ fun HomeScreen(
             TwoPaneLayout(
                 state = state,
                 homeLocation = homeLocation,
+                pillFocusPoint = pillFocusPoint,
                 nowMillis = nowMillis,
                 newQuakeId = newQuakeId,
                 nearbyRadiusKm = nearbyRadiusKm,
@@ -300,11 +316,14 @@ fun HomeScreen(
                 startupCameraTarget = startupCameraTarget,
                 recenterTarget = recenterTarget,
                 locationPermissionGranted = locationPermissionGranted,
+                favorites = favorites,
+                focusTarget = focusTarget,
             )
         } else {
             PhoneLayout(
                 state = state,
                 homeLocation = homeLocation,
+                pillFocusPoint = pillFocusPoint,
                 newSinceExpand = newSinceExpand,
                 nowMillis = nowMillis,
                 newQuakeId = newQuakeId,
@@ -317,6 +336,8 @@ fun HomeScreen(
                 startupCameraTarget = startupCameraTarget,
                 recenterTarget = recenterTarget,
                 locationPermissionGranted = locationPermissionGranted,
+                favorites = favorites,
+                focusTarget = focusTarget,
             )
         }
         // Task 4 (Plan 3): the settings entry point — a glass chip floating top-right, above
@@ -391,6 +412,10 @@ fun HomeScreen(
 private fun PhoneLayout(
     state: HomeUiState,
     homeLocation: GeoPoint?,
+    // Task 2 (Plan 5): the pill's own reference point — HomeScreen's `focusTarget ?: homeLocation`;
+    // see this file's own kdoc note at that computation for why [homeLocation] itself (fed to
+    // QuakeMap's ring below, unchanged) stays separate from this.
+    pillFocusPoint: GeoPoint?,
     newSinceExpand: Int,
     nowMillis: Long,
     newQuakeId: String?,
@@ -403,6 +428,9 @@ private fun PhoneLayout(
     startupCameraTarget: GeoPoint?,
     recenterTarget: GeoPoint?,
     locationPermissionGranted: Boolean,
+    // Task 2 (Plan 5): the quick-switch chip row's own data — see PlaceQuickSwitchChips' own kdoc.
+    favorites: List<FavoritePlace>,
+    focusTarget: GeoPoint?,
 ) {
     val content = state as? HomeUiState.Content
     // Task 10 (item e): the banner's freshness-only verdict — see shouldShowStalenessBanner's own
@@ -480,7 +508,10 @@ private fun PhoneLayout(
                     // than pillStatus()'s own default parameters (Fix Round 1, entangled minor:
                     // radiusKm's default itself now reads AlertRuleStore.DEFAULT_RADIUS_KM, not an
                     // independent hardcoded 500.0 - see PillStatus.kt).
-                    val pill = pillStatus(s.quakes, homeLocation, nowMillis, radiusKm = nearbyRadiusKm, minMag = minMag)
+                    // Task 2 (Plan 5): pillFocusPoint, not homeLocation directly — a quick-switch
+                    // chip tap swaps this to a favorite's point for the session (see this file's own
+                    // kdoc note at HomeScreen's pillFocusPoint computation).
+                    val pill = pillStatus(s.quakes, pillFocusPoint, nowMillis, radiusKm = nearbyRadiusKm, minMag = minMag)
                     Column(
                         modifier = Modifier
                             .align(Alignment.TopCenter)
@@ -532,6 +563,25 @@ private fun PhoneLayout(
                         .padding(bottom = sheetPeekHeight + MY_LOCATION_FAB_MARGIN, end = MY_LOCATION_FAB_MARGIN),
                 )
             }
+            // Task 2 (Plan 5), USER REQUIREMENT: the Home quick-switch chip row — "above sheet
+            // peek" (this task's own brief, same literal clearance [MyLocationFab] already uses),
+            // BottomStart so it can never collide with the FAB's own BottomEnd corner (the brief's
+            // other explicit ask: "keep chips out of the way of MyLocationFab") — its own end padding
+            // additionally reserves that corner's full footprint, not just the alignment side, so an
+            // unusually long scrolled-to-the-end chip can't visually run into the FAB either.
+            PlaceQuickSwitchChips(
+                favorites = favorites,
+                focusTarget = focusTarget,
+                onSelectHome = viewModel::focusHome,
+                onSelectFavorite = { point -> viewModel.focusFavorite(point) },
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(
+                        bottom = sheetPeekHeight + MY_LOCATION_FAB_MARGIN,
+                        start = MY_LOCATION_FAB_MARGIN,
+                        end = MY_LOCATION_FAB_SIZE + MY_LOCATION_FAB_MARGIN * 2,
+                    ),
+            )
         }
     }
 }
@@ -564,6 +614,8 @@ private fun PhoneLayout(
 private fun TwoPaneLayout(
     state: HomeUiState,
     homeLocation: GeoPoint?,
+    // Task 2 (Plan 5): see PhoneLayout's own identical parameter kdoc.
+    pillFocusPoint: GeoPoint?,
     nowMillis: Long,
     newQuakeId: String?,
     nearbyRadiusKm: Double,
@@ -574,6 +626,8 @@ private fun TwoPaneLayout(
     startupCameraTarget: GeoPoint?,
     recenterTarget: GeoPoint?,
     locationPermissionGranted: Boolean,
+    favorites: List<FavoritePlace>,
+    focusTarget: GeoPoint?,
 ) {
     val content = state as? HomeUiState.Content
     // Task 10 (item e): same banner freshness-only verdict PhoneLayout computes - see
@@ -617,6 +671,22 @@ private fun TwoPaneLayout(
                         .padding(MY_LOCATION_FAB_MARGIN),
                 )
             }
+            // Task 2 (Plan 5): same chip row as PhoneLayout, simpler clearance — no sheet-peek
+            // concept in this layout (see this function's own kdoc), a plain bottom margin plus the
+            // FAB's own end-side reservation is enough.
+            PlaceQuickSwitchChips(
+                favorites = favorites,
+                focusTarget = focusTarget,
+                onSelectHome = viewModel::focusHome,
+                onSelectFavorite = { point -> viewModel.focusFavorite(point) },
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(
+                        bottom = MY_LOCATION_FAB_MARGIN,
+                        start = MY_LOCATION_FAB_MARGIN,
+                        end = MY_LOCATION_FAB_SIZE + MY_LOCATION_FAB_MARGIN * 2,
+                    ),
+            )
         }
         Column(
             modifier = Modifier
@@ -628,7 +698,9 @@ private fun TwoPaneLayout(
             // empty/Loading pill would have to either lie ("all calm") or invent a fourth,
             // not-yet-loaded PillStatus.Kind, neither of which this task's brief asked for.
             if (state is HomeUiState.Content) {
-                val pill = pillStatus(state.quakes, homeLocation, nowMillis, radiusKm = nearbyRadiusKm, minMag = minMag)
+                // Task 2 (Plan 5): pillFocusPoint, not homeLocation directly — see PhoneLayout's own
+                // identical comment at its pillStatus() call.
+                val pill = pillStatus(state.quakes, pillFocusPoint, nowMillis, radiusKm = nearbyRadiusKm, minMag = minMag)
                 Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
                     StatusShield(
                         status = pill,
@@ -949,5 +1021,52 @@ private fun MyLocationGlyph(tint: Color, modifier: Modifier = Modifier) {
 
         drawCircle(color = tint, radius = ringRadius, center = center, style = Stroke(width = strokeWidth))
         drawCircle(color = tint, radius = dotRadius, center = center)
+    }
+}
+
+/**
+ * Task 2 (Plan 5), USER REQUIREMENT: the Home quick-switch chip row — "Home" plus one [FilterChip]
+ * per favorite, horizontally scrollable (same idiom `HistoryScreen.HistoryFilterChips`/
+ * `InsightsScreen`'s own period selector already establish for a small set of mutually-exclusive
+ * options — a `Row` + `horizontalScroll` + [FilterChip], not a custom segmented control, matching
+ * this app's existing control idiom rather than inventing a new one). Tapping "Home" calls
+ * [onSelectHome] ([HomeViewModel.focusHome]); tapping a favorite calls [onSelectFavorite] with its
+ * own [com.yugma.terrawatch.model.GeoPoint] ([HomeViewModel.focusFavorite]) — both fly the camera
+ * AND swap the pill's session-only reference point, per [focusTarget]'s own kdoc
+ * ([HomeViewModel.focusTarget]).
+ *
+ * Rendered ONLY when [favorites] is non-empty — a lone "Home" chip with nothing else to switch to
+ * is pure clutter over the map for the common zero-favorites case (every user before this task ever
+ * ships, and every user who simply never adds one), not a real quick-switch affordance yet.
+ *
+ * [selected] is derived structurally, not by [GeoPoint] equality: "Home" is selected exactly when
+ * [focusTarget] is `null` (see that field's own kdoc — `null` IS "home is focused", not "unknown");
+ * a favorite chip is selected when [focusTarget] equals ITS OWN point. Two favorites that happen to
+ * share identical coordinates (an unlikely but possible manual entry) would both read as selected
+ * together in that edge case — accepted, since [FavoritePlace.point] (not a numeric id) is the only
+ * signal [HomeViewModel.focusTarget] itself carries, by deliberate design (see that field's kdoc for
+ * why: the pill only ever needs a point to compare against, not which favorite row produced it).
+ */
+@Composable
+private fun PlaceQuickSwitchChips(
+    favorites: List<FavoritePlace>,
+    focusTarget: GeoPoint?,
+    onSelectHome: () -> Unit,
+    onSelectFavorite: (GeoPoint) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (favorites.isEmpty()) return
+    Row(
+        modifier = modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        FilterChip(selected = focusTarget == null, onClick = onSelectHome, label = { Text("Home") })
+        favorites.forEach { favorite ->
+            FilterChip(
+                selected = focusTarget == favorite.point,
+                onClick = { onSelectFavorite(favorite.point) },
+                label = { Text(favorite.label) },
+            )
+        }
     }
 }

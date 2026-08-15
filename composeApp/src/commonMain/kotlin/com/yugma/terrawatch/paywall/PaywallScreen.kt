@@ -143,13 +143,21 @@ private fun BackChevronGlyph(tint: Color, modifier: Modifier = Modifier) {
     }
 }
 
-/** Spec §8's own 3-item Plus benefits list: ad removal (live), plus features under development.
- * Items 2–3 marked "(coming soon)" per Task 7 fix round honesty audit. `internal` so
+/** Spec §8's own 3-item Plus benefits list: ad removal (live), favorite places (live as of Task 2,
+ * Plan 5 — see below), custom alert rules still under development. `internal` so
  * [PaywallScreenTest][com.yugma.terrawatch.paywall.PaywallScreenTest] can pin the exact copy
- * without a Compose runtime. */
+ * without a Compose runtime.
+ *
+ * Task 2 (Plan 5): "Unlimited saved places (coming soon)" -> "Unlimited favorite places" — the
+ * FIRST REAL Plus gate ([com.yugma.terrawatch.monetization.canAddFavorite], wired into Settings'
+ * "Add place" row: free tier = home + 1 favorite, Plus = unlimited) ships this task, so this item is
+ * no longer a promise. Per this task's own dispatch ("drop '(coming soon)' from that item ONLY"),
+ * item 3 keeps its Task 7 fix-round honesty-audit wording verbatim — custom alert rules are still
+ * not built.
+ */
 internal val PLUS_BENEFITS = listOf(
     "Remove ads",
-    "Unlimited saved places (coming soon)",
+    "Unlimited favorite places",
     "Custom alert rules (coming soon)",
 )
 

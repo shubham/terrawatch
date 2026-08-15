@@ -6,11 +6,13 @@ import androidx.lifecycle.viewModelScope
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import app.cash.turbine.test
 import com.yugma.terrawatch.data.AlertRuleStore
+import com.yugma.terrawatch.data.FavoritePlaceStore
 import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.data.ThemeSetting
 import com.yugma.terrawatch.data.ThemeStore
 import com.yugma.terrawatch.database.QuakeDao
 import com.yugma.terrawatch.database.TerraWatchDb
+import com.yugma.terrawatch.model.FavoriteAlertType
 import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.monetization.AlwaysFreeEntitlements
 import com.yugma.terrawatch.monetization.EntitlementsProvider
@@ -42,8 +44,11 @@ class SettingsViewModelTest {
         // entitlements) keeps compiling and passing unchanged — same "add a new store, default it"
         // shape this helper's own 3 pre-existing params already established.
         entitlementsProvider: EntitlementsProvider = AlwaysFreeEntitlements,
+        // Task 2 (Plan 5): same "add a new store, default it" shape as entitlementsProvider just
+        // above, for the new favorites section.
+        favoritePlaceStore: FavoritePlaceStore = FavoritePlaceStore(freshDao()),
     ): SettingsViewModel =
-        SettingsViewModel(alertRuleStore, themeStore, homeLocationStore, entitlementsProvider)
+        SettingsViewModel(alertRuleStore, themeStore, homeLocationStore, entitlementsProvider, favoritePlaceStore)
             .also { createdViewModels += it }
 
     private fun freshDao(): QuakeDao {
@@ -187,5 +192,101 @@ class SettingsViewModelTest {
         fun setPlusActive(value: Boolean) {
             _isPlusActive.value = value
         }
+    }
+
+    // --- Task 2 (Plan 5): favorites CRUD + the FIRST REAL Plus gate -------------------------------
+
+    @Test fun `favorites starts empty when the store has none`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val vm = createVm()
+        vm.favorites.test {
+            assertEquals(emptyList(), awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `favorites reacts to a store update landing mid-session`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val favoritePlaceStore = FavoritePlaceStore(freshDao())
+        val vm = createVm(favoritePlaceStore = favoritePlaceStore)
+        vm.favorites.test {
+            assertEquals(emptyList(), awaitItem())
+            favoritePlaceStore.add("Tokyo", GeoPoint(35.6762, 139.6503))
+            assertEquals(listOf("Tokyo"), awaitItem().map { it.label })
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `addFavorite writes through to the store, reaching favorites`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val vm = createVm()
+        vm.favorites.test {
+            assertEquals(emptyList(), awaitItem())
+            vm.addFavorite("Delhi", GeoPoint(28.6139, 77.2090))
+            assertEquals(listOf("Delhi"), awaitItem().map { it.label })
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `removeFavorite writes through to the store, reaching favorites`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val favoritePlaceStore = FavoritePlaceStore(freshDao())
+        val vm = createVm(favoritePlaceStore = favoritePlaceStore)
+        vm.favorites.test {
+            assertEquals(emptyList(), awaitItem())
+            vm.addFavorite("Mumbai", GeoPoint(19.0760, 72.8777))
+            val added = awaitItem().single()
+            vm.removeFavorite(added.id)
+            assertEquals(emptyList(), awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `setFavoriteAlertType writes through to the store, reaching favorites`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val vm = createVm()
+        vm.favorites.test {
+            assertEquals(emptyList(), awaitItem())
+            vm.addFavorite("Mumbai", GeoPoint(19.0760, 72.8777))
+            val added = awaitItem().single()
+            vm.setFavoriteAlertType(added.id, FavoriteAlertType.OFF)
+            assertEquals(FavoriteAlertType.OFF, awaitItem().single().alertType)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `canAddFavorite is true on the free tier with zero favorites`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val vm = createVm()
+        vm.favorites.test {
+            awaitItem()
+            cancelAndIgnoreRemainingEvents()
+        }
+        assertEquals(true, vm.canAddFavorite())
+    }
+
+    @Test fun `canAddFavorite is false on the free tier once one favorite already exists`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val vm = createVm()
+        vm.favorites.test {
+            awaitItem()
+            vm.addFavorite("Mumbai", GeoPoint(19.0760, 72.8777))
+            awaitItem()
+            cancelAndIgnoreRemainingEvents()
+        }
+        assertEquals(false, vm.canAddFavorite())
+    }
+
+    @Test fun `canAddFavorite is true regardless of count when Plus is active`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val fakeProvider = FakeEntitlementsProvider().apply { setPlusActive(true) }
+        val vm = createVm(entitlementsProvider = fakeProvider)
+        vm.favorites.test {
+            awaitItem()
+            vm.addFavorite("Mumbai", GeoPoint(19.0760, 72.8777))
+            awaitItem()
+            cancelAndIgnoreRemainingEvents()
+        }
+        assertEquals(true, vm.canAddFavorite())
     }
 }

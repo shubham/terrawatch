@@ -1,17 +1,21 @@
 package com.yugma.terrawatch.database
 
 import app.cash.turbine.test
+import com.yugma.terrawatch.model.FavoriteAlertType
+import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.model.MagRevision
 import com.yugma.terrawatch.model.MagnitudeBand
 import com.yugma.terrawatch.model.Quake
 import com.yugma.terrawatch.model.QuakeStatus
 import com.yugma.terrawatch.model.Source
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /**
  * Task 9 (Plan 3): [InMemoryQuakeStore]'s contract tests — the SAME core scenarios
@@ -375,5 +379,66 @@ class InMemoryQuakeStoreTest {
         val result = clockedStore.newSince(sinceMillis = 1000)
         assertEquals(listOf("revised"), result.map { it.id })
         assertEquals(6.2, result.single().mag)
+    }
+
+    // --- Task 2 (Plan 5): favorite_place CRUD -- mirrors QuakeDaoTest's own favoritePlaces section ---
+
+    @Test fun `favoritePlaces on an empty store emits an empty list`() = runTest {
+        assertEquals(emptyList(), store.favoritePlaces().first())
+    }
+
+    @Test fun `insertFavoritePlace then favoritePlaces reads it back with an assigned id`() = runTest {
+        store.insertFavoritePlace("Tokyo", GeoPoint(35.6762, 139.6503), FavoriteAlertType.MAJOR_ONLY)
+        val place = store.favoritePlaces().first().single()
+        assertEquals("Tokyo", place.label)
+        assertEquals(GeoPoint(35.6762, 139.6503), place.point)
+        assertEquals(FavoriteAlertType.MAJOR_ONLY, place.alertType)
+        assertTrue(place.id > 0)
+    }
+
+    @Test fun `favoritePlaces orders by id ascending -- insertion order`() = runTest {
+        store.insertFavoritePlace("First", GeoPoint(1.0, 1.0), FavoriteAlertType.ALL)
+        store.insertFavoritePlace("Second", GeoPoint(2.0, 2.0), FavoriteAlertType.ALL)
+        store.insertFavoritePlace("Third", GeoPoint(3.0, 3.0), FavoriteAlertType.ALL)
+        assertEquals(listOf("First", "Second", "Third"), store.favoritePlaces().first().map { it.label })
+    }
+
+    @Test fun `favoritePlaces is reactive -- re-emits on insert`() = runTest {
+        store.favoritePlaces().test {
+            assertEquals(emptyList(), awaitItem())
+            store.insertFavoritePlace("Delhi", GeoPoint(28.6139, 77.2090), FavoriteAlertType.ALL)
+            assertEquals(listOf("Delhi"), awaitItem().map { it.label })
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `deleteFavoritePlace removes only the targeted row`() = runTest {
+        store.insertFavoritePlace("Keep", GeoPoint(1.0, 1.0), FavoriteAlertType.ALL)
+        store.insertFavoritePlace("Remove", GeoPoint(2.0, 2.0), FavoriteAlertType.ALL)
+        val toRemove = store.favoritePlaces().first().single { it.label == "Remove" }
+        store.deleteFavoritePlace(toRemove.id)
+        assertEquals(listOf("Keep"), store.favoritePlaces().first().map { it.label })
+    }
+
+    @Test fun `deleteFavoritePlace on an unknown id is a harmless no-op`() = runTest {
+        store.insertFavoritePlace("Keep", GeoPoint(1.0, 1.0), FavoriteAlertType.ALL)
+        store.deleteFavoritePlace(id = 999_999L)
+        assertEquals(listOf("Keep"), store.favoritePlaces().first().map { it.label })
+    }
+
+    @Test fun `updateFavoritePlaceAlertType changes only that field`() = runTest {
+        store.insertFavoritePlace("Mumbai", GeoPoint(19.0760, 72.8777), FavoriteAlertType.ALL)
+        val id = store.favoritePlaces().first().single().id
+        store.updateFavoritePlaceAlertType(id, FavoriteAlertType.OFF)
+        val updated = store.favoritePlaces().first().single()
+        assertEquals(FavoriteAlertType.OFF, updated.alertType)
+        assertEquals("Mumbai", updated.label)
+        assertEquals(GeoPoint(19.0760, 72.8777), updated.point)
+    }
+
+    @Test fun `updateFavoritePlaceAlertType on an unknown id is a harmless no-op`() = runTest {
+        store.insertFavoritePlace("Mumbai", GeoPoint(19.0760, 72.8777), FavoriteAlertType.ALL)
+        store.updateFavoritePlaceAlertType(id = 999_999L, alertType = FavoriteAlertType.OFF)
+        assertEquals(FavoriteAlertType.ALL, store.favoritePlaces().first().single().alertType)
     }
 }

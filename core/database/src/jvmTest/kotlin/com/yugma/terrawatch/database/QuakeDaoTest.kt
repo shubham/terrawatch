@@ -3,16 +3,20 @@ package com.yugma.terrawatch.database
 import app.cash.sqldelight.Query
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import app.cash.turbine.test
+import com.yugma.terrawatch.model.FavoriteAlertType
+import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.model.MagRevision
 import com.yugma.terrawatch.model.MagnitudeBand
 import com.yugma.terrawatch.model.Quake
 import com.yugma.terrawatch.model.QuakeStatus
 import com.yugma.terrawatch.model.Source
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlin.test.BeforeTest
 
 class QuakeDaoTest {
@@ -507,5 +511,81 @@ class QuakeDaoTest {
         val result = dao.newSince(sinceMillis = 1000)
         assertEquals(listOf("revised"), result.map { it.id })
         assertEquals(6.2, result.single().mag)
+    }
+
+    // --- Task 2 (Plan 5): favorite_place CRUD -------------------------------------------------------
+
+    @Test fun `favoritePlaces on an empty table emits an empty list`() = runTest {
+        assertEquals(emptyList(), dao.favoritePlaces().first())
+    }
+
+    @Test fun `insertFavoritePlace then favoritePlaces reads it back with an assigned id`() = runTest {
+        dao.insertFavoritePlace("Tokyo", GeoPoint(35.6762, 139.6503), FavoriteAlertType.MAJOR_ONLY)
+        val places = dao.favoritePlaces().first()
+        val place = places.single()
+        assertEquals("Tokyo", place.label)
+        assertEquals(GeoPoint(35.6762, 139.6503), place.point)
+        assertEquals(FavoriteAlertType.MAJOR_ONLY, place.alertType)
+        assertTrue(place.id > 0)
+    }
+
+    @Test fun `insertFavoritePlace defaults degrade unrecognized alertType to ALL on read`() = runTest {
+        // Exercises FavoriteAlertType.fromStored's safe-parse via the real round trip -- a corrupt
+        // meta.value equivalent for this table would be a hand-edited row; simulated here via a
+        // direct SQL write bypassing the enum-typed insertFavoritePlace overload entirely.
+        db.favoritePlaceQueries.insertFavoritePlace("Corrupt", 1.0, 2.0, "NOT_A_REAL_TYPE")
+        assertEquals(FavoriteAlertType.ALL, dao.favoritePlaces().first().single().alertType)
+    }
+
+    @Test fun `favoritePlaces orders by id ascending -- insertion order`() = runTest {
+        dao.insertFavoritePlace("First", GeoPoint(1.0, 1.0), FavoriteAlertType.ALL)
+        dao.insertFavoritePlace("Second", GeoPoint(2.0, 2.0), FavoriteAlertType.ALL)
+        dao.insertFavoritePlace("Third", GeoPoint(3.0, 3.0), FavoriteAlertType.ALL)
+        assertEquals(listOf("First", "Second", "Third"), dao.favoritePlaces().first().map { it.label })
+    }
+
+    @Test fun `favoritePlaces is reactive -- re-emits on insert`() = runTest {
+        dao.favoritePlaces().test {
+            assertEquals(emptyList(), awaitItem())
+            dao.insertFavoritePlace("Delhi", GeoPoint(28.6139, 77.2090), FavoriteAlertType.ALL)
+            assertEquals(listOf("Delhi"), awaitItem().map { it.label })
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `deleteFavoritePlace removes only the targeted row`() = runTest {
+        dao.insertFavoritePlace("Keep", GeoPoint(1.0, 1.0), FavoriteAlertType.ALL)
+        dao.insertFavoritePlace("Remove", GeoPoint(2.0, 2.0), FavoriteAlertType.ALL)
+        val toRemove = dao.favoritePlaces().first().single { it.label == "Remove" }
+        dao.deleteFavoritePlace(toRemove.id)
+        assertEquals(listOf("Keep"), dao.favoritePlaces().first().map { it.label })
+    }
+
+    @Test fun `deleteFavoritePlace on an unknown id is a harmless no-op`() = runTest {
+        dao.insertFavoritePlace("Keep", GeoPoint(1.0, 1.0), FavoriteAlertType.ALL)
+        dao.deleteFavoritePlace(id = 999_999L)
+        assertEquals(listOf("Keep"), dao.favoritePlaces().first().map { it.label })
+    }
+
+    @Test fun `updateFavoritePlaceAlertType changes only that field, leaving label and point untouched`() = runTest {
+        dao.insertFavoritePlace("Mumbai", GeoPoint(19.0760, 72.8777), FavoriteAlertType.ALL)
+        val id = dao.favoritePlaces().first().single().id
+        dao.updateFavoritePlaceAlertType(id, FavoriteAlertType.OFF)
+        val updated = dao.favoritePlaces().first().single()
+        assertEquals(FavoriteAlertType.OFF, updated.alertType)
+        assertEquals("Mumbai", updated.label)
+        assertEquals(GeoPoint(19.0760, 72.8777), updated.point)
+    }
+
+    @Test fun `updateFavoritePlaceAlertType on an unknown id is a harmless no-op`() = runTest {
+        dao.insertFavoritePlace("Mumbai", GeoPoint(19.0760, 72.8777), FavoriteAlertType.ALL)
+        dao.updateFavoritePlaceAlertType(id = 999_999L, alertType = FavoriteAlertType.OFF)
+        assertEquals(FavoriteAlertType.ALL, dao.favoritePlaces().first().single().alertType)
+    }
+
+    @Test fun `a new dao instance over the same db still reads previously-inserted favorites`() = runTest {
+        dao.insertFavoritePlace("Persisted", GeoPoint(1.0, 1.0), FavoriteAlertType.ALL)
+        val secondInstance = QuakeDao(db)
+        assertEquals(listOf("Persisted"), secondInstance.favoritePlaces().first().map { it.label })
     }
 }

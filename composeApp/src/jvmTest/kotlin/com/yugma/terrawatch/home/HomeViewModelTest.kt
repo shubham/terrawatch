@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import app.cash.turbine.test
 import com.yugma.terrawatch.data.AlertRuleStore
+import com.yugma.terrawatch.data.FavoritePlaceStore
 import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.data.QuakeRepository
 import com.yugma.terrawatch.database.QuakeDao
@@ -115,8 +116,15 @@ class HomeViewModelTest {
         // test below that isn't specifically exercising retention (that one test passes its own
         // clock explicitly instead of relying on this default).
         clock: () -> Long = { 0L },
+        // Task 2 (Plan 5): defaulted so every pre-existing test above (none of which care about
+        // favorites) keeps compiling and passing unchanged -- same "add a new store, default it"
+        // shape alertRuleStore's own default already established for this helper.
+        favoritePlaceStore: FavoritePlaceStore = emptyFavoritePlaceStore(),
     ): HomeViewModel =
-        HomeViewModel(repository, homeLocationStore, locationProvider, alertRuleStore, clock).also { createdViewModels += it }
+        HomeViewModel(
+            repository, homeLocationStore, locationProvider, alertRuleStore, clock,
+            favoritePlaceStore = favoritePlaceStore,
+        ).also { createdViewModels += it }
 
     @AfterTest fun tearDown() {
         Dispatchers.resetMain()
@@ -781,6 +789,87 @@ class HomeViewModelTest {
         assertEquals(null, vm.recenterTarget.value)
     }
 
+    // Task 2 (Plan 5): favorites -- mirrors homeLocation's own "loads the stored value, then reacts
+    // live to a store update" shape (see that field's two tests above), applied to
+    // FavoritePlaceStore.favorites instead of HomeLocationStore.
+
+    @Test fun `favorites starts empty when the store has none`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val vm = createVm(fakeRepositoryAlwaysFailing())
+        vm.favorites.test {
+            assertEquals(emptyList(), awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `favorites loads previously-added places`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val favoritePlaceStore = emptyFavoritePlaceStore().apply { add("Tokyo", GeoPoint(35.6762, 139.6503)) }
+        val vm = createVm(fakeRepositoryAlwaysFailing(), favoritePlaceStore = favoritePlaceStore)
+        vm.favorites.test {
+            var v = awaitItem()
+            while (v.isEmpty()) v = awaitItem()
+            assertEquals("Tokyo", v.single().label)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `favorites reacts to a store update landing mid-session`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val favoritePlaceStore = emptyFavoritePlaceStore()
+        val vm = createVm(fakeRepositoryAlwaysFailing(), favoritePlaceStore = favoritePlaceStore)
+        vm.favorites.test {
+            assertEquals(emptyList(), awaitItem())
+            favoritePlaceStore.add("Delhi", GeoPoint(28.6139, 77.2090))
+            assertEquals(listOf("Delhi"), awaitItem().map { it.label })
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    // Task 2 (Plan 5): the Home quick-switch chips' own session-only pill-target swap --
+    // focusTarget starts null (home is the pill's reference point); focusFavorite/focusHome both
+    // reuse the Task 1 recenterTarget flow for the camera fly, per this task's own dispatch
+    // ("reuse Task 1 recenterTarget flow if suitable").
+
+    @Test fun `focusTarget starts null -- home is the pill's default reference point`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val vm = createVm(fakeRepositoryAlwaysFailing())
+        assertEquals(null, vm.focusTarget.value)
+    }
+
+    @Test fun `focusFavorite sets both focusTarget and recenterTarget to the favorite's point`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val vm = createVm(fakeRepositoryAlwaysFailing())
+        val tokyo = GeoPoint(35.6762, 139.6503)
+        vm.focusFavorite(tokyo)
+        assertEquals(tokyo, vm.focusTarget.value)
+        assertEquals(tokyo, vm.recenterTarget.value)
+    }
+
+    @Test fun `focusHome resets focusTarget to null and flies the camera back to the current home`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val homeLocationStore = emptyHomeLocationStore().apply { set(GeoPoint(12.34, 56.78)) }
+        val vm = createVm(fakeRepositoryAlwaysFailing(), homeLocationStore = homeLocationStore)
+        // Let the init{} block's one-shot homeLocation load resolve before focusing a favorite.
+        vm.homeLocation.test {
+            var v = awaitItem()
+            while (v == null) v = awaitItem()
+            cancelAndIgnoreRemainingEvents()
+        }
+        vm.focusFavorite(GeoPoint(35.6762, 139.6503))
+        vm.focusHome()
+        assertEquals(null, vm.focusTarget.value)
+        assertEquals(GeoPoint(12.34, 56.78), vm.recenterTarget.value)
+    }
+
+    @Test fun `focusHome with no resolved home yet does not crash and still clears focusTarget`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val vm = createVm(fakeRepositoryAlwaysFailing())
+        vm.focusFavorite(GeoPoint(1.0, 2.0))
+        vm.focusHome()
+        assertEquals(null, vm.focusTarget.value)
+    }
+
     // Task 11's selection wiring tests (`select`/`dismissSelection`/`selectedQuake`) MIGRATED to
     // QuakeSelectionViewModelTest.kt as of Task 3 (Plan 3) — see QuakeSelectionViewModel's own
     // kdoc for why that state no longer lives on this class at all.
@@ -875,6 +964,15 @@ private fun emptyAlertRuleStore(): AlertRuleStore {
     val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
     TerraWatchDb.Schema.create(driver)
     return AlertRuleStore(QuakeDao(TerraWatchDb(driver)))
+}
+
+// Task 2 (Plan 5): same "fresh, empty, don't-care-what-it-resolves-to" role as
+// emptyHomeLocationStore()/emptyAlertRuleStore() above, for HomeViewModel's new FavoritePlaceStore
+// constructor param.
+private fun emptyFavoritePlaceStore(): FavoritePlaceStore {
+    val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+    TerraWatchDb.Schema.create(driver)
+    return FavoritePlaceStore(QuakeDao(TerraWatchDb(driver)))
 }
 
 // Builds a real QuakeRepository over an in-memory JVM SQLDelight driver with a MockEngine that

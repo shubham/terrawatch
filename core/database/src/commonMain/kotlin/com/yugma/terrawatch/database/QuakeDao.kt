@@ -2,6 +2,9 @@ package com.yugma.terrawatch.database
 
 import app.cash.sqldelight.coroutines.asFlow
 import app.cash.sqldelight.coroutines.mapToList
+import com.yugma.terrawatch.model.FavoriteAlertType
+import com.yugma.terrawatch.model.FavoritePlace as DomainFavoritePlace
+import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.model.MagRevision
 import com.yugma.terrawatch.model.MagnitudeBand
 import com.yugma.terrawatch.model.Quake as DomainQuake
@@ -201,6 +204,37 @@ class QuakeDao(private val db: TerraWatchDb, private val clock: () -> Long = { 0
     /** Task 3 (Plan 4): see [QuakeStore.newSince]'s own kdoc. */
     override fun newSince(sinceMillis: Long): List<DomainQuake> =
         db.quakeQueries.newSince(sinceMillis).executeAsList().map { it.toDomain() }
+
+    /** Task 2 (Plan 5): see [QuakeStore.favoritePlaces]'s own kdoc. */
+    override fun favoritePlaces(): Flow<List<DomainFavoritePlace>> =
+        db.favoritePlaceQueries.selectAllFavoritePlaces().asFlow().mapToList(Dispatchers.Default)
+            .map { rows -> rows.map { it.toDomain() } }
+
+    /** Task 2 (Plan 5): see [QuakeStore.insertFavoritePlace]'s own kdoc — the new row's id is
+     * SQLite's own `AUTOINCREMENT`, never computed here. */
+    override fun insertFavoritePlace(label: String, point: GeoPoint, alertType: FavoriteAlertType) {
+        db.favoritePlaceQueries.insertFavoritePlace(label, point.lat, point.lon, alertType.name)
+    }
+
+    /** Task 2 (Plan 5): see [QuakeStore.deleteFavoritePlace]'s own kdoc. */
+    override fun deleteFavoritePlace(id: Long) { db.favoritePlaceQueries.deleteFavoritePlace(id) }
+
+    /** Task 2 (Plan 5): see [QuakeStore.updateFavoritePlaceAlertType]'s own kdoc. */
+    override fun updateFavoritePlaceAlertType(id: Long, alertType: FavoriteAlertType) {
+        db.favoritePlaceQueries.updateFavoritePlaceAlertType(alertType.name, id)
+    }
+
+    /** Row -> domain mapping for the SQLDelight-generated `favoritePlace` row type — named
+     * `FavoritePlace` (first-letter capitalization of the table name, see FavoritePlace.sq's own
+     * kdoc for why the table itself is camelCase), which collides with the domain model of the same
+     * name — the domain type is imported as [DomainFavoritePlace] here to disambiguate, same "Quake
+     * as DomainQuake" aliasing this file already does at its own top for the identical `quake`
+     * table/domain-model name collision. [FavoriteAlertType.fromStored] is what makes an
+     * unrecognized/corrupt stored string degrade to [FavoriteAlertType.ALL] instead of throwing —
+     * see that function's own kdoc. */
+    private fun FavoritePlace.toDomain() = DomainFavoritePlace(
+        id = id, label = label, point = GeoPoint(lat, lon), alertType = FavoriteAlertType.fromStored(alertType),
+    )
 
     // [origin] defaults to QuakeStore.ORIGIN_FEED so upsert()/upsertAll() (QuakeDao-only test
     // helpers, never on the QuakeStore interface — see that interface's own kdoc) keep compiling

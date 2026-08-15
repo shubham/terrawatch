@@ -3,11 +3,15 @@ package com.yugma.terrawatch.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yugma.terrawatch.data.AlertRuleStore
+import com.yugma.terrawatch.data.FavoritePlaceStore
 import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.data.ThemeSetting
 import com.yugma.terrawatch.data.ThemeStore
+import com.yugma.terrawatch.model.FavoriteAlertType
+import com.yugma.terrawatch.model.FavoritePlace
 import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.monetization.EntitlementsProvider
+import com.yugma.terrawatch.monetization.canAddFavorite
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -41,6 +45,9 @@ class SettingsViewModel(
     private val themeStore: ThemeStore,
     private val homeLocationStore: HomeLocationStore,
     entitlementsProvider: EntitlementsProvider,
+    // Task 2 (Plan 5): the Places section's own favorites list — same "constructor param, thin
+    // mirroring in init{}" shape every other store dependency on this class already uses.
+    private val favoritePlaceStore: FavoritePlaceStore,
 ) : ViewModel() {
     private val _nearbyRadiusKm = MutableStateFlow(AlertRuleStore.DEFAULT_RADIUS_KM)
     val nearbyRadiusKm: StateFlow<Double> = _nearbyRadiusKm
@@ -56,6 +63,12 @@ class SettingsViewModel(
 
     val isPlusActive: StateFlow<Boolean> = entitlementsProvider.isPlusActive
 
+    // Task 2 (Plan 5): the Places section's favorites list — same "MutableStateFlow seeded empty,
+    // mirrored live in init{}" shape [HomeViewModel.favorites] already establishes for the identical
+    // store.
+    private val _favorites = MutableStateFlow<List<FavoritePlace>>(emptyList())
+    val favorites: StateFlow<List<FavoritePlace>> = _favorites
+
     init {
         viewModelScope.launch { alertRuleStore.nearbyRadiusKm.collect { _nearbyRadiusKm.value = it } }
         viewModelScope.launch { alertRuleStore.minMag.collect { _minMag.value = it } }
@@ -65,6 +78,9 @@ class SettingsViewModel(
         }
         viewModelScope.launch {
             homeLocationStore.updates.collect { point -> _homeLocation.value = point }
+        }
+        viewModelScope.launch {
+            favoritePlaceStore.favorites.collect { places -> _favorites.value = places }
         }
     }
 
@@ -82,4 +98,31 @@ class SettingsViewModel(
     }
 
     fun setTheme(setting: ThemeSetting) = themeStore.setTheme(setting)
+
+    // --- Task 2 (Plan 5): the Places section's favorites CRUD + the FIRST REAL Plus gate ---------
+
+    /**
+     * Whether "Add place" can open the city picker right now — [com.yugma.terrawatch.monetization.
+     * canAddFavorite]'s pure decision, applied to THIS instant's own [favorites] count and
+     * [isPlusActive] value. `SettingsScreen`'s own "Add place" row calls this synchronously at tap
+     * time (both [favorites]/[isPlusActive] are [StateFlow]s, so `.value` is always current, no
+     * suspension needed) to decide between opening [com.yugma.terrawatch.location.CityPickerDialog]
+     * and routing to the paywall instead — see that screen's own kdoc for the gate-blocked path.
+     */
+    fun canAddFavorite(): Boolean = canAddFavorite(currentCount = _favorites.value.size, isPlus = isPlusActive.value)
+
+    /** Same "off Main" treatment [setNearbyRadius]/[setMinMag] already give their own store writes
+     * above, for the identical reason (a SQLite write triggered from a Compose click handler). */
+    fun addFavorite(label: String, point: GeoPoint, alertType: FavoriteAlertType = FavoriteAlertType.ALL) {
+        viewModelScope.launch(Dispatchers.Default) { favoritePlaceStore.add(label, point, alertType) }
+    }
+
+    fun removeFavorite(id: Long) {
+        viewModelScope.launch(Dispatchers.Default) { favoritePlaceStore.remove(id) }
+    }
+
+    /** The per-row alert-type segmented control's write path. */
+    fun setFavoriteAlertType(id: Long, alertType: FavoriteAlertType) {
+        viewModelScope.launch(Dispatchers.Default) { favoritePlaceStore.setAlertType(id, alertType) }
+    }
 }

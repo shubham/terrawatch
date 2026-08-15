@@ -1,5 +1,8 @@
 package com.yugma.terrawatch.database
 
+import com.yugma.terrawatch.model.FavoriteAlertType
+import com.yugma.terrawatch.model.FavoritePlace
+import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.model.Quake as DomainQuake
 import kotlinx.coroutines.flow.Flow
 
@@ -211,6 +214,31 @@ interface QuakeStore {
      * opposite side of an identical boundary-value question).
      */
     fun newSince(sinceMillis: Long): List<DomainQuake>
+
+    /**
+     * Task 2 (Plan 5): every saved favorite place, ascending by [FavoritePlace.id] (i.e. insertion
+     * order) — [com.yugma.terrawatch.data.FavoritePlaceStore] (core:data) is the one real caller,
+     * exposing this straight through as its own `favorites: Flow<List<FavoritePlace>>`. Reactive
+     * (re-emits on every [insertFavoritePlace]/[deleteFavoritePlace]/[updateFavoritePlaceAlertType]
+     * call), same "a live Flow over the underlying table/map" shape [recent] already establishes for
+     * the `quake` table.
+     */
+    fun favoritePlaces(): Flow<List<FavoritePlace>>
+
+    /** Task 2 (Plan 5): adds a new favorite — auto-incrementing id, assigned by the store itself
+     * (SQLite `AUTOINCREMENT` on [QuakeDao]'s real driver; a simple incrementing counter on
+     * [InMemoryQuakeStore]'s in-memory fallback), never supplied by the caller. */
+    fun insertFavoritePlace(label: String, point: GeoPoint, alertType: FavoriteAlertType)
+
+    /** Task 2 (Plan 5): removes the favorite with this [id] — a no-op (not an error) when no such
+     * favorite exists, matching [deleteByIdPrefix]/[delete]'s own "removing something already gone
+     * is harmless" posture elsewhere on this interface. */
+    fun deleteFavoritePlace(id: Long)
+
+    /** Task 2 (Plan 5): the per-row alert-type control's write path — updates ONLY [alertType] for
+     * the favorite with this [id], leaving its label/point untouched. A no-op when no such favorite
+     * exists, same reasoning as [deleteFavoritePlace]. */
+    fun updateFavoritePlaceAlertType(id: Long, alertType: FavoriteAlertType)
 
     companion object {
         const val ORIGIN_FEED = "feed"
