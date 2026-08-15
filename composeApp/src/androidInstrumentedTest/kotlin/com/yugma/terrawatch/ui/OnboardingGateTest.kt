@@ -46,8 +46,8 @@ import org.junit.Test
  * three routes that would actually require a started Koin (see [NavRoundTripTest]'s own kdoc). The
  * unonboarded branch composes only [com.yugma.terrawatch.onboarding.OnboardingScreen]'s first pager
  * page (`HorizontalPager`'s default `beyondViewportPageCount` composes no neighbor pages, and this
- * test never scrolls it), which itself calls no `koinInject`/`koinViewModel` — only its OTHER two
- * pages do (`LocationStep`'s `koinInject<LocationRequester>()`) — and the onboarded branch composes
+ * test never scrolls it), which itself calls no `koinInject`/`koinViewModel` — only LocationStep (page 1) does
+ * (`LocationStep`'s `koinInject<LocationRequester>()`) — and the onboarded branch composes
  * [com.yugma.terrawatch.home.HomeScreen] directly from the explicitly-constructed `homeViewModel`/
  * `selectionViewModel` pair below, the same "real object graph, no framework in the loop" shape
  * [HomeFlowTest] already established. This is the "in-memory store... wiring cheap" path the

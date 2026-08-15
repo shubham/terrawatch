@@ -80,10 +80,9 @@ internal fun snapToHalfMagnitude(value: Double): Double = round(value * 2.0) / 2
 // expect/actual seam this task's own dispatch judged out of scope for a "subset" pass (Plan 4:
 // revisit if/when a real per-platform build-info surface is worth adding for more than one string).
 // KEEP IN SYNC BY HAND with composeApp/build.gradle.kts's `versionName` — the two are independently
-// literal today; SettingsScreenTest (jvmTest) pins this exact string but cannot cross-check it
-// against the Android Gradle config from a jvmTest source set, so nothing currently fails loudly if
-// they drift apart on a future version bump.
-private const val APP_VERSION = "0.3.0"
+// literal today. SettingsScreenTest pins this constant; bump BOTH this and versionName together
+// (no BuildConfig in KMP commonMain).
+internal const val APP_VERSION = "0.3.0"
 
 /** Task 13: `testTag` for [SettingsHeader]'s back chevron — `NavRoundTripTest`
  * (androidInstrumentedTest) taps this to complete the Home->History->Insights->Settings->Home leg

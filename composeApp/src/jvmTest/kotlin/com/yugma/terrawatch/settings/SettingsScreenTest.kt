@@ -40,4 +40,8 @@ class SettingsScreenTest {
         assertEquals(5.0, snapToHalfMagnitude(4.76))
         assertEquals(4.0, snapToHalfMagnitude(4.24))
     }
+
+    @Test fun `app version constant pins the released version string`() {
+        assertEquals("0.3.0", APP_VERSION)
+    }
 }
