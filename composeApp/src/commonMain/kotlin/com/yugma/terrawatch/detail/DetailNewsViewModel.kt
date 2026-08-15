@@ -4,7 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yugma.terrawatch.model.Quake
 import com.yugma.terrawatch.network.GdeltClient
+import com.yugma.terrawatch.network.NewsResult
 import com.yugma.terrawatch.news.NewsUiState
+import com.yugma.terrawatch.news.usgsEventUrl
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -37,6 +39,11 @@ private const val DETAIL_NEWS_MIN_MAG = 5.5
  * `QuakeSelectionViewModel.selectedQuake` — `DetailSheet` itself stays fully "dumb" (its own kdoc's
  * word): it only ever renders whichever [NewsUiState] its caller hands it down as a plain
  * parameter, with no lookup of its own.
+ *
+ * Task 2b (dogfooding fix, task-2b-news-fix-report.md): [retry] re-issues the fetch for whichever
+ * quake [NewsUiState.Error] is currently showing for — [pendingQuake] remembers it purely so a
+ * Retry tap doesn't need the caller to re-supply the same [Quake] it already handed to
+ * [onQuakeSelected].
  */
 class DetailNewsViewModel(private val gdeltClient: GdeltClient) : ViewModel() {
     private val _newsState = MutableStateFlow<NewsUiState>(NewsUiState.Hidden)
@@ -45,9 +52,11 @@ class DetailNewsViewModel(private val gdeltClient: GdeltClient) : ViewModel() {
     // Cancellable, same "only the most recent call can win" shape
     // QuakeSelectionViewModel.select's own selectJob already established for the sibling selection
     // concern — a quick double-tap between two mag>=5.5 quakes must not let the FIRST quake's
-    // slower-resolving fetch overwrite the second quake's already-landed result.
+    // slower-resolving fetch overwrite the second quake's already-landed result. Centralized in
+    // [fetch] (Task 2b) so [retry] gets the identical cancel-before-replace discipline for free.
     private var job: Job? = null
     private var lastQuakeId: String? = null
+    private var pendingQuake: Quake? = null
 
     /**
      * Idempotent re-entry: a recomposition that hands back the SAME quake id (e.g. an unrelated
@@ -58,17 +67,38 @@ class DetailNewsViewModel(private val gdeltClient: GdeltClient) : ViewModel() {
     fun onQuakeSelected(quake: Quake?) {
         if (quake?.id == lastQuakeId) return
         lastQuakeId = quake?.id
-        job?.cancel()
+        pendingQuake = quake
         if (quake == null || (quake.mag ?: 0.0) < DETAIL_NEWS_MIN_MAG) {
+            job?.cancel()
             _newsState.value = NewsUiState.Hidden
             return
         }
+        fetch(quake)
+    }
+
+    /** Task 2b: [NewsUiState.Error]'s Retry action — re-issues the exact same fetch [pendingQuake]
+     * (the quake [onQuakeSelected] most recently resolved past the magnitude floor for) already
+     * describes. A no-op if nothing is pending (defensive only — the Retry row only ever renders
+     * from [NewsUiState.Error], which is unreachable without a [pendingQuake] already set). */
+    fun retry() {
+        pendingQuake?.let(::fetch)
+    }
+
+    private fun fetch(quake: Quake) {
+        job?.cancel()
         _newsState.value = NewsUiState.Loading
         job = viewModelScope.launch {
-            val articles = gdeltClient.searchEarthquakeNews(place = quake.place, eventTimeMillis = quake.timeMillis)
-            // Empty results collapse to Hidden, not an empty Content — see NewsUiState's own kdoc
-            // for why Content is never constructed empty.
-            _newsState.value = if (articles.isEmpty()) NewsUiState.Hidden else NewsUiState.Content(articles)
+            _newsState.value = when (val result = gdeltClient.searchEarthquakeNews(place = quake.place, eventTimeMillis = quake.timeMillis)) {
+                // Empty results resolve to Empty (with the zero-dep USGS fallback link), never an
+                // empty Content — see NewsUiState's own kdoc for why Content is never constructed
+                // empty. A Failure resolves to Error, never silently back to Hidden (Task 2b).
+                is NewsResult.Success -> if (result.articles.isEmpty()) {
+                    NewsUiState.Empty(usgsEventUrl(quake))
+                } else {
+                    NewsUiState.Content(result.articles)
+                }
+                NewsResult.Failure -> NewsUiState.Error
+            }
         }
     }
 }

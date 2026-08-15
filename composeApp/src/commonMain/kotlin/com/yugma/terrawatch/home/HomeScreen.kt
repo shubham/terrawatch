@@ -377,6 +377,7 @@ fun HomeScreen(
                 onSharePackaged = { pkg, text -> sharePackaged(pkg, text) },
                 newsState = newsState,
                 onNewsArticleClick = { url -> openUrl(url) },
+                onNewsRetry = detailNewsViewModel::retry,
             )
         }
         // Task 2 (Plan 3): a THIRD independent overlay layer, same "stacks on top of whichever

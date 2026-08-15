@@ -141,16 +141,59 @@ class InsightsNewsViewModelTest {
         }
     }
 
-    @Test fun `an empty GDELT result for a genuine M6+ candidate resolves to Hidden, not Content`() = runTest {
+    @Test fun `an empty GDELT result for a genuine M6+ candidate resolves to Empty with the USGS fallback link, not Content or a silent Hidden`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val dao = freshDao()
         val now = 100 * DAY
         dao.upsert(quake("big", timeMillis = now, mag = 6.5))
         val vm = createVm(dao, gdeltResponse = """{"articles":[]}""", nowMillis = now)
         vm.newsState.test {
-            assertEquals(NewsUiState.Hidden, awaitSettled())
+            val empty = assertIs<NewsUiState.Empty>(awaitSettled())
+            assertEquals("https://earthquake.usgs.gov/earthquakes/eventpage/big", empty.usgsEventUrl)
             cancelAndIgnoreRemainingEvents()
         }
+    }
+
+    // Task 2b (dogfooding fix, task-2b-news-fix-report.md): same bug as DetailNewsViewModel's own
+    // sibling test — a GDELT failure used to collapse to the identical Hidden a genuine zero-hit
+    // query resolves to. Error now exists so Insights' own "In the news" card can render a compact
+    // "Couldn't load news" + Retry row instead of silently vanishing.
+    @Test fun `a GDELT failure for a genuine M6+ candidate resolves to Error, never a silent Hidden`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val dao = freshDao()
+        val now = 100 * DAY
+        dao.upsert(quake("big", timeMillis = now, mag = 6.5))
+        val vm = createVm(dao, gdeltResponse = "boom", gdeltStatus = HttpStatusCode.InternalServerError, nowMillis = now)
+        vm.newsState.test {
+            assertEquals(NewsUiState.Error, awaitSettled())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `retry re-issues the fetch for the same candidate and can recover to Content`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val dao = freshDao()
+        val now = 100 * DAY
+        dao.upsert(quake("big", timeMillis = now, mag = 6.5))
+        var callCount = 0
+        val gdeltClient = GdeltClient(
+            HttpClient(
+                MockEngine {
+                    callCount++
+                    if (callCount == 1) respond("boom", HttpStatusCode.InternalServerError) else respond(THREE_ARTICLES, HttpStatusCode.OK)
+                },
+            ),
+        )
+        val vm = InsightsNewsViewModel(repository(dao), gdeltClient, clock = { now }).also { createdViewModels += it }
+        vm.newsState.test {
+            assertEquals(NewsUiState.Error, awaitSettled())
+
+            vm.retry()
+            val content = assertIs<NewsUiState.Content>(awaitSettled())
+            assertEquals(3, content.articles.size)
+            cancelAndIgnoreRemainingEvents()
+        }
+        assertEquals(2, callCount)
     }
 
     @Test fun `an unrelated smaller quake arriving does not re-fetch the unchanged strongest candidate`() = runTest {

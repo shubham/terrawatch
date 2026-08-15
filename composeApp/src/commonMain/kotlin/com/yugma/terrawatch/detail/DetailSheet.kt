@@ -18,6 +18,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -91,12 +92,19 @@ import kotlinx.coroutines.launch
  * packaged-app tap, computed once per sheet rather than separately per button.
  *
  * Plan 4 Task 5 (news): [newsState] is likewise additive/defaulted - [NewsUiState.Hidden] renders
- * nothing at all, matching "no-results -> section hidden" exactly (see that sealed interface's own
- * kdoc for why [NewsUiState.Content] is never constructed empty in the first place).
- * [onNewsArticleClick] receives a tapped article's raw `url`, mirroring [onShare]'s "hand the
- * caller the built value, not just a tap signal" shape - the caller wires it to
- * `com.yugma.terrawatch.share.openUrl`, keeping the platform `ACTION_VIEW` call at the screen call
- * site exactly like `onShare`'s platform call already stays there, not in here.
+ * nothing at all, matching "no selection / below the magnitude floor -> section hidden" exactly
+ * (see that sealed interface's own kdoc for why [NewsUiState.Content] is never constructed empty in
+ * the first place). [onNewsArticleClick] receives a tapped article's raw `url`, mirroring
+ * [onShare]'s "hand the caller the built value, not just a tap signal" shape - the caller wires it
+ * to `com.yugma.terrawatch.share.openUrl`, keeping the platform `ACTION_VIEW` call at the screen
+ * call site exactly like `onShare`'s platform call already stays there, not in here. The SAME
+ * callback backs [NewsUiState.Empty]'s "More on USGS" link row (Task 2b) - it's still just a raw
+ * URL tap-through, no new platform call needed at any call site.
+ *
+ * Task 2b (dogfooding fix, task-2b-news-fix-report.md): [onNewsRetry] is [NewsUiState.Error]'s
+ * Retry action - additive/defaulted (a no-op) for the identical "every pre-existing call site keeps
+ * compiling" reason [onSharePackaged] documents just above, wired by every real caller to
+ * `DetailNewsViewModel::retry`.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -109,6 +117,7 @@ fun DetailSheet(
     onSharePackaged: (packageName: String, text: String) -> Unit = { _, _ -> },
     newsState: NewsUiState = NewsUiState.Hidden,
     onNewsArticleClick: (url: String) -> Unit = {},
+    onNewsRetry: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     // Fix Round 1 (review finding): a bare `onClick = onDismiss` on the Dismiss button used to
@@ -153,6 +162,7 @@ fun DetailSheet(
                     newsState = newsState,
                     nowMillis = nowMillis,
                     onArticleClick = onNewsArticleClick,
+                    onRetry = onNewsRetry,
                     reducedMotion = LocalReducedMotion.current,
                 )
             }
@@ -382,12 +392,19 @@ private fun SectionEyebrow(text: String, modifier: Modifier = Modifier) {
  * shimmer reuse" per the brief - the same shimmer every other Loading state in this app already
  * uses, not a bespoke headline-shaped placeholder); [NewsUiState.Content] renders up to 3 headlines
  * in one card, each tappable straight to [onArticleClick].
+ *
+ * Task 2b (dogfooding fix, task-2b-news-fix-report.md): [NewsUiState.Empty] and [NewsUiState.Error]
+ * both render [NewsMessageCard] - the same one-line-message-plus-optional-action shape as
+ * `HistoryScreen`'s own `HistoryFooter`'s `loadMoreFailed` row - so the shimmer ALWAYS resolves to
+ * something visible under the "IN THE NEWS" eyebrow (real headlines, the zero-dep USGS fallback
+ * link, or a Retry row), never quietly back to nothing.
  */
 @Composable
 private fun NewsSection(
     newsState: NewsUiState,
     nowMillis: Long,
     onArticleClick: (String) -> Unit,
+    onRetry: () -> Unit,
     reducedMotion: Boolean,
     modifier: Modifier = Modifier,
 ) {
@@ -413,6 +430,43 @@ private fun NewsSection(
                         }
                     }
                 }
+            }
+            is NewsUiState.Empty -> NewsMessageCard(
+                message = "No news coverage yet",
+                actionLabel = newsState.usgsEventUrl?.let { "More on USGS" },
+                onAction = newsState.usgsEventUrl?.let { url -> { onArticleClick(url) } },
+            )
+            NewsUiState.Error -> NewsMessageCard(message = "Couldn't load news", actionLabel = "Retry", onAction = onRetry)
+        }
+    }
+}
+
+/**
+ * Task 2b (dogfooding fix, task-2b-news-fix-report.md): the one-card shape both [NewsUiState.Empty]
+ * ("No news coverage yet" + an optional "More on USGS" link) and [NewsUiState.Error] ("Couldn't
+ * load news" + Retry) render into - same [Surface] card treatment [NewsUiState.Content]'s own
+ * headline list already uses, so the section reads as "one card" regardless of which of the three
+ * post-fetch states it's actually showing. [actionLabel]/[onAction] travel together (both null, or
+ * both non-null) rather than as a nullable trailing lambda alone - [NewsUiState.Empty] with no
+ * [NewsUiState.Empty.usgsEventUrl] (an EMSC-only quake) needs the caption with NO action row at
+ * all, not a row with an empty-label button.
+ */
+@Composable
+private fun NewsMessageCard(message: String, actionLabel: String?, onAction: (() -> Unit)?, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(TerraRadii.card),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 1.dp,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 14.dp, end = if (onAction != null) 6.dp else 14.dp, top = 10.dp, bottom = 10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(text = message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (actionLabel != null && onAction != null) {
+                TextButton(onClick = onAction) { Text(actionLabel) }
             }
         }
     }

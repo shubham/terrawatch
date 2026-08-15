@@ -12,6 +12,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.headersOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.job
@@ -100,16 +101,71 @@ class DetailNewsViewModelTest {
         }
     }
 
-    @Test fun `empty GDELT results resolve to Hidden, never an empty Content`() = runTest {
+    @Test fun `empty GDELT results resolve to Empty with the USGS fallback link, never an empty Content or a silent Hidden`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
-        val vm = createVm(MockEngine { respond("""{"articles":[]}""", HttpStatusCode.OK) })
+        val vm = createVm(MockEngine { respond("""{"articles":[]}""", HttpStatusCode.OK, headersOf("Content-Type", "application/json")) })
+        vm.newsState.test {
+            assertEquals(NewsUiState.Hidden, awaitItem())
+            vm.onQuakeSelected(quake(id = "us1", mag = 6.0))
+            assertEquals(NewsUiState.Loading, awaitItem())
+            val empty = assertIs<NewsUiState.Empty>(awaitItem())
+            assertEquals("https://earthquake.usgs.gov/earthquakes/eventpage/us1", empty.usgsEventUrl)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    // Task 2b (dogfooding fix, task-2b-news-fix-report.md): this is the exact bug — a GDELT failure
+    // (429, malformed body, GDELT's own 200+HTML illegal-character quirk, ...) used to collapse to
+    // the SAME Hidden an honest zero-hit query does, so the "In the news" section's shimmer just
+    // vanished with no way to tell "nothing to show" from "couldn't check." Error now exists so the
+    // UI can render a compact "Couldn't load news" + Retry row instead.
+    @Test fun `a GDELT failure resolves to Error, never a silent Hidden`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val vm = createVm(MockEngine { respond("boom", HttpStatusCode.InternalServerError) })
         vm.newsState.test {
             assertEquals(NewsUiState.Hidden, awaitItem())
             vm.onQuakeSelected(quake(mag = 6.0))
             assertEquals(NewsUiState.Loading, awaitItem())
-            assertEquals(NewsUiState.Hidden, awaitItem())
+            assertEquals(NewsUiState.Error, awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
+    }
+
+    @Test fun `retry re-issues the fetch for the same quake and can recover to Content`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        var callCount = 0
+        val vm = createVm(
+            MockEngine {
+                callCount++
+                if (callCount == 1) respond("boom", HttpStatusCode.InternalServerError) else respond(THREE_ARTICLES, HttpStatusCode.OK)
+            },
+        )
+        vm.newsState.test {
+            assertEquals(NewsUiState.Hidden, awaitItem())
+            vm.onQuakeSelected(quake(mag = 6.0))
+            assertEquals(NewsUiState.Loading, awaitItem())
+            assertEquals(NewsUiState.Error, awaitItem())
+
+            vm.retry()
+            assertEquals(NewsUiState.Loading, awaitItem())
+            val content = assertIs<NewsUiState.Content>(awaitItem())
+            assertEquals(3, content.articles.size)
+            cancelAndIgnoreRemainingEvents()
+        }
+        assertEquals(2, callCount)
+    }
+
+    @Test fun `retry before any selection is a no-op`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        var called = false
+        val vm = createVm(MockEngine { called = true; respond(THREE_ARTICLES, HttpStatusCode.OK) })
+        vm.newsState.test {
+            assertEquals(NewsUiState.Hidden, awaitItem())
+            vm.retry()
+            expectNoEvents()
+            cancelAndIgnoreRemainingEvents()
+        }
+        assertTrue(!called, "retry() with no pending quake must never call GDELT")
     }
 
     @Test fun `selecting null after a real quake clears back to Hidden`() = runTest {

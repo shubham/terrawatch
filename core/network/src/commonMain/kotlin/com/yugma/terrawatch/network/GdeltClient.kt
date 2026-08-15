@@ -3,7 +3,10 @@ package com.yugma.terrawatch.network
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.request.parameter
+import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.CancellationException
 import kotlinx.datetime.TimeZone
@@ -28,6 +31,25 @@ data class NewsArticle(
     val seenAtMillis: Long,
 )
 
+/**
+ * Task 2b (dogfooding fix, task-2b-news-fix-report.md): [GdeltClient.searchEarthquakeNews] used to
+ * collapse "the query resolved cleanly but found nothing" and "the request itself failed" down to
+ * the exact same [emptyList] — [NewsUiState][com.yugma.terrawatch.news.NewsUiState] had no way to
+ * tell them apart, so BOTH rendered as a shimmer that quietly disappeared. [Success.articles] MAY
+ * be empty (a genuine zero-hit query is still a success) — nothing here hides that case the way
+ * [NewsArticle] parsing already does; the presentation layer ([NewsUiState.Empty] vs
+ * [NewsUiState.Error]) decides what an empty list means. Same "distinct sealed cases for a resolved
+ * miss vs. an outright failure" shape [UsgsApi]'s own [FeedResult] already established
+ * ([FeedResult.NotModified] vs [FeedResult.Failure]) — [Failure] carries no `cause` (unlike
+ * [FeedResult.Failure]'s own) because nothing downstream ever needs to distinguish network/HTTP/
+ * malformed-body failures from one another; every one of them renders the identical "Couldn't load
+ * news" + Retry row.
+ */
+sealed interface NewsResult {
+    data class Success(val articles: List<NewsArticle>) : NewsResult
+    data object Failure : NewsResult
+}
+
 @Serializable
 internal data class GdeltResponse(val articles: List<GdeltArticleJson> = emptyList())
 
@@ -51,14 +73,22 @@ private val lenientJson = Json { ignoreUnknownKeys = true }
  * environment's shared corporate egress IP — the third query 429'd on every retry across ~70s of
  * spaced attempts) returned highly relevant, sourcelang:english-filtered, real-domain results
  * (abcnews.com/baltimoresun.com/smh.com.au/nypost.com/yahoo.com among others) — GATE: **PASS**.
- * That same rate-limit encounter is exactly why every failure path here (network, non-2xx
- * including 429, malformed JSON) degrades to an empty list rather than throwing: news is an
- * additive, best-effort feature layered on top of the detail sheet/Insights, and this codebase's
- * own "the map/feed never goes away" posture ([UsgsApi.fetchFeed]'s `FeedResult` sealed type, this
- * app's core screens never having an Error state that removes already-rendered content) extends to
- * this feature too — a GDELT outage or rate-limit must never surface as a crash or an error state,
- * only as the news section quietly not being there. Contrast [UsgsApi.queryArchive], which throws
- * by design because its caller (History) already wraps every call in its own Error state.
+ *
+ * Task 2b (dogfooding fix, 2026-08-16, task-2b-news-fix-report.md): that spike's own hand-tried
+ * queries never actually exercised the shipped [gdeltPlaceQuery] output live — live re-testing
+ * against a fresh real M6.9 quake (Pematangsiantar, Indonesia) proved GDELT's DOC API flatly
+ * rejects a literal comma in `query` with **HTTP 200 + an HTML body** ("One or more of your
+ * keywords contained an illegal character..."), not a non-2xx — and a raw USGS `place` string is
+ * ALWAYS "City, Region" shaped, so [gdeltPlaceQuery] was building an illegal query for essentially
+ * every quake, every time, not as some rare edge case. [gdeltPlaceQuery] now strips that (and the
+ * dash GDELT's own error text names as equally illegal) before ever reaching GDELT. [searchEarthquakeNews]
+ * still never *throws* for network/HTTP/malformed-body failures — that discipline continues this
+ * codebase's own "the map/feed never goes away" posture ([UsgsApi.fetchFeed]'s `FeedResult` sealed
+ * type) — but it no longer collapses "resolved with zero relevant articles" and "the request itself
+ * failed" into the identical value the way a bare `emptyList()` used to: seeing that HTML-error-page
+ * body land on a 200 was exactly what proved a plain success/non-2xx check alone isn't enough
+ * defense against GDELT's own quirks, so [NewsResult] carries the distinction the rest of this
+ * feature's UI now needs to stop rendering both as the same silently-vanishing shimmer.
  */
 class GdeltClient(
     private val http: HttpClient,
@@ -72,13 +102,20 @@ class GdeltClient(
      * [eventTimeMillis]..[eventTimeMillis]+72h (backlog item 3's own "event time +72h" window) —
      * wide enough to catch a quake's first news cycle without drifting into unrelated later
      * coverage of the same region.
+     *
+     * Returns [NewsResult.Failure] — never throws, never a bare empty list — for a non-2xx status,
+     * a network/parse exception, OR a response that merely LOOKS like a failure ([looksLikeJson]'s
+     * own content-type/leading-brace sniff, guarding against GDELT's "200 OK + HTML error page"
+     * malformed-query quirk this task's own live curl reproduction hit — see this class's kdoc).
+     * [NewsResult.Success] carries whatever [parseArticles] found, including an empty list for a
+     * genuine zero-hit query — that distinction is exactly what [NewsResult] exists to preserve.
      */
     @OptIn(ExperimentalTime::class)
     suspend fun searchEarthquakeNews(
         place: String,
         eventTimeMillis: Long,
         maxRecords: Int = 3,
-    ): List<NewsArticle> = try {
+    ): NewsResult = try {
         val resp = http.get(baseUrl) {
             parameter("query", "${gdeltPlaceQuery(place)} sourcelang:english")
             parameter("mode", "artlist")
@@ -87,11 +124,16 @@ class GdeltClient(
             parameter("enddatetime", formatGdeltDateTime(eventTimeMillis + WINDOW_MILLIS))
             parameter("maxrecords", maxRecords)
         }
-        if (!resp.status.isSuccess()) emptyList() else parseArticles(resp.bodyAsText())
+        if (!resp.status.isSuccess()) {
+            NewsResult.Failure
+        } else {
+            val body = resp.bodyAsText()
+            if (!looksLikeJson(resp, body)) NewsResult.Failure else NewsResult.Success(parseArticles(body))
+        }
     } catch (ce: CancellationException) {
         throw ce
     } catch (t: Throwable) {
-        emptyList()
+        NewsResult.Failure
     }
 
     private companion object {
@@ -99,22 +141,53 @@ class GdeltClient(
     }
 }
 
+/**
+ * Task 2b's explicit defense against GDELT's own "malformed query still comes back 200 OK" quirk —
+ * live-reproduced (task-2b-news-fix-report.md): a query GDELT rejects returns
+ * `Content-Type: text/html` and a body reading "One or more of your keywords contained an illegal
+ * character...", not a non-2xx status [searchEarthquakeNews]'s own success check would already
+ * catch. Checked ahead of, and independently from, [parseArticles]'s own internal try/catch (which
+ * stays exactly as defensive as before for its own direct callers/tests) — this is what lets
+ * [searchEarthquakeNews] report that case as [NewsResult.Failure] rather than a bare "zero articles"
+ * [NewsResult.Success], which a body-shape-blind `Json.decodeFromString` failure alone can't do.
+ * Two independent signals, either sufficient on its own: an explicit `text/html` content-type, or a
+ * body whose first non-whitespace character isn't JSON's own leading `{`.
+ */
+internal fun looksLikeJson(resp: HttpResponse, body: String): Boolean {
+    if (resp.contentType()?.match(ContentType.Text.Html) == true) return false
+    return body.trimStart().startsWith("{")
+}
+
 // Strips a leading USGS "<N> km <compass> of " distance/direction prefix (e.g. "68 km NNW of ")
 // case-insensitively — the compass group is 1-3 letters from {N,S,E,W} (covers every real USGS
 // direction abbreviation: N/S/E/W/NE/NW/SE/SW/NNW/NNE/etc.).
 private val DISTANCE_PREFIX = Regex("""^\d+(\.\d+)?\s*km\s+[NSEW]{1,3}\s+of\s+""", RegexOption.IGNORE_CASE)
 
+// Task 2b (task-2b-news-fix-report.md): live-reproduced 2026-08-16 — GDELT's DOC API rejects a
+// literal comma in `query` outright, responding HTTP 200 with an HTML body ("One or more of your
+// keywords contained an illegal character..."). That same live response names the dash as equally
+// illegal unless quoted ("place it in quotes like \"f-16\""). A raw USGS place string is near-
+// universally "City, Region" shaped (and occasionally hyphenated, e.g. "Port-au-Prince, Haiti"), so
+// both characters are stripped to a space here rather than quoted — GDELT's own suggested escape
+// (quoting) would demand an exact substring match in that literal order, which international
+// coverage rarely echoes verbatim, where the live A/B in that report already proved a plain
+// space-separated keyword list ("earthquake Indonesia", no comma) returns real, relevant results.
+private val GDELT_ILLEGAL_CHARS = Regex("[,-]")
+private val EXTRA_WHITESPACE = Regex("""\s+""")
+
 /**
  * Plan 4 Task 5: the pure half of [GdeltClient.searchEarthquakeNews]'s query-building — TDD'd
  * directly (GdeltClientTest), no HTTP/MockEngine needed. Strips USGS's own distance/direction
  * prefix (a literal place name reads better in a news search than "68 km NNW of Ende, Indonesia
- * earthquake"), then appends "earthquake" UNLESS [place] already names one (case-insensitive check
- * — USGS titles named events, e.g. "The 2026 Kumamoto Region, Japan Earthquake", already contain
- * the word; appending a second one would just read oddly, not search any better).
+ * earthquake"), sanitizes GDELT-illegal punctuation ([GDELT_ILLEGAL_CHARS] — Task 2b, see that
+ * val's own kdoc), then appends "earthquake" UNLESS [place] already names one (case-insensitive
+ * check — USGS titles named events, e.g. "The 2026 Kumamoto Region, Japan Earthquake", already
+ * contain the word; appending a second one would just read oddly, not search any better).
  */
 internal fun gdeltPlaceQuery(place: String): String {
     val stripped = DISTANCE_PREFIX.replace(place, "").trim().ifBlank { place.trim() }
-    return if (stripped.contains("earthquake", ignoreCase = true)) stripped else "$stripped earthquake"
+    val sanitized = GDELT_ILLEGAL_CHARS.replace(stripped, " ").replace(EXTRA_WHITESPACE, " ").trim()
+    return if (sanitized.contains("earthquake", ignoreCase = true)) sanitized else "$sanitized earthquake"
 }
 
 /**

@@ -3,8 +3,11 @@ package com.yugma.terrawatch.insights
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yugma.terrawatch.data.QuakeRepository
+import com.yugma.terrawatch.model.Quake
 import com.yugma.terrawatch.network.GdeltClient
+import com.yugma.terrawatch.network.NewsResult
 import com.yugma.terrawatch.news.NewsUiState
+import com.yugma.terrawatch.news.usgsEventUrl
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.conflate
@@ -59,6 +62,11 @@ class InsightsNewsViewModel(
 
     private var lastQuakeId: String? = null
 
+    // Task 2b (dogfooding fix, task-2b-news-fix-report.md): remembers whichever candidate the most
+    // recent fetch ran for, purely so [retry] can re-issue it without the caller re-supplying it —
+    // same shape DetailNewsViewModel's own pendingQuake just established for its sibling concern.
+    private var pendingCandidate: Quake? = null
+
     init {
         viewModelScope.launch {
             repository.recentQuakes().conflate().collect { recompute() }
@@ -70,14 +78,37 @@ class InsightsNewsViewModel(
         val candidate = repository.strongest(sinceMillis)?.takeIf { (it.mag ?: 0.0) >= INSIGHTS_NEWS_MIN_MAG }
         if (candidate == null) {
             lastQuakeId = null
+            pendingCandidate = null
             _newsState.value = NewsUiState.Hidden
             return
         }
         if (candidate.id == lastQuakeId) return // unchanged 7d/M6+ strongest — nothing to re-fetch
         lastQuakeId = candidate.id
+        fetch(candidate)
+    }
+
+    /** Task 2b: [NewsUiState.Error]'s Retry action — re-issues the fetch for [pendingCandidate], the
+     * same M6+/7d candidate [recompute] most recently resolved. A no-op if nothing is pending
+     * (defensive only — see [DetailNewsViewModel.retry]'s identical reasoning). Launched explicitly
+     * (unlike [recompute], which already runs inside [init]'s own collector coroutine) since a user
+     * tap arrives from outside that flow. */
+    fun retry() {
+        pendingCandidate?.let { candidate -> viewModelScope.launch { fetch(candidate) } }
+    }
+
+    private suspend fun fetch(candidate: Quake) {
+        pendingCandidate = candidate
         _newsState.value = NewsUiState.Loading
-        val articles = gdeltClient.searchEarthquakeNews(place = candidate.place, eventTimeMillis = candidate.timeMillis)
-        // Empty results collapse to Hidden, not an empty Content — see NewsUiState's own kdoc.
-        _newsState.value = if (articles.isEmpty()) NewsUiState.Hidden else NewsUiState.Content(articles)
+        _newsState.value = when (val result = gdeltClient.searchEarthquakeNews(place = candidate.place, eventTimeMillis = candidate.timeMillis)) {
+            // Empty results resolve to Empty (with the zero-dep USGS fallback link), never an empty
+            // Content — see NewsUiState's own kdoc. A Failure resolves to Error, never silently
+            // back to Hidden (Task 2b).
+            is NewsResult.Success -> if (result.articles.isEmpty()) {
+                NewsUiState.Empty(usgsEventUrl(candidate))
+            } else {
+                NewsUiState.Content(result.articles)
+            }
+            NewsResult.Failure -> NewsUiState.Error
+        }
     }
 }
