@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import com.yugma.terrawatch.data.ThemeSetting
 import com.yugma.terrawatch.data.ThemeStore
 import com.yugma.terrawatch.data.resolveDarkTheme
+import com.yugma.terrawatch.detail.DetailNewsViewModel
 import com.yugma.terrawatch.home.HomeViewModel
 import com.yugma.terrawatch.home.QuakeSelectionViewModel
 import com.yugma.terrawatch.home.rememberQuakeSelectionExtras
@@ -79,6 +80,10 @@ fun App(pendingQuakeId: String? = null, onQuakeIdConsumed: () -> Unit = {}) {
     } else {
         koinViewModel<QuakeSelectionViewModel>()
     }
+    // Plan 4 Task 5: same "resolved once here, threaded through AppNav explicitly" shape as
+    // selectionViewModel just above (see that val's own kdoc) - DetailNewsViewModel needs no
+    // SavedStateHandle extras dance (plain constructor), so a bare koinViewModel() call is enough.
+    val detailNewsViewModel = koinViewModel<DetailNewsViewModel>()
     val themeStore = koinInject<ThemeStore>()
     val themeSetting by themeStore.theme.collectAsState(initial = ThemeSetting.SYSTEM)
     // Plan 4 Task 3: keyed on pendingQuakeId itself, not Unit -- a SECOND notification tapped while
@@ -98,7 +103,11 @@ fun App(pendingQuakeId: String? = null, onQuakeIdConsumed: () -> Unit = {}) {
         // without each re-deriving the platform signal itself.
         CompositionLocalProvider(LocalReducedMotion provides systemReducedMotion()) {
             Surface(Modifier.fillMaxSize()) {
-                AppNav(homeViewModel = homeViewModel, selectionViewModel = selectionViewModel)
+                AppNav(
+                    homeViewModel = homeViewModel,
+                    selectionViewModel = selectionViewModel,
+                    detailNewsViewModel = detailNewsViewModel,
+                )
             }
         }
     }

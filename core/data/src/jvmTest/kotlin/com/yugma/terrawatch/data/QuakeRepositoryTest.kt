@@ -561,6 +561,46 @@ class QuakeRepositoryTest {
         )
     }
 
+    // Plan 4 Task 5 (Insights density backfill): worldwideCount/worldwideCountCache/
+    // setWorldwideCountCache — see QuakeRepository's own kdoc for each.
+    @Test fun `worldwideCount parses a successful FDSN count response`() = runTest {
+        val engine = MockEngine { respond("""{"count":11082,"maxAllowed":20000}""", HttpStatusCode.OK) }
+        val r = QuakeRepository(
+            UsgsApi(HttpClient(engine)),
+            EmscLiveSource(HttpClient(MockEngine { respond("", HttpStatusCode.NotFound) })),
+            dao, clock = { 2_000_000 })
+        assertEquals(11_082L, r.worldwideCount(startTimeMillis = 0, endTimeMillis = 1_000_000))
+    }
+
+    @Test fun `worldwideCount returns null on a failed request rather than throwing`() = runTest {
+        val engine = MockEngine { respond("boom", HttpStatusCode.InternalServerError) }
+        val r = QuakeRepository(
+            UsgsApi(HttpClient(engine)),
+            EmscLiveSource(HttpClient(MockEngine { respond("", HttpStatusCode.NotFound) })),
+            dao, clock = { 2_000_000 })
+        assertEquals(null, r.worldwideCount(startTimeMillis = 0, endTimeMillis = 1_000_000))
+    }
+
+    @Test fun `worldwideCountCache is null before anything is ever cached`() = runTest {
+        val r = QuakeRepository(
+            UsgsApi(HttpClient(MockEngine { respond("", HttpStatusCode.NotFound) })),
+            EmscLiveSource(HttpClient(MockEngine { respond("", HttpStatusCode.NotFound) })),
+            dao, clock = { 2_000_000 })
+        assertNull(r.worldwideCountCache())
+    }
+
+    @Test fun `setWorldwideCountCache then worldwideCountCache round-trips both fields together`() = runTest {
+        val r = QuakeRepository(
+            UsgsApi(HttpClient(MockEngine { respond("", HttpStatusCode.NotFound) })),
+            EmscLiveSource(HttpClient(MockEngine { respond("", HttpStatusCode.NotFound) })),
+            dao, clock = { 2_000_000 })
+        r.setWorldwideCountCache(count = 42, fetchedAtMillis = 1_800_000)
+        val cached = r.worldwideCountCache()
+        assertNotNull(cached)
+        assertEquals(42L, cached.count)
+        assertEquals(1_800_000L, cached.fetchedAtMillis)
+    }
+
     private fun oneFeatureGeoJson(id: String, lat: Double, lon: Double, mag: Double, timeMillis: Long = 1_950_000L) = """
         {
           "type": "FeatureCollection",

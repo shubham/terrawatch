@@ -23,3 +23,36 @@ package com.yugma.terrawatch.share
  * declaration here is a function, not a class. See Share.android.kt for the holder itself.
  */
 expect fun shareQuakeText(text: String)
+
+/**
+ * Plan 4 Task 4b: is [packageName] installed (and visible to this app) right now? Backs
+ * `com.yugma.terrawatch.detail.visibleShareTargets`'s real call site - [DetailSheet][com.yugma.
+ * terrawatch.detail.DetailSheet] hides a quick-share button entirely rather than graying it out,
+ * so this only ever needs a yes/no answer, never a reason. Android's actual:
+ * `PackageManager.getLaunchIntentForPackage(packageName) != null` (the brief's own specified
+ * check) - requires the target package to be declared in a manifest `<queries>` element on API
+ * 30+ (package-visibility filtering), see `AndroidManifest.xml`'s own comment for the 3 entries
+ * this feature needs. jvm/wasmJs: always `false` - neither platform has an installed-mobile-app
+ * concept, so every quick-share button simply never appears there (same "Android-only scope"
+ * reasoning [shareQuakeText]'s own kdoc documents per-target).
+ */
+expect fun isPackageInstalled(packageName: String): Boolean
+
+/**
+ * Plan 4 Task 4b: package-targeted `ACTION_SEND` - the quick-share row's tap action, distinct from
+ * [shareQuakeText]'s generic chooser (`Intent.createChooser`, no `setPackage`). [text] is the SAME
+ * string [DetailSheet][com.yugma.terrawatch.detail.DetailSheet] already built via
+ * [com.yugma.terrawatch.detail.buildShareText] for the chooser button - this function only differs
+ * in WHICH app receives it, not what it says.
+ */
+expect fun sharePackaged(packageName: String, text: String)
+
+/**
+ * Plan 4 Task 5: opens [url] in the platform's own browser/handler (`ACTION_VIEW` on Android) -
+ * backs DetailSheet's "In the news" headline taps. Same holder-based Android actual as
+ * [shareQuakeText]/[sharePackaged] (no Context in this shared signature); jvm best-efforts a real
+ * browser launch (`java.awt.Desktop`, this project's own "compile-only for CI" jvm target per the
+ * plan's Architecture line, not a real runtime surface); wasmJs is a no-op, same "no live screen
+ * reaches this yet" reasoning [shareQuakeText]'s own wasmJs actual documents.
+ */
+expect fun openUrl(url: String)

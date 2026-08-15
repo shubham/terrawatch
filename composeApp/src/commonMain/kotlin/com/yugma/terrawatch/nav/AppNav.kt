@@ -26,6 +26,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.yugma.terrawatch.data.OnboardingStore
+import com.yugma.terrawatch.detail.DetailNewsViewModel
 import com.yugma.terrawatch.history.HistoryScreen
 import com.yugma.terrawatch.home.HomeScreen
 import com.yugma.terrawatch.home.HomeViewModel
@@ -36,6 +37,7 @@ import com.yugma.terrawatch.insights.InsightsScreen
 import com.yugma.terrawatch.onboarding.OnboardingScreen
 import com.yugma.terrawatch.settings.SettingsScreen
 import org.koin.compose.koinInject
+import org.koin.compose.viewmodel.koinViewModel
 
 /**
  * Task 4 (Plan 3): the app's 5 nav destinations. [HOME]/[HISTORY]/[INSIGHTS] are the 3 persistent
@@ -115,6 +117,10 @@ internal const val NAV_INSIGHTS_TAG = "nav-insights"
 fun AppNav(
     homeViewModel: HomeViewModel,
     selectionViewModel: QuakeSelectionViewModel,
+    // Plan 4 Task 5: same Activity-scoped, explicitly-threaded shape as selectionViewModel just
+    // above (defaulted so `NavRoundTripTest`/`HomeFlowTest`/`OnboardingGateTest`'s existing
+    // call sites - none of which pass this - keep compiling unchanged).
+    detailNewsViewModel: DetailNewsViewModel = koinViewModel(),
     onboardingStore: OnboardingStore = koinInject(),
 ) {
     // One-shot, read exactly once for this composable's whole lifetime (remember, no key) --
@@ -152,6 +158,7 @@ fun AppNav(
                     startDestination = startDestination,
                     homeViewModel = homeViewModel,
                     selectionViewModel = selectionViewModel,
+                    detailNewsViewModel = detailNewsViewModel,
                     onboardingStore = onboardingStore,
                     modifier = Modifier.weight(1f).fillMaxSize(),
                 )
@@ -163,6 +170,7 @@ fun AppNav(
                     startDestination = startDestination,
                     homeViewModel = homeViewModel,
                     selectionViewModel = selectionViewModel,
+                    detailNewsViewModel = detailNewsViewModel,
                     onboardingStore = onboardingStore,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
@@ -228,6 +236,7 @@ private fun AppNavHost(
     startDestination: String,
     homeViewModel: HomeViewModel,
     selectionViewModel: QuakeSelectionViewModel,
+    detailNewsViewModel: DetailNewsViewModel,
     onboardingStore: OnboardingStore,
     modifier: Modifier = Modifier,
 ) {
@@ -236,6 +245,7 @@ private fun AppNavHost(
             HomeScreen(
                 viewModel = homeViewModel,
                 selectionViewModel = selectionViewModel,
+                detailNewsViewModel = detailNewsViewModel,
                 onSettingsClick = { navController.navigate(Routes.SETTINGS) },
             )
         }
@@ -247,12 +257,20 @@ private fun AppNavHost(
         // keeps this entry warm" behavior Home's own map/ViewModels get, with no special-casing
         // needed here. selectionViewModel is passed through explicitly (not defaulted) -- it must
         // be the SAME Activity-scoped instance Home shares, never a second nav-back-stack-entry-
-        // scoped one (see HistoryScreen's own kdoc).
-        composable(Routes.HISTORY) { HistoryScreen(selectionViewModel = selectionViewModel) }
+        // scoped one (see HistoryScreen's own kdoc). detailNewsViewModel (Plan 4 Task 5): same
+        // Activity-scoped sharing reasoning.
+        composable(Routes.HISTORY) {
+            HistoryScreen(selectionViewModel = selectionViewModel, detailNewsViewModel = detailNewsViewModel)
+        }
         // Task 6 (Plan 3): same shape as HISTORY above -- InsightsViewModel resolves via
         // InsightsScreen's own defaulted `= koinViewModel()` param, selectionViewModel threaded
         // through explicitly so a STRONGEST-card tap opens the same shared detail sheet.
-        composable(Routes.INSIGHTS) { InsightsScreen(selectionViewModel = selectionViewModel) }
+        // detailNewsViewModel (Plan 4 Task 5): same Activity-scoped sharing reasoning; Insights'
+        // OWN separate "In the news" card resolves InsightsNewsViewModel via its own defaulted
+        // param instead, see InsightsScreen's own kdoc.
+        composable(Routes.INSIGHTS) {
+            InsightsScreen(selectionViewModel = selectionViewModel, detailNewsViewModel = detailNewsViewModel)
+        }
         // Task 7 (Plan 3): the real SettingsScreen replaces the placeholder — its own
         // `= koinViewModel()` default resolves SettingsViewModel scoped to this route's own
         // NavBackStackEntry (same shape History/Insights already use for their own ViewModels).

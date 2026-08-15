@@ -2,6 +2,7 @@ package com.yugma.terrawatch.share
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 
 // Round 2 (stale-kdoc fix): set once from ensureKoinStarted (di/KoinBootstrap.kt) -- called from
 // BOTH of this app's entry points, MainActivity.onCreate AND AlertDigestWorker.doWork() (a
@@ -38,4 +39,39 @@ actual fun shareQuakeText(text: String) {
         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
     appContext.startActivity(chooser)
+}
+
+/**
+ * Plan 4 Task 4b: exactly the brief's own specified check. Requires [packageName] to be declared
+ * in this app's manifest `<queries>` element on API 30+ (Android's package-visibility filtering) -
+ * without it, this returns `false` for every app regardless of whether it's actually installed,
+ * indistinguishable from a genuinely-absent app. See `AndroidManifest.xml`'s own `<queries>` entry.
+ */
+actual fun isPackageInstalled(packageName: String): Boolean =
+    appContext.packageManager.getLaunchIntentForPackage(packageName) != null
+
+/**
+ * Package-targeted `ACTION_SEND` - `setPackage(packageName)` is the one difference from
+ * [shareQuakeText]'s chooser Intent: no `Intent.createChooser` wrapper (the target is already
+ * explicit, there is nothing left to choose between), so a tap always opens directly into
+ * [packageName]'s own compose/share UI.
+ */
+actual fun sharePackaged(packageName: String, text: String) {
+    val sendIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, text)
+        setPackage(packageName)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    appContext.startActivity(sendIntent)
+}
+
+/** `ACTION_VIEW` - opens [url] in whatever app/browser the OS resolves it to (a news headline tap
+ * has no single fixed target the way [sharePackaged] does, so this stays a plain implicit intent,
+ * no `setPackage`). */
+actual fun openUrl(url: String) {
+    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    appContext.startActivity(intent)
 }

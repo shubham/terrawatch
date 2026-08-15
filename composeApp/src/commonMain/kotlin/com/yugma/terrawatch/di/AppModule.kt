@@ -8,13 +8,16 @@ import com.yugma.terrawatch.data.OnboardingStore
 import com.yugma.terrawatch.data.QuakeRepository
 import com.yugma.terrawatch.data.ThemeStore
 import com.yugma.terrawatch.database.QuakeStore
+import com.yugma.terrawatch.detail.DetailNewsViewModel
 import com.yugma.terrawatch.history.HistoryViewModel
 import com.yugma.terrawatch.home.HomeViewModel
 import com.yugma.terrawatch.home.QuakeSelectionViewModel
+import com.yugma.terrawatch.insights.InsightsNewsViewModel
 import com.yugma.terrawatch.insights.InsightsViewModel
 import com.yugma.terrawatch.location.LocationProvider
 import com.yugma.terrawatch.location.LocationRequester
 import com.yugma.terrawatch.network.EmscLiveSource
+import com.yugma.terrawatch.network.GdeltClient
 import com.yugma.terrawatch.network.UsgsApi
 import com.yugma.terrawatch.notifications.NotificationPermissionRequester
 import com.yugma.terrawatch.settings.SettingsViewModel
@@ -38,6 +41,11 @@ import kotlin.time.ExperimentalTime
 fun appModule(http: HttpClient, dao: QuakeStore, locationProvider: LocationProvider): Module = module {
     single { UsgsApi(http) }
     single { EmscLiveSource(http) }
+    // Plan 4 Task 5: GDELT DOC 2.0 API client - a separate HttpClient dependency reuse (same `http`
+    // single every other network class here already shares), not a separate engine/base-url wiring
+    // per platform - GdeltClient's own baseUrl parameter is a plain default, unlike UsgsApi's
+    // baseFeedUrl which is also always the default in production.
+    single { GdeltClient(http) }
     single { dao }
     // Task 7 (Plan 3), USER REQUIREMENT: alertRuleStore/homeLocationStore are the two optional
     // trailing params QuakeRepository.kt's own kdoc documents — this is the one real call site that
@@ -97,6 +105,16 @@ fun appModule(http: HttpClient, dao: QuakeStore, locationProvider: LocationProvi
     // own current docs ("Add SavedStateHandle to your ViewModel constructor - Koin injects it
     // automatically"). See QuakeSelectionViewModel's own kdoc for the fuller citation.
     viewModel { QuakeSelectionViewModel(get(), get()) }
+    // Plan 4 Task 5: DetailSheet's "In the news" state machine - see that class's own kdoc for why
+    // it's a sibling of QuakeSelectionViewModel rather than folded into it. No SavedStateHandle
+    // dance needed (unlike QuakeSelectionViewModel just above) - a plain constructor, so
+    // koinViewModel<DetailNewsViewModel>() resolves it the same simple way HistoryViewModel/
+    // InsightsViewModel already do below. Resolved once in App.kt and threaded through AppNav to
+    // Home/History/Insights explicitly (same Activity-scoped sharing shape as selectionViewModel
+    // itself - see App.kt's own kdoc) rather than each screen's own defaulted koinViewModel()
+    // default resolving a separate per-tab instance, which would silently desync from whichever
+    // quake selectionViewModel says is actually selected once the user switches tabs.
+    viewModel { DetailNewsViewModel(get()) }
     // Task 5 (Plan 3): HistoryPager's clock seam is only ever consulted for a year-LESS filter's
     // very first cursor ("now") — same injected-at-the-platform-boundary shape as QuakeRepository's
     // own `clock` two lines up, not a default baked into core:data (which stays platform-clock-
@@ -112,6 +130,13 @@ fun appModule(http: HttpClient, dao: QuakeStore, locationProvider: LocationProvi
     // HistoryPager's own injected seam two lines up (real wall-clock at the platform boundary,
     // fully substitutable in tests).
     viewModel { InsightsViewModel(get(), clock = { Clock.System.now().toEpochMilliseconds() }) }
+    // Plan 4 Task 5: Insights' OWN "In the news" card (M6+/7d, independent of InsightsViewModel -
+    // see InsightsNewsViewModel's own kdoc for why it's a deliberate sibling, not a widening of
+    // InsightsViewModel's constructor). Resolved via InsightsScreen's own second `= koinViewModel()`
+    // default parameter, same shape HistoryViewModel/InsightsViewModel/SettingsViewModel below
+    // already use for their own tab-scoped ViewModels - nothing else in this graph needs to share
+    // this one instance the way selectionViewModel/DetailNewsViewModel above do.
+    viewModel { InsightsNewsViewModel(get(), get(), clock = { Clock.System.now().toEpochMilliseconds() }) }
     // Task 7 (Plan 3): Settings' own tab-scoped ViewModel — resolved via SettingsScreen's own
     // defaulted `= koinViewModel()` param, same shape as HistoryViewModel/InsightsViewModel above.
     viewModel { SettingsViewModel(get(), get(), get()) }

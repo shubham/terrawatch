@@ -51,6 +51,12 @@ sealed interface InsightsUiState {
         // `Content` beyond the plan brief's originally-pinned 4-field shape
         // (dayCounts/bands/strongest/periodLabel) - a controller-approved fix-round addition.
         val nowBucketAtCompute: Long,
+        // Plan 4 Task 5 (Insights density backfill): null unless [worldwideCountIfThin] actually
+        // fetched (or served a fresh-enough cached) FDSN total - see that function's own kdoc for
+        // the exact gate (THIRTY_DAYS period AND cachedCount < 100). `InsightsScreen.densityCaption`
+        // is the pure function that turns this into the visible "N cached · M worldwide" text -
+        // null here simply means no caption, never an error state of its own.
+        val worldwideCount: Long? = null,
     ) : InsightsUiState
 
     /** The current period's window has zero quakes at all (`bands.sumOf { it.second } == 0L`,
@@ -102,8 +108,23 @@ fun fillBandGaps(counts: List<BandCount>): List<Pair<MagnitudeBand, Long>> {
 }
 
 /**
- * Task 6 (Plan 3): the Insights screen's ViewModel - offline-pure (every read is a local SQLite
- * aggregate query through [repository], zero network calls anywhere in this class).
+ * Task 6 (Plan 3): the Insights screen's ViewModel - offline-pure for its three core cards (every
+ * read behind [dayCounts]/[bands]/[strongest] is a local SQLite aggregate query through
+ * [repository], zero network calls anywhere in producing them; airplane mode changes nothing about
+ * those three cards, still the "offline mode still renders" proof screen the plan brief calls out).
+ *
+ * Plan 4 Task 5 (Insights density backfill) is the ONE deliberate, narrow exception, added on top
+ * rather than woven through: [worldwideCountIfThin] optionally makes a single, 6h-cached, best-effort
+ * FDSN `/count` call (via [repository]'s own [QuakeRepository.worldwideCount]/
+ * [QuakeRepository.worldwideCountCache] - never a direct network dependency of this class) to
+ * populate [InsightsUiState.Content.worldwideCount] with a "N cached · M worldwide" disclosure
+ * caption. It is structurally incapable of blocking, gating, or replacing the three core cards:
+ * [computeContent] always computes [dayCounts]/[bands]/[strongest] first and unconditionally, and
+ * [worldwideCountIfThin] itself just returns null on ANY failure (see its own kdoc) - the caption
+ * silently absent is the only possible symptom of a GDELT/FDSN outage, never a broken Insights tab.
+ * See [InsightsNewsViewModel] for the SEPARATE, sibling "In the news" card - deliberately NOT folded
+ * in here at all, network-touching from the start, for exactly the reason this class stays this
+ * narrowly amended rather than absorbing a second, unrelated network feature too.
  *
  * Two independent triggers recompute [state], each with different Loading semantics - the
  * distinction is deliberate, not an oversight:
@@ -207,7 +228,38 @@ class InsightsViewModel(
                 strongest = repository.strongest(sinceMillis),
                 periodLabel = period.label,
                 nowBucketAtCompute = nowBucket,
+                worldwideCount = worldwideCountIfThin(period, cachedCount = dayCounts.sum(), sinceMillis = sinceMillis, nowMillis = clock()),
             )
         }
+    }
+
+    /**
+     * Plan 4 Task 5 (Insights density backfill): null in every case except "the user is looking at
+     * the 30-day chart AND the local cache in that window looks thin (< [DENSITY_TRIGGER_THRESHOLD]
+     * rows)" - the brief's own trigger condition, gating BOTH whether this ever calls the network at
+     * all (a healthy cache needs no disclosure) and, since that is the only condition under which a
+     * value is ever populated, whether [InsightsScreen.densityCaption] ever has anything to show.
+     *
+     * 6h cache via [QuakeRepository.worldwideCountCache]/[QuakeRepository.setWorldwideCountCache]
+     * ("cached in meta 6h" per the brief) - a fresh-enough cached value is returned WITHOUT a
+     * network call; a stale-or-absent cache triggers exactly one [QuakeRepository.worldwideCount]
+     * call. On that call's failure, falls back to whatever cached value exists (even if stale)
+     * rather than dropping straight to null - a slightly-stale global count is a more honest
+     * disclosure than none at all when the network happens to be down right this instant, same
+     * "the cache stays browsable" spirit this app already applies to quake data itself.
+     */
+    private suspend fun worldwideCountIfThin(period: InsightsPeriod, cachedCount: Long, sinceMillis: Long, nowMillis: Long): Long? {
+        if (period != InsightsPeriod.THIRTY_DAYS || cachedCount >= DENSITY_TRIGGER_THRESHOLD) return null
+        val cached = repository.worldwideCountCache()
+        if (cached != null && nowMillis - cached.fetchedAtMillis < DENSITY_CACHE_TTL_MILLIS) return cached.count
+        val fetched = repository.worldwideCount(startTimeMillis = sinceMillis, endTimeMillis = nowMillis)
+        if (fetched == null) return cached?.count
+        repository.setWorldwideCountCache(fetched, nowMillis)
+        return fetched
+    }
+
+    private companion object {
+        const val DENSITY_TRIGGER_THRESHOLD = 100L
+        const val DENSITY_CACHE_TTL_MILLIS = 6 * 60 * 60 * 1000L
     }
 }

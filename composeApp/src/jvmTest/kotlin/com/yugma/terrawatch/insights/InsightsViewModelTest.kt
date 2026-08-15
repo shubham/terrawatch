@@ -56,13 +56,18 @@ class InsightsViewModelTest {
         return QuakeDao(TerraWatchDb(driver))
     }
 
-    private fun repository(dao: QuakeDao): QuakeRepository {
-        val engine = MockEngine { respond("", HttpStatusCode.NotFound) }
-        return QuakeRepository(UsgsApi(HttpClient(engine)), EmscLiveSource(HttpClient(engine)), dao, clock = { 1L })
-    }
+    // Plan 4 Task 5: engine is now an optional param (defaulted to the original fixed 404
+    // responder) so the density-backfill tests below can supply a real FDSN /count responder
+    // without disturbing any pre-existing call site.
+    private fun repository(dao: QuakeDao, engine: MockEngine = MockEngine { respond("", HttpStatusCode.NotFound) }): QuakeRepository =
+        QuakeRepository(UsgsApi(HttpClient(engine)), EmscLiveSource(HttpClient(engine)), dao, clock = { 1L })
 
-    private fun createVm(dao: QuakeDao = freshDao(), nowMillis: Long = 100 * DAY): InsightsViewModel =
-        InsightsViewModel(repository(dao), clock = { nowMillis }).also { createdViewModels += it }
+    private fun createVm(
+        dao: QuakeDao = freshDao(),
+        nowMillis: Long = 100 * DAY,
+        engine: MockEngine = MockEngine { respond("", HttpStatusCode.NotFound) },
+    ): InsightsViewModel =
+        InsightsViewModel(repository(dao, engine), clock = { nowMillis }).also { createdViewModels += it }
 
     private fun quake(id: String, timeMillis: Long, mag: Double?) = Quake(
         id = id, timeMillis = timeMillis, lat = 1.0, lon = 2.0, depthKm = 5.0, mag = mag,
@@ -192,6 +197,167 @@ class InsightsViewModelTest {
             assertIs<InsightsUiState.Loading>(awaitItem())
             val content = assertIs<InsightsUiState.Content>(awaitPastLoading())
             assertEquals(1L, content.dayCounts.sum())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+}
+
+/**
+ * Plan 4 Task 5: [InsightsViewModel]'s density-disclosure backfill (`worldwideCountIfThin`) — see
+ * that function's own kdoc for the exact gate (THIRTY_DAYS period AND cachedCount < 100) and the
+ * 6h meta-cache. A separate class (not folded into [InsightsViewModelTest] above) purely to keep
+ * this feature's own test setup (custom MockEngine responders, cache pre-seeding) from cluttering
+ * the existing suite's already-established helper shapes.
+ */
+class InsightsDensityBackfillTest {
+    private val createdViewModels = mutableListOf<InsightsViewModel>()
+
+    @AfterTest fun tearDown() {
+        Dispatchers.resetMain()
+        runBlocking { createdViewModels.forEach { it.viewModelScope.coroutineContext.job.cancelAndJoin() } }
+        createdViewModels.clear()
+    }
+
+    private fun freshDao(): QuakeDao {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        TerraWatchDb.Schema.create(driver)
+        return QuakeDao(TerraWatchDb(driver))
+    }
+
+    private fun repository(dao: QuakeDao, engine: MockEngine): QuakeRepository =
+        QuakeRepository(UsgsApi(HttpClient(engine)), EmscLiveSource(HttpClient(engine)), dao, clock = { 1L })
+
+    private fun createVm(repository: QuakeRepository, nowMillis: Long): InsightsViewModel =
+        InsightsViewModel(repository, clock = { nowMillis }).also { createdViewModels += it }
+
+    private fun quake(id: String, timeMillis: Long, mag: Double) = Quake(
+        id = id, timeMillis = timeMillis, lat = 1.0, lon = 2.0, depthKm = 5.0, mag = mag,
+        magType = "mw", place = "Test $id", tsunami = false, felt = null,
+        status = QuakeStatus.AUTOMATIC, sources = mapOf(Source.USGS to id),
+        revisions = listOf(MagRevision(mag, "mw", timeMillis, Source.USGS)), updatedAtMillis = timeMillis,
+    )
+
+    // Same shape as InsightsViewModelTest's own private awaitPastLoading() (not shared across
+    // classes - member extension functions are class-private in this file's own convention).
+    private suspend fun app.cash.turbine.ReceiveTurbine<InsightsUiState>.awaitPastLoading(): InsightsUiState {
+        var s = awaitItem()
+        while (s is InsightsUiState.Loading) s = awaitItem()
+        return s
+    }
+
+    // Flips to THIRTY_DAYS from within the turbine block (never before subscribing) - the same
+    // ordering InsightsViewModelTest's own "period flip to 30 days" test already uses, so the
+    // Loading->Content transition this triggers can never race ahead of the test's own subscription.
+    private suspend fun app.cash.turbine.ReceiveTurbine<InsightsUiState>.thirtyDayContent(vm: InsightsViewModel): InsightsUiState.Content {
+        assertIs<InsightsUiState.Content>(awaitPastLoading()) // the default 7-day load
+        vm.setPeriod(InsightsPeriod.THIRTY_DAYS)
+        assertIs<InsightsUiState.Loading>(awaitItem())
+        return assertIs<InsightsUiState.Content>(awaitPastLoading())
+    }
+
+    @Test fun `never backfills for the 7-day period, even with a thin cache`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val dao = freshDao()
+        val now = 100 * DAY
+        dao.upsert(quake("a", timeMillis = now, mag = 5.0))
+        var called = false
+        val vm = createVm(repository(dao, MockEngine { called = true; respond("""{"count":1}""", HttpStatusCode.OK) }), now)
+        vm.state.test {
+            val content = assertIs<InsightsUiState.Content>(awaitPastLoading())
+            assertEquals(null, content.worldwideCount)
+            cancelAndIgnoreRemainingEvents()
+        }
+        assertEquals(false, called, "the 7-day period must never trigger a density backfill call")
+    }
+
+    @Test fun `never backfills for THIRTY_DAYS once the cache already has 100+ rows`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val dao = freshDao()
+        val now = 100 * DAY
+        repeat(100) { i -> dao.upsert(quake("q$i", timeMillis = now - i * 1000L, mag = 4.0)) }
+        var called = false
+        val vm = createVm(repository(dao, MockEngine { called = true; respond("""{"count":1}""", HttpStatusCode.OK) }), now)
+        vm.state.test {
+            val thirtyDay = thirtyDayContent(vm)
+            assertEquals(100L, thirtyDay.dayCounts.sum())
+            assertEquals(null, thirtyDay.worldwideCount)
+            cancelAndIgnoreRemainingEvents()
+        }
+        assertEquals(false, called, "a healthy (>=100 row) cache must never trigger a density backfill call")
+    }
+
+    @Test fun `backfills and populates worldwideCount when THIRTY_DAYS cache is thin`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val dao = freshDao()
+        val now = 100 * DAY
+        dao.upsert(quake("a", timeMillis = now, mag = 5.0))
+        val vm = createVm(repository(dao, MockEngine { respond("""{"count":11082,"maxAllowed":20000}""", HttpStatusCode.OK) }), now)
+        vm.state.test {
+            val thirtyDay = thirtyDayContent(vm)
+            assertEquals(11_082L, thirtyDay.worldwideCount)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `a failed fetch with nothing cached leaves worldwideCount null`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val dao = freshDao()
+        val now = 100 * DAY
+        dao.upsert(quake("a", timeMillis = now, mag = 5.0))
+        val vm = createVm(repository(dao, MockEngine { respond("boom", HttpStatusCode.InternalServerError) }), now)
+        vm.state.test {
+            val thirtyDay = thirtyDayContent(vm)
+            assertEquals(null, thirtyDay.worldwideCount)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `a fresh cached count is reused without a new network call`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val dao = freshDao()
+        val now = 100 * DAY
+        dao.upsert(quake("a", timeMillis = now, mag = 5.0))
+        var callCount = 0
+        val engine = MockEngine { callCount++; respond("""{"count":99999,"maxAllowed":20000}""", HttpStatusCode.OK) }
+        val repo = repository(dao, engine)
+        repo.setWorldwideCountCache(count = 555, fetchedAtMillis = now - 60 * 60 * 1000L) // 1h old, well within 6h TTL
+        val vm = createVm(repo, now)
+        vm.state.test {
+            val thirtyDay = thirtyDayContent(vm)
+            assertEquals(555L, thirtyDay.worldwideCount)
+            cancelAndIgnoreRemainingEvents()
+        }
+        assertEquals(0, callCount, "a fresh (< 6h) cache hit must never touch the network")
+    }
+
+    @Test fun `a stale (6h+) cached count triggers a fresh fetch instead of being reused`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val dao = freshDao()
+        val now = 100 * DAY
+        dao.upsert(quake("a", timeMillis = now, mag = 5.0))
+        val engine = MockEngine { respond("""{"count":77,"maxAllowed":20000}""", HttpStatusCode.OK) }
+        val repo = repository(dao, engine)
+        repo.setWorldwideCountCache(count = 555, fetchedAtMillis = now - 7 * 60 * 60 * 1000L) // 7h old, past the 6h TTL
+        val vm = createVm(repo, now)
+        vm.state.test {
+            val thirtyDay = thirtyDayContent(vm)
+            assertEquals(77L, thirtyDay.worldwideCount, "a stale cache must be refreshed, not served as-is")
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `a failed fetch falls back to a stale cached value rather than null`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val dao = freshDao()
+        val now = 100 * DAY
+        dao.upsert(quake("a", timeMillis = now, mag = 5.0))
+        val engine = MockEngine { respond("boom", HttpStatusCode.InternalServerError) }
+        val repo = repository(dao, engine)
+        repo.setWorldwideCountCache(count = 555, fetchedAtMillis = now - 7 * 60 * 60 * 1000L) // stale, forces a re-fetch attempt
+        val vm = createVm(repo, now)
+        vm.state.test {
+            val thirtyDay = thirtyDayContent(vm)
+            assertEquals(555L, thirtyDay.worldwideCount, "a failed refresh should fall back to the stale value, not drop to null")
             cancelAndIgnoreRemainingEvents()
         }
     }

@@ -22,6 +22,9 @@ import kotlinx.coroutines.withContext
 
 enum class RefreshStatus { UPDATED, NOT_MODIFIED, FAILED }
 
+/** [QuakeRepository.worldwideCountCache]'s stored shape — see that method's own kdoc. */
+data class WorldwideCountCache(val count: Long, val fetchedAtMillis: Long)
+
 /**
  * The single ingest path for every quake source (poll, live WebSocket, archive backfill).
  * Every write funnels through [ingest], which window-queries the DAO for a same-event
@@ -307,6 +310,43 @@ class QuakeRepository(
         withContext(ioDispatcher) { dao.strongest(sinceMillis) }
 
     /**
+     * Task 5 (Plan 4): Insights' density-disclosure caption backfill — a single FDSN `/count` call
+     * (never per-day-bucket, never rows) for the SAME window Insights already renders, used only to
+     * caption "N cached · M total worldwide" when the local cache looks thin. Thin suspend +
+     * [ioDispatcher] pass-through over [UsgsApi.queryCount], same shape as [byId]/[quakesPerDay]
+     * above — `InsightsViewModel` never talks to [api] directly, matching this class's own
+     * established "the repository is the one seam a screen ViewModel needs" discipline
+     * ([pageBefore]'s kdoc states this explicitly for History; the same rule applies here).
+     *
+     * Returns null on any failure (see [UsgsApi.queryCount]'s own kdoc) — the caller's job is to
+     * fall back to a cached value or omit the caption entirely, never to surface an error state for
+     * what is a purely cosmetic disclosure.
+     */
+    suspend fun worldwideCount(startTimeMillis: Long, endTimeMillis: Long): Long? =
+        withContext(ioDispatcher) { api.queryCount(startTimeMillis, endTimeMillis) }
+
+    /**
+     * [worldwideCount]'s 6h cache, backing the "cached in meta 6h" requirement (Task 5 brief) —
+     * dedicated meta-key pair, not a generic KV pass-through, same "a single purpose gets a single
+     * named method pair, not an arbitrary key/value surface" discipline [historyCursor]/
+     * [setHistoryCursor] already established for this repository's public API.
+     */
+    suspend fun worldwideCountCache(): WorldwideCountCache? = withContext(ioDispatcher) {
+        val count = dao.metaGet(WORLDWIDE_COUNT_KEY)?.toLongOrNull() ?: return@withContext null
+        val at = dao.metaGet(WORLDWIDE_COUNT_AT_KEY)?.toLongOrNull() ?: return@withContext null
+        WorldwideCountCache(count = count, fetchedAtMillis = at)
+    }
+
+    /** Writes both halves of [WorldwideCountCache] as ONE transaction (via [QuakeStore.metaPutAll]
+     * — see that method's own kdoc) so a reader never observes a count with no matching timestamp
+     * or vice versa. */
+    suspend fun setWorldwideCountCache(count: Long, fetchedAtMillis: Long) {
+        withContext(ioDispatcher) {
+            dao.metaPutAll(WORLDWIDE_COUNT_KEY to count.toString(), WORLDWIDE_COUNT_AT_KEY to fetchedAtMillis.toString())
+        }
+    }
+
+    /**
      * Task 7 (Plan 3), USER REQUIREMENT: the "near" rule's radius/minMag are now STORE-fed, not
      * [DEFAULT_RULES]'s compile-time 500.0/4.5 — [alertRuleStore], once wired (every real call site
      * always wires it via [AppModule][com.yugma.terrawatch.di.appModule]; only tests that construct
@@ -456,5 +496,9 @@ class QuakeRepository(
         // Fix Round 1 (I2): must match HomeViewModel.injectDebugQuake's id prefix exactly —
         // see [purgeDebugQuakes]/[QuakeDao.deleteByIdPrefix].
         const val DEBUG_QUAKE_ID_PREFIX = "debug-"
+        // Task 5 (Plan 4): worldwideCountCache/setWorldwideCountCache's dedicated meta-key pair —
+        // see those methods' own kdoc.
+        const val WORLDWIDE_COUNT_KEY = "worldwide_count_30d"
+        const val WORLDWIDE_COUNT_AT_KEY = "worldwide_count_30d_at"
     }
 }

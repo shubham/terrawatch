@@ -52,3 +52,26 @@ class InsightsScreenTest {
         assertEquals("Jan 1", endLabel)
     }
 }
+
+/**
+ * Plan 4 Task 5: [densityCaption] - the pure text-building half of the density-disclosure feature
+ * (the gating/fetching itself is [InsightsViewModel.worldwideCountIfThin], covered by
+ * `InsightsDensityBackfillTest`).
+ */
+class DensityCaptionTest {
+    @Test fun `null worldwideCount means no caption, regardless of period`() {
+        assertEquals(null, densityCaption(InsightsPeriod.THIRTY_DAYS, cachedCount = 5, worldwideCount = null))
+        assertEquals(null, densityCaption(InsightsPeriod.SEVEN_DAYS, cachedCount = 5, worldwideCount = null))
+    }
+
+    @Test fun `never shows for the 7-day period even with a non-null worldwideCount`() {
+        assertEquals(null, densityCaption(InsightsPeriod.SEVEN_DAYS, cachedCount = 5, worldwideCount = 12_345))
+    }
+
+    @Test fun `renders both counts, thousands-grouped, for the 30-day period`() {
+        assertEquals(
+            "Charts show 5 cached quakes · 11,082 total worldwide (USGS)",
+            densityCaption(InsightsPeriod.THIRTY_DAYS, cachedCount = 5, worldwideCount = 11_082),
+        )
+    }
+}

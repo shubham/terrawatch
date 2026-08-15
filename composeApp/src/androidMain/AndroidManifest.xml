@@ -1,4 +1,17 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Plan 4 Task 4b: package-visibility declarations (Android 11/API 30+ restricts
+         PackageManager.getLaunchIntentForPackage/queryIntentActivities/an explicit-package
+         ACTION_SEND to only apps declared here, regardless of what's actually installed) for the 3
+         quick-share targets - com.yugma.terrawatch.share.isPackageInstalled/sharePackaged both need
+         this, or every check silently reads "not installed" on API 30+ even when the app IS
+         present. Plain <package> entries (not an <intent> filter) since both operations this
+         feature performs (getLaunchIntentForPackage AND an explicit setPackage(...) ACTION_SEND)
+         are package-identity checks, not "any app that can handle this intent" queries. -->
+    <queries>
+        <package android:name="com.whatsapp" />
+        <package android:name="com.twitter.android" />
+        <package android:name="com.instagram.barcelona" />
+    </queries>
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <!-- Plan 4 Task 3: required to even ASK for POST_NOTIFICATIONS on API 33+, without this

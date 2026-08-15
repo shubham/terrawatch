@@ -91,4 +91,39 @@ class UsgsApiTest {
         val ex = assertFailsWith<IllegalStateException> { api.queryArchive(endTimeMillis = 1_754_600_000_000) }
         assertTrue(ex.message!!.contains("503"), "got: ${ex.message}")
     }
+
+    // Plan 4 Task 5 (Insights density backfill). Confirmed live against the real endpoint before
+    // writing this: `.../fdsnws/event/1/count?format=geojson&starttime=...&endtime=...` returns
+    // `{"count":11082,"maxAllowed":20000}` — a scalar count, not a feature collection.
+    @Test fun `queryCount parses the scalar count field`() = runTest {
+        val engine = MockEngine { req ->
+            val u = req.url.toString()
+            assertTrue(u.contains("/fdsnws/event/1/count"))
+            assertTrue(u.contains("format=geojson"))
+            respond("""{"count":11082,"maxAllowed":20000}""", HttpStatusCode.OK)
+        }
+        val api = UsgsApi(HttpClient(engine))
+        assertEquals(11_082L, api.queryCount(startTimeMillis = 0, endTimeMillis = 1_754_600_000_000))
+    }
+
+    @Test fun `queryCount includes minmagnitude only when supplied`() = runTest {
+        val engine = MockEngine { req ->
+            assertTrue(req.url.toString().contains("minmagnitude=6.0"))
+            respond("""{"count":10,"maxAllowed":20000}""", HttpStatusCode.OK)
+        }
+        val api = UsgsApi(HttpClient(engine))
+        api.queryCount(startTimeMillis = 0, endTimeMillis = 1_754_600_000_000, minMagnitude = 6.0)
+    }
+
+    @Test fun `queryCount degrades to null (never throws) on a non-2xx response`() = runTest {
+        val engine = MockEngine { respond("boom", HttpStatusCode.InternalServerError) }
+        val api = UsgsApi(HttpClient(engine))
+        assertEquals(null, api.queryCount(startTimeMillis = 0, endTimeMillis = 1_754_600_000_000))
+    }
+
+    @Test fun `queryCount degrades to null on a malformed body`() = runTest {
+        val engine = MockEngine { respond("<html>not json</html>", HttpStatusCode.OK) }
+        val api = UsgsApi(HttpClient(engine))
+        assertEquals(null, api.queryCount(startTimeMillis = 0, endTimeMillis = 1_754_600_000_000))
+    }
 }

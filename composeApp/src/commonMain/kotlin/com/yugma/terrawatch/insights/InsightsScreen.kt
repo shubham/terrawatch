@@ -1,5 +1,6 @@
 package com.yugma.terrawatch.insights
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,29 +19,38 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yugma.terrawatch.common.rememberNowMillisTicker
+import com.yugma.terrawatch.detail.DetailNewsViewModel
 import com.yugma.terrawatch.detail.DetailSheet
 import com.yugma.terrawatch.home.QuakeSelectionViewModel
 import com.yugma.terrawatch.model.Quake
 import com.yugma.terrawatch.motion.LocalReducedMotion
+import com.yugma.terrawatch.network.NewsArticle
+import com.yugma.terrawatch.news.NewsUiState
+import com.yugma.terrawatch.share.openUrl
 import com.yugma.terrawatch.share.shareQuakeText
+import com.yugma.terrawatch.share.sharePackaged
 import com.yugma.terrawatch.ui.charts.BarChart
 import com.yugma.terrawatch.ui.charts.DistributionBars
 import com.yugma.terrawatch.ui.components.QuakeCard
 import com.yugma.terrawatch.ui.components.SkeletonCard
 import com.yugma.terrawatch.ui.format.formatCount
+import com.yugma.terrawatch.ui.format.formatRelativeTime
 import com.yugma.terrawatch.ui.format.formatShortDate
 import com.yugma.terrawatch.ui.theme.TerraRadii
 import org.koin.compose.viewmodel.koinViewModel
@@ -66,12 +76,31 @@ import org.koin.compose.viewmodel.koinViewModel
 @Composable
 fun InsightsScreen(
     selectionViewModel: QuakeSelectionViewModel,
+    // Plan 4 Task 5: same Activity-scoped, explicitly-threaded shape as selectionViewModel above -
+    // see DetailNewsViewModel's own kdoc. Backs the detail sheet's OWN "In the news" section, NOT
+    // this screen's separate "In the news" CARD (that's newsViewModel below).
+    detailNewsViewModel: DetailNewsViewModel = koinViewModel(),
+    // Plan 4 Task 5: Insights' own "In the news" card (M6+/7d, period-independent) - a SEPARATE
+    // ViewModel from [viewModel] on purpose, see InsightsNewsViewModel's own kdoc for why it isn't
+    // folded into InsightsViewModel. Resolved via this screen's own second defaulted
+    // `= koinViewModel()` param, same shape [viewModel] itself already establishes - nothing else
+    // in this graph needs to share this one instance.
+    newsViewModel: InsightsNewsViewModel = koinViewModel(),
     viewModel: InsightsViewModel = koinViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
     val period by viewModel.period.collectAsState()
     val selectedQuake by selectionViewModel.selectedQuake.collectAsState()
+    val detailNewsState by detailNewsViewModel.newsState.collectAsState()
+    val newsCardState by newsViewModel.newsState.collectAsState()
+    LaunchedEffect(selectedQuake) { detailNewsViewModel.onQuakeSelected(selectedQuake) }
     val nowMillis by rememberNowMillisTicker()
+    // Plan 4 Task 5: null except "30-day period AND InsightsViewModel actually populated
+    // Content.worldwideCount" - see densityCaption's own kdoc. Computed here (not inside the
+    // `when` below) so it can reach InsightsHeader, which renders ABOVE that `when` block.
+    val densityCaption = (state as? InsightsUiState.Content)?.let {
+        densityCaption(period = period, cachedCount = it.dayCounts.sum(), worldwideCount = it.worldwideCount)
+    }
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Box(Modifier.fillMaxSize()) {
@@ -81,7 +110,7 @@ fun InsightsScreen(
                     .windowInsetsPadding(WindowInsets.statusBars)
                     .verticalScroll(rememberScrollState()),
             ) {
-                InsightsHeader(period = period, onPeriodChange = viewModel::setPeriod)
+                InsightsHeader(period = period, onPeriodChange = viewModel::setPeriod, densityCaption = densityCaption)
                 when (val s = state) {
                     InsightsUiState.Loading -> InsightsSkeleton(modifier = Modifier.padding(horizontal = 16.dp))
                     is InsightsUiState.Content -> InsightsContent(
@@ -93,6 +122,22 @@ fun InsightsScreen(
                     InsightsUiState.Empty -> InsightsEmptyState()
                     is InsightsUiState.Error -> InsightsErrorState(onRetry = viewModel::retry)
                 }
+                // Plan 4 Task 5: rendered OUTSIDE the `when` above and gated on its own
+                // [newsCardState] alone, deliberately - this card's own 7-day/M6+ window is
+                // completely independent of [state]/[period] (a quiet 7d/30d chart period and a
+                // genuine M6+ news story in the last week are unrelated facts; this card must be
+                // able to show even while the 3 core cards read Empty, and must stay silent even
+                // while they read Content).
+                if (newsCardState != NewsUiState.Hidden) {
+                    Spacer(Modifier.height(12.dp))
+                    NewsCard(
+                        newsState = newsCardState,
+                        nowMillis = nowMillis,
+                        onArticleClick = { url -> openUrl(url) },
+                        reducedMotion = LocalReducedMotion.current,
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
+                }
                 Spacer(Modifier.height(24.dp)) // bottom breathing room under the scroll content
             }
             selectedQuake?.let { quake ->
@@ -102,6 +147,9 @@ fun InsightsScreen(
                     nowMillis = nowMillis,
                     onShare = { text -> shareQuakeText(text) },
                     onDismiss = { selectionViewModel.dismissSelection() },
+                    onSharePackaged = { pkg, text -> sharePackaged(pkg, text) },
+                    newsState = detailNewsState,
+                    onNewsArticleClick = { url -> openUrl(url) },
                 )
             }
         }
@@ -120,7 +168,15 @@ fun InsightsScreen(
 internal const val INSIGHTS_SUBTITLE = "Trends from recent activity"
 
 @Composable
-internal fun InsightsHeader(period: InsightsPeriod, onPeriodChange: (InsightsPeriod) -> Unit, modifier: Modifier = Modifier) {
+internal fun InsightsHeader(
+    period: InsightsPeriod,
+    onPeriodChange: (InsightsPeriod) -> Unit,
+    // Plan 4 Task 5: defaulted to null so ComponentsTest's own existing direct render
+    // (`InsightsHeader(period = ..., onPeriodChange = {})`) keeps compiling and rendering
+    // identically - see densityCaption's own kdoc for when this is ever non-null.
+    densityCaption: String? = null,
+    modifier: Modifier = Modifier,
+) {
     Row(
         modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -142,6 +198,16 @@ internal fun InsightsHeader(period: InsightsPeriod, onPeriodChange: (InsightsPer
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            // Plan 4 Task 5: the density-disclosure caption - "subtitle GAINS the caption" (the
+            // brief's own wording) means appended below the existing subtitle, never replacing it.
+            if (densityCaption != null) {
+                Text(
+                    text = densityCaption,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
         }
         // Two FilterChips, not an ExperimentalMaterial3Api SegmentedButton (the brief's own
         // explicitly offered alternative) - matches HistoryScreen's already-established chip
@@ -204,11 +270,15 @@ private fun StrongestRow(quake: Quake?, nowMillis: Long, onClick: (String) -> Un
 
 /** Every insight card: a white/[MaterialTheme.colorScheme.surface] rounded [TerraRadii.card]
  * surface with fixed internal padding - the one shared shape all three cards use, so a future
- * fourth card gets it for free. */
+ * fourth card gets it for free. [modifier] defaults to [Modifier.fillMaxWidth] (unchanged behavior
+ * for [InsightsContent]'s own 3 call sites, none of which pass one) - Plan 4 Task 5's [NewsCard] is
+ * that predicted fourth card, and the one that actually needs a caller-supplied modifier (its own
+ * call site in `InsightsScreen` sits OUTSIDE [InsightsContent]'s shared horizontal-padding
+ * `Column`, so it has to carry that padding itself). */
 @Composable
-private fun InsightsCard(content: @Composable ColumnScope.() -> Unit) {
+private fun InsightsCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(TerraRadii.card),
         color = MaterialTheme.colorScheme.surface,
         tonalElevation = 1.dp,
@@ -229,6 +299,62 @@ private fun CardEyebrow(text: String, trailing: String? = null, modifier: Modifi
         if (trailing != null) {
             Text(text = trailing, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+    }
+}
+
+/**
+ * Plan 4 Task 5: Insights' own "In the news" card - the "future fourth card" [InsightsCard]'s own
+ * kdoc predicted, reusing that exact shared shape. [NewsUiState.Hidden] is handled by the caller
+ * (`InsightsScreen`'s own `if (newsCardState != NewsUiState.Hidden)` guard - this composable is
+ * never even called for that case); [NewsUiState.Loading] reuses [SkeletonCard] ("loading shimmer
+ * reuse" per the brief, same shimmer every other Loading state in this app already uses).
+ */
+@Composable
+private fun NewsCard(
+    newsState: NewsUiState,
+    nowMillis: Long,
+    onArticleClick: (String) -> Unit,
+    reducedMotion: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    InsightsCard(modifier = modifier) {
+        CardEyebrow(text = "IN THE NEWS")
+        when (newsState) {
+            NewsUiState.Hidden -> Unit // caller already guards this case; defensive no-op.
+            NewsUiState.Loading -> Column(
+                modifier = Modifier.padding(top = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                repeat(3) { SkeletonCard(reducedMotion = reducedMotion) }
+            }
+            is NewsUiState.Content -> Column(Modifier.padding(top = 4.dp)) {
+                newsState.articles.forEachIndexed { index, article ->
+                    NewsHeadlineRow(article = article, nowMillis = nowMillis, onClick = { onArticleClick(article.url) })
+                    if (index != newsState.articles.lastIndex) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NewsHeadlineRow(article: NewsArticle, nowMillis: Long, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Column(modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 8.dp)) {
+        Text(
+            text = article.title,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = "${article.domain} · ${formatRelativeTime(article.seenAtMillis, nowMillis)}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -257,6 +383,29 @@ internal fun dayCountLabels(bucketCount: Int, nowBucketAtCompute: Long): Pair<St
     if (bucketCount <= 0) return "" to ""
     val sinceBucket = nowBucketAtCompute - (bucketCount - 1)
     return formatShortDate(sinceBucket * DAY_MILLIS) to formatShortDate(nowBucketAtCompute * DAY_MILLIS)
+}
+
+/**
+ * Plan 4 Task 5: the Insights density-disclosure caption — null unless [worldwideCount] is
+ * non-null (i.e. [InsightsViewModel.worldwideCountIfThin] actually fetched or served a cached FDSN
+ * total, which only ever happens for [InsightsPeriod.THIRTY_DAYS] with a thin local cache — see
+ * that function's own kdoc for the exact gate). Pure and `internal` (this file's own established
+ * "so a test can pin it" convention — see [dayCountLabels]) rather than living on
+ * [InsightsViewModel]: turning numbers into user-facing copy is this screen's job, not the
+ * ViewModel's, matching this codebase's existing "ViewModel emits data, screen formats it" split
+ * (`InsightsContent`'s own `"${formatCount(...)} total"` trailing text is built the same way, at
+ * render time, not pre-formatted by the ViewModel).
+ *
+ * Deliberately does NOT re-check `cachedCount < 100` itself — that gate already happened once, in
+ * [InsightsViewModel], to decide whether to populate [worldwideCount] at all; re-deriving it here
+ * from [cachedCount] alone would risk silently disagreeing with the ViewModel's own gate on some
+ * future edit to either side. This function's only job is "given a [worldwideCount] the ViewModel
+ * already decided to disclose, does the CURRENT [period] want to show it" (yes only for
+ * THIRTY_DAYS, matching the brief's own scoping — the caption never appears on the 7-day view).
+ */
+internal fun densityCaption(period: InsightsPeriod, cachedCount: Long, worldwideCount: Long?): String? {
+    if (period != InsightsPeriod.THIRTY_DAYS || worldwideCount == null) return null
+    return "Charts show ${formatCount(cachedCount)} cached quakes · ${formatCount(worldwideCount)} total worldwide (USGS)"
 }
 
 /** Loading placeholder - three [SkeletonCard]s, one per card region. Per the brief's own "same

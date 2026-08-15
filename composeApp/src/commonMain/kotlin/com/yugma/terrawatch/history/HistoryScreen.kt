@@ -39,10 +39,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.yugma.terrawatch.common.rememberNowMillisTicker
 import com.yugma.terrawatch.data.HistoryFilter
+import com.yugma.terrawatch.detail.DetailNewsViewModel
 import com.yugma.terrawatch.detail.DetailSheet
 import com.yugma.terrawatch.home.QuakeSelectionViewModel
 import com.yugma.terrawatch.motion.LocalReducedMotion
+import com.yugma.terrawatch.share.openUrl
 import com.yugma.terrawatch.share.shareQuakeText
+import com.yugma.terrawatch.share.sharePackaged
 import com.yugma.terrawatch.ui.components.QuakeCard
 import com.yugma.terrawatch.ui.components.SkeletonCard
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -93,11 +96,17 @@ private val MAG_CHIPS = listOf("All" to null, "M4.5+" to 4.5, "M6+" to 6.0)
 @Composable
 fun HistoryScreen(
     selectionViewModel: QuakeSelectionViewModel,
+    // Plan 4 Task 5: same Activity-scoped, explicitly-threaded shape as selectionViewModel above -
+    // see DetailNewsViewModel's own kdoc. Defaulted purely so a Koin-free test could override it,
+    // matching selectionViewModel's own established convention.
+    detailNewsViewModel: DetailNewsViewModel = koinViewModel(),
     viewModel: HistoryViewModel = koinViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
     val filter by viewModel.filter.collectAsState()
     val selectedQuake by selectionViewModel.selectedQuake.collectAsState()
+    val newsState by detailNewsViewModel.newsState.collectAsState()
+    LaunchedEffect(selectedQuake) { detailNewsViewModel.onQuakeSelected(selectedQuake) }
     val nowMillis by rememberNowMillisTicker()
     val listState = rememberLazyListState()
 
@@ -132,6 +141,9 @@ fun HistoryScreen(
                     nowMillis = nowMillis,
                     onShare = { text -> shareQuakeText(text) },
                     onDismiss = { selectionViewModel.dismissSelection() },
+                    onSharePackaged = { pkg, text -> sharePackaged(pkg, text) },
+                    newsState = newsState,
+                    onNewsArticleClick = { url -> openUrl(url) },
                 )
             }
         }

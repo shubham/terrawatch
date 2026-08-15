@@ -50,13 +50,16 @@ import androidx.compose.ui.unit.dp
 import com.yugma.terrawatch.common.rememberNowMillisTicker
 import com.yugma.terrawatch.data.PillStatus
 import com.yugma.terrawatch.data.pillStatus
+import com.yugma.terrawatch.detail.DetailNewsViewModel
 import com.yugma.terrawatch.detail.DetailSheet
 import com.yugma.terrawatch.location.LocationAskDialog
 import com.yugma.terrawatch.map.QuakeMap
 import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.model.haversineKm
 import com.yugma.terrawatch.motion.LocalReducedMotion
+import com.yugma.terrawatch.share.openUrl
 import com.yugma.terrawatch.share.shareQuakeText
+import com.yugma.terrawatch.share.sharePackaged
 import com.yugma.terrawatch.ui.components.StatusShield
 import com.yugma.terrawatch.ui.format.formatRelativeTime
 import com.yugma.terrawatch.ui.theme.TerraRadii
@@ -186,6 +189,10 @@ internal const val SETTINGS_GEAR_TAG = "settings-gear"
 fun HomeScreen(
     viewModel: HomeViewModel,
     selectionViewModel: QuakeSelectionViewModel = koinViewModel(),
+    // Plan 4 Task 5: same "defaulted so a Koin-free test can override it" shape as
+    // selectionViewModel just above - AppNav's real call site always threads through the SAME
+    // Activity-scoped instance History/Insights share (see DetailNewsViewModel's own kdoc).
+    detailNewsViewModel: DetailNewsViewModel = koinViewModel(),
     onSettingsClick: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsState()
@@ -202,6 +209,11 @@ fun HomeScreen(
     // hides it. Task 3 (Plan 3): moved from `viewModel` to `selectionViewModel` — see this
     // function's own kdoc.
     val selectedQuake by selectionViewModel.selectedQuake.collectAsState()
+    // Plan 4 Task 5: keeps DetailNewsViewModel's own idea of "which quake" in sync with the
+    // shared selectionViewModel's - see that class's own kdoc for the idempotent-re-entry guard
+    // that makes this safe to call on every recomposition, not just on a genuine change.
+    val newsState by detailNewsViewModel.newsState.collectAsState()
+    LaunchedEffect(selectedQuake) { detailNewsViewModel.onQuakeSelected(selectedQuake) }
     // Fix Round 2 (review finding): feeds both isStale() and the banner's formatRelativeTime()
     // call below, so the staleness verdict and the displayed age both actually advance every 30s
     // instead of freezing at whatever they were when `state` last changed — see
@@ -289,6 +301,9 @@ fun HomeScreen(
                 nowMillis = nowMillis,
                 onShare = { text -> shareQuakeText(text) },
                 onDismiss = { selectionViewModel.dismissSelection() },
+                onSharePackaged = { pkg, text -> sharePackaged(pkg, text) },
+                newsState = newsState,
+                onNewsArticleClick = { url -> openUrl(url) },
             )
         }
         // Task 2 (Plan 3): a THIRD independent overlay layer, same "stacks on top of whichever

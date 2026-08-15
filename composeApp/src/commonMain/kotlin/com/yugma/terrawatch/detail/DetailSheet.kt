@@ -1,5 +1,6 @@
 package com.yugma.terrawatch.detail
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -19,17 +20,24 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.yugma.terrawatch.model.Quake
 import com.yugma.terrawatch.model.Source
 import com.yugma.terrawatch.model.magnitudeBand
 import com.yugma.terrawatch.motion.LocalReducedMotion
+import com.yugma.terrawatch.network.NewsArticle
+import com.yugma.terrawatch.news.NewsUiState
+import com.yugma.terrawatch.share.isPackageInstalled
 import com.yugma.terrawatch.ui.components.BadgeSize
 import com.yugma.terrawatch.ui.components.MagnitudeBadge
 import com.yugma.terrawatch.ui.components.RevisionBadge
+import com.yugma.terrawatch.ui.components.SkeletonCard
 import com.yugma.terrawatch.ui.components.StatRow
 import com.yugma.terrawatch.ui.components.TsunamiBanner
 import com.yugma.terrawatch.ui.format.formatCoordinates
@@ -72,6 +80,23 @@ import kotlinx.coroutines.launch
  * (shown only when [Quake.felt] is non-null), and the mockup's "Save"/"Directions" buttons are
  * dropped (no saved-places/maps-deeplink feature exists yet) - Share + Dismiss only, per this
  * task's own brief.
+ *
+ * Plan 4 Task 4b (share targets): [onSharePackaged] and the quick-share row it backs are additive,
+ * defaulted params - every pre-existing call site (3 production screens + `ComponentsTest`'s own
+ * instrumented render) keeps compiling and behaving identically without supplying them.
+ * [visibleShareTargets] (computed once via `remember`, not re-queried every recomposition) decides
+ * which of [ShareTarget]'s 3 apps get a button at all - an absent app is fully OMITTED, never
+ * rendered disabled, per the brief's own "hidden (not grayed)" wording. Reuses [buildShareText] -
+ * the SAME string [onShare]'s chooser button sends is what [onSharePackaged] hands each
+ * packaged-app tap, computed once per sheet rather than separately per button.
+ *
+ * Plan 4 Task 5 (news): [newsState] is likewise additive/defaulted - [NewsUiState.Hidden] renders
+ * nothing at all, matching "no-results -> section hidden" exactly (see that sealed interface's own
+ * kdoc for why [NewsUiState.Content] is never constructed empty in the first place).
+ * [onNewsArticleClick] receives a tapped article's raw `url`, mirroring [onShare]'s "hand the
+ * caller the built value, not just a tap signal" shape - the caller wires it to
+ * `com.yugma.terrawatch.share.openUrl`, keeping the platform `ACTION_VIEW` call at the screen call
+ * site exactly like `onShare`'s platform call already stays there, not in here.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -81,6 +106,9 @@ fun DetailSheet(
     nowMillis: Long,
     onShare: (String) -> Unit,
     onDismiss: () -> Unit,
+    onSharePackaged: (packageName: String, text: String) -> Unit = { _, _ -> },
+    newsState: NewsUiState = NewsUiState.Hidden,
+    onNewsArticleClick: (url: String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     // Fix Round 1 (review finding): a bare `onClick = onDismiss` on the Dismiss button used to
@@ -98,6 +126,13 @@ fun DetailSheet(
     // scrim and swipe internal paths use the same guard pattern.
     val sheetState = rememberModalBottomSheetState()
     val scope = rememberCoroutineScope()
+    val shareText = buildShareText(quake, nowMillis)
+    // `remember` (no key): isPackageInstalled's PackageManager query only needs to run once per
+    // sheet-open, not once per recomposition - this composable is added/removed from composition
+    // wholesale each time the caller's `selectedQuake` flips to/from non-null (see this composable's
+    // own "does no lookups of its own" kdoc paragraph above), so a fresh sheet-open always re-runs
+    // this exactly once, and installed-app state cannot plausibly change while one stays open.
+    val visibleTargets = remember { visibleShareTargets(::isPackageInstalled) }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, modifier = modifier) {
         Column(
             modifier = Modifier
@@ -112,9 +147,22 @@ fun DetailSheet(
             TsunamiBanner(tsunami = quake.tsunami)
             Spacer(Modifier.height(12.dp))
             DetailStatList(quake = quake)
+            if (newsState != NewsUiState.Hidden) {
+                Spacer(Modifier.height(12.dp))
+                NewsSection(
+                    newsState = newsState,
+                    nowMillis = nowMillis,
+                    onArticleClick = onNewsArticleClick,
+                    reducedMotion = LocalReducedMotion.current,
+                )
+            }
+            if (visibleTargets.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                QuickShareRow(targets = visibleTargets, onClick = { target -> onSharePackaged(target.packageName, shareText) })
+            }
             Spacer(Modifier.height(16.dp))
             ActionRow(
-                onShare = { onShare(buildShareText(quake, nowMillis)) },
+                onShare = { onShare(shareText) },
                 onDismiss = { scope.launch { sheetState.hide() }.invokeOnCompletion { if (!sheetState.isVisible) onDismiss() } },
             )
         }
@@ -270,3 +318,126 @@ internal fun buildShareText(quake: Quake, nowMillis: Long): String =
     "M ${formatMagnitude(quake.mag)} — ${quake.place}. " +
         "Depth ${formatDepthKm(quake.depthKm)}. " +
         "${formatRelativeTime(quake.timeMillis, nowMillis)}. via TerraWatch"
+
+/**
+ * Plan 4 Task 4b: the 3 quick-share targets named by the brief - a fixed, ordered list (WhatsApp,
+ * X, Threads), each a package-targeted `ACTION_SEND` rather than the generic chooser [onShare]
+ * already opens. Package names are pinned exactly as specified, not guessed:
+ * `com.whatsapp`/`com.twitter.android`/`com.instagram.barcelona` (Threads still ships under
+ * Instagram's own former package id).
+ */
+enum class ShareTarget(val label: String, val packageName: String) {
+    WHATSAPP("WhatsApp", "com.whatsapp"),
+    X("X", "com.twitter.android"),
+    THREADS("Threads", "com.instagram.barcelona"),
+}
+
+/**
+ * The one pure, TDD'd piece of the quick-share row: which of [ShareTarget.entries] should get a
+ * button at all, given an installed-app check. Takes [isInstalled] as a plain function parameter
+ * (rather than calling [com.yugma.terrawatch.share.isPackageInstalled] directly) purely so this can
+ * be unit-tested against a fake checker with no platform/PackageManager involved - [DetailSheet]'s
+ * own real call site always passes the real expect/actual function reference.
+ *
+ * Absent apps are OMITTED from the result entirely (never included-but-flagged), matching the
+ * brief's own "absent app → button hidden (not grayed)" instruction directly at this layer -
+ * `QuickShareRow` below has no separate disabled-state branch to get wrong because there is
+ * nothing left for it to render for a missing app.
+ */
+internal fun visibleShareTargets(isInstalled: (String) -> Boolean): List<ShareTarget> =
+    ShareTarget.entries.filter { isInstalled(it.packageName) }
+
+/** Equal-width buttons, one per [targets] entry - a Row of 1-3 [OutlinedButton]s rather than a
+ * fixed 3-slot layout, since [targets] is already pre-filtered to only the installed apps (see
+ * [visibleShareTargets]) and this composable itself has no notion of "the other 2 are absent." */
+@Composable
+private fun QuickShareRow(targets: List<ShareTarget>, onClick: (ShareTarget) -> Unit, modifier: Modifier = Modifier) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = modifier.fillMaxWidth()) {
+        targets.forEach { target ->
+            OutlinedButton(onClick = { onClick(target) }, modifier = Modifier.weight(1f)) {
+                Text(target.label)
+            }
+        }
+    }
+}
+
+/** Small, muted section label - the same quiet register [com.yugma.terrawatch.insights.InsightsScreen]'s
+ * own `CardEyebrow` already established for this app's card headers (labelSmall/onSurfaceVariant/
+ * letter-spaced), duplicated here rather than exported across modules for one three-word label. */
+@Composable
+private fun SectionEyebrow(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        letterSpacing = 1.sp,
+        modifier = modifier,
+    )
+}
+
+/**
+ * Plan 4 Task 5: DetailSheet's "In the news" section - [NewsUiState.Hidden] is handled by the
+ * caller (see [DetailSheet]'s own `if (newsState != NewsUiState.Hidden)` guard, so this function is
+ * never even called for that case); [NewsUiState.Loading] reuses [SkeletonCard] verbatim ("loading
+ * shimmer reuse" per the brief - the same shimmer every other Loading state in this app already
+ * uses, not a bespoke headline-shaped placeholder); [NewsUiState.Content] renders up to 3 headlines
+ * in one card, each tappable straight to [onArticleClick].
+ */
+@Composable
+private fun NewsSection(
+    newsState: NewsUiState,
+    nowMillis: Long,
+    onArticleClick: (String) -> Unit,
+    reducedMotion: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier.fillMaxWidth()) {
+        SectionEyebrow("IN THE NEWS")
+        Spacer(Modifier.height(8.dp))
+        when (newsState) {
+            NewsUiState.Hidden -> Unit // caller already guards this case; defensive no-op.
+            NewsUiState.Loading -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                repeat(3) { SkeletonCard(reducedMotion = reducedMotion) }
+            }
+            is NewsUiState.Content -> Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(TerraRadii.card),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 1.dp,
+            ) {
+                Column {
+                    newsState.articles.forEachIndexed { index, article ->
+                        NewsRow(article = article, nowMillis = nowMillis, onClick = { onArticleClick(article.url) })
+                        if (index != newsState.articles.lastIndex) {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NewsRow(article: NewsArticle, nowMillis: Long, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+    ) {
+        Text(
+            text = article.title,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = "${article.domain} · ${formatRelativeTime(article.seenAtMillis, nowMillis)}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
