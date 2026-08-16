@@ -30,6 +30,8 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 
 private const val DAY = 86_400_000L
 
@@ -43,6 +45,19 @@ private const val THREE_ARTICLES = """
 
 class InsightsNewsViewModelTest {
     // Same leak-prevention discipline as InsightsViewModelTest's own tearDown.
+    //
+    // Flake-hardening pass (2026-08-16, sweeping the terrawatch flaky-test playbook -- see
+    // HomeViewModelTest's own kdoc for the original Task-13/commit-5e9e922 precedent this ports):
+    // `repository(dao)` below never pins QuakeRepository's `ioDispatcher`, and this class's own
+    // `init` collector (`repository.recentQuakes().conflate().collect { recompute() }`) is backed by
+    // QuakeDao.recent(), which hard-codes `.mapToList(Dispatchers.Default)` regardless of any pin --
+    // un-pinnable by construction. Every `vm.newsState.test { ... }` below therefore crosses a real,
+    // uncontrolled thread pool (that hard-coded hop, plus `strongest()`/`gdeltClient`'s own
+    // ioDispatcher/engine hops) before Turbine's assertion can settle, on every single test in this
+    // file -- all now carry `timeout = 30.seconds` for the same starved-CI-runner margin commit
+    // 5e9e922 first established. This class's own `awaitSettled()` helper already handles the
+    // OTHER half of this class of bug (Loading being conflated away entirely on a fast resolve) --
+    // this pass only adds the timeout margin on top, it doesn't touch that helper.
     private val createdViewModels = mutableListOf<InsightsNewsViewModel>()
 
     @AfterTest fun tearDown() {
@@ -62,14 +77,22 @@ class InsightsNewsViewModelTest {
         return QuakeRepository(UsgsApi(HttpClient(engine)), EmscLiveSource(HttpClient(engine)), dao, clock = { 1L })
     }
 
+    // Plan 5 (news kill-switch): `newsEnabled` defaults to `true` HERE (the test helper's own
+    // default), deliberately the opposite of the production default (`NewsFeature.ENABLED`, which
+    // is `false` — see that object's own kdoc, core:network's GdeltClient.kt) — every pre-existing
+    // test below calls `createVm(dao, ...)` unchanged and keeps exercising the real window/floor/
+    // fetch/retry logic, since that's what all of them are actually testing. The flag-OFF behavior
+    // itself gets its own dedicated tests further down, which pass `newsEnabled = false` explicitly.
     private fun createVm(
         dao: QuakeDao,
         gdeltResponse: String = THREE_ARTICLES,
         gdeltStatus: HttpStatusCode = HttpStatusCode.OK,
         nowMillis: Long = 100 * DAY,
+        newsEnabled: Boolean = true,
     ): InsightsNewsViewModel {
         val gdeltClient = GdeltClient(HttpClient(MockEngine { respond(gdeltResponse, gdeltStatus) }))
-        return InsightsNewsViewModel(repository(dao), gdeltClient, clock = { nowMillis }).also { createdViewModels += it }
+        return InsightsNewsViewModel(repository(dao), gdeltClient, clock = { nowMillis }, newsEnabled = newsEnabled)
+            .also { createdViewModels += it }
     }
 
     private fun quake(id: String, timeMillis: Long, mag: Double?, place: String = "Test $id") = Quake(
@@ -98,7 +121,7 @@ class InsightsNewsViewModelTest {
     @Test fun `an empty database settles on Hidden`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val vm = createVm(freshDao())
-        vm.newsState.test {
+        vm.newsState.test(timeout = 30.seconds) {
             assertEquals(NewsUiState.Hidden, awaitSettled())
             cancelAndIgnoreRemainingEvents()
         }
@@ -110,7 +133,7 @@ class InsightsNewsViewModelTest {
         val now = 100 * DAY
         dao.upsert(quake("small", timeMillis = now, mag = 5.9))
         val vm = createVm(dao, nowMillis = now)
-        vm.newsState.test {
+        vm.newsState.test(timeout = 30.seconds) {
             assertEquals(NewsUiState.Hidden, awaitSettled())
             cancelAndIgnoreRemainingEvents()
         }
@@ -122,7 +145,7 @@ class InsightsNewsViewModelTest {
         val now = 100 * DAY
         dao.upsert(quake("big", timeMillis = now, mag = 6.8, place = "Kumamoto, Japan"))
         val vm = createVm(dao, nowMillis = now)
-        vm.newsState.test {
+        vm.newsState.test(timeout = 30.seconds) {
             val content = assertIs<NewsUiState.Content>(awaitSettled())
             assertEquals(3, content.articles.size)
             cancelAndIgnoreRemainingEvents()
@@ -135,22 +158,65 @@ class InsightsNewsViewModelTest {
         val now = 100 * DAY
         dao.upsert(quake("old-big", timeMillis = now - 10 * DAY, mag = 7.0))
         val vm = createVm(dao, nowMillis = now)
-        vm.newsState.test {
+        vm.newsState.test(timeout = 30.seconds) {
             assertEquals(NewsUiState.Hidden, awaitSettled())
             cancelAndIgnoreRemainingEvents()
         }
     }
 
-    @Test fun `an empty GDELT result for a genuine M6+ candidate resolves to Hidden, not Content`() = runTest {
+    @Test fun `an empty GDELT result for a genuine M6+ candidate resolves to Empty with the USGS fallback link, not Content or a silent Hidden`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val dao = freshDao()
         val now = 100 * DAY
         dao.upsert(quake("big", timeMillis = now, mag = 6.5))
         val vm = createVm(dao, gdeltResponse = """{"articles":[]}""", nowMillis = now)
-        vm.newsState.test {
-            assertEquals(NewsUiState.Hidden, awaitSettled())
+        vm.newsState.test(timeout = 30.seconds) {
+            val empty = assertIs<NewsUiState.Empty>(awaitSettled())
+            assertEquals("https://earthquake.usgs.gov/earthquakes/eventpage/big", empty.usgsEventUrl)
             cancelAndIgnoreRemainingEvents()
         }
+    }
+
+    // Task 2b (dogfooding fix, task-2b-news-fix-report.md): same bug as DetailNewsViewModel's own
+    // sibling test — a GDELT failure used to collapse to the identical Hidden a genuine zero-hit
+    // query resolves to. Error now exists so Insights' own "In the news" card can render a compact
+    // "Couldn't load news" + Retry row instead of silently vanishing.
+    @Test fun `a GDELT failure for a genuine M6+ candidate resolves to Error, never a silent Hidden`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val dao = freshDao()
+        val now = 100 * DAY
+        dao.upsert(quake("big", timeMillis = now, mag = 6.5))
+        val vm = createVm(dao, gdeltResponse = "boom", gdeltStatus = HttpStatusCode.InternalServerError, nowMillis = now)
+        vm.newsState.test(timeout = 30.seconds) {
+            assertEquals(NewsUiState.Error, awaitSettled())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `retry re-issues the fetch for the same candidate and can recover to Content`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val dao = freshDao()
+        val now = 100 * DAY
+        dao.upsert(quake("big", timeMillis = now, mag = 6.5))
+        var callCount = 0
+        val gdeltClient = GdeltClient(
+            HttpClient(
+                MockEngine {
+                    callCount++
+                    if (callCount == 1) respond("boom", HttpStatusCode.InternalServerError) else respond(THREE_ARTICLES, HttpStatusCode.OK)
+                },
+            ),
+        )
+        val vm = InsightsNewsViewModel(repository(dao), gdeltClient, clock = { now }, newsEnabled = true).also { createdViewModels += it }
+        vm.newsState.test(timeout = 30.seconds) {
+            assertEquals(NewsUiState.Error, awaitSettled())
+
+            vm.retry()
+            val content = assertIs<NewsUiState.Content>(awaitSettled())
+            assertEquals(3, content.articles.size)
+            cancelAndIgnoreRemainingEvents()
+        }
+        assertEquals(2, callCount)
     }
 
     @Test fun `an unrelated smaller quake arriving does not re-fetch the unchanged strongest candidate`() = runTest {
@@ -159,7 +225,7 @@ class InsightsNewsViewModelTest {
         val now = 100 * DAY
         dao.upsert(quake("big", timeMillis = now, mag = 6.8))
         val vm = createVm(dao, nowMillis = now)
-        vm.newsState.test {
+        vm.newsState.test(timeout = 30.seconds) {
             assertIs<NewsUiState.Content>(awaitSettled())
 
             dao.upsert(quake("small-elsewhere", timeMillis = now, mag = 3.0))
@@ -175,7 +241,7 @@ class InsightsNewsViewModelTest {
         val now = 100 * DAY
         dao.upsert(quake("first", timeMillis = now, mag = 6.2))
         val vm = createVm(dao, nowMillis = now)
-        vm.newsState.test {
+        vm.newsState.test(timeout = 30.seconds) {
             assertIs<NewsUiState.Content>(awaitSettled())
 
             dao.upsert(quake("stronger", timeMillis = now, mag = 7.5))
@@ -183,5 +249,56 @@ class InsightsNewsViewModelTest {
             assertIs<NewsUiState.Content>(awaitSettled())
             cancelAndIgnoreRemainingEvents()
         }
+    }
+
+    // --- Plan 5, news kill-switch (USER DECISION, 2026-08-16): NewsFeature.ENABLED = false in
+    // production -- see that object's own kdoc (core:network's GdeltClient.kt) for the full
+    // rationale. These tests prove the ViewModel-level guard both when forced off explicitly and,
+    // separately, under the REAL shipped default (no override at all) -- same split
+    // DetailNewsViewModelTest's own identical section draws.
+
+    @Test fun `flag OFF -- a genuine M6+ candidate within the window still never calls GDELT, stays Hidden`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val dao = freshDao()
+        val now = 100 * DAY
+        dao.upsert(quake("big", timeMillis = now, mag = 7.5))
+        val vm = createVm(dao, nowMillis = now, newsEnabled = false)
+        vm.newsState.test(timeout = 30.seconds) {
+            assertEquals(NewsUiState.Hidden, awaitSettled())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `flag OFF -- retry is also a no-op, never calls GDELT`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val dao = freshDao()
+        val now = 100 * DAY
+        dao.upsert(quake("big", timeMillis = now, mag = 7.5))
+        val vm = createVm(dao, nowMillis = now, newsEnabled = false)
+        vm.newsState.test(timeout = 30.seconds) {
+            assertEquals(NewsUiState.Hidden, awaitSettled())
+            vm.retry()
+            expectNoEvents()
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    // The one test in this suite that does NOT force `newsEnabled` either way -- it constructs
+    // InsightsNewsViewModel exactly as `AppModule.kt`'s real Koin wiring does (no fourth argument),
+    // so this is the single place actually proving today's real shipped default
+    // (NewsFeature.ENABLED) is `false`, not just that the ViewModel's guard works when told to.
+    @Test fun `production default -- with no override, the real NewsFeature flag blocks every fetch for a genuine M6+ candidate`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val dao = freshDao()
+        val now = 100 * DAY
+        dao.upsert(quake("big", timeMillis = now, mag = 7.5))
+        var called = false
+        val gdeltClient = GdeltClient(HttpClient(MockEngine { called = true; respond(THREE_ARTICLES, HttpStatusCode.OK) }))
+        val vm = InsightsNewsViewModel(repository(dao), gdeltClient, clock = { now }).also { createdViewModels += it }
+        vm.newsState.test(timeout = 30.seconds) {
+            assertEquals(NewsUiState.Hidden, awaitSettled())
+            cancelAndIgnoreRemainingEvents()
+        }
+        assertTrue(!called, "NewsFeature.ENABLED must be false today -- flip it back only per a real user decision")
     }
 }

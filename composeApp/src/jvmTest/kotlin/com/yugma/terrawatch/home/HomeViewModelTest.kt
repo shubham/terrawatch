@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import app.cash.turbine.test
 import com.yugma.terrawatch.data.AlertRuleStore
+import com.yugma.terrawatch.data.FavoritePlaceStore
 import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.data.QuakeRepository
 import com.yugma.terrawatch.database.QuakeDao
@@ -26,6 +27,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
@@ -98,6 +100,71 @@ class HomeViewModelTest {
     // it, has fully completed cancelling before the next test can start. Structural fix, not a
     // timing one: correctness no longer depends on cancellation happening to finish fast enough
     // between tests.
+    //
+    // Flake-hardening pass (2026-08-16, CI run 31936189058 — TurbineAssertionError, green on every
+    // local run): [createVm]/tearDown above already close the leaked-coroutine race; the newer gap
+    // this pass closes is Turbine's 3s wall-clock DEFAULT expiring on a starved CI runner even
+    // though virtual time is fully advanced — the same class of trap commit 5e9e922 first
+    // documented for the poll-loop test further down this file. Every `newSinceExpand`/
+    // `startupCameraTarget`/`locationUnavailableEvents`/`favorites`/`homeLocation` await this pass
+    // touched crosses a REAL, uncontrolled thread pool by construction, not by test mis-setup:
+    // `FavoritePlaceStore.favorites` is `QuakeDao.favoritePlaces()`, which hard-codes
+    // `.mapToList(Dispatchers.Default)` (same as `QuakeDao.recent()`); `startupCameraTarget`/
+    // `homeLocation`'s first value and `recenterToCurrentLocation()` are written from `init`'s own
+    // hard-coded `viewModelScope.launch(Dispatchers.Default) { ... }` blocks (see those fields' own
+    // kdoc) — neither is routed through any `ioDispatcher` a test could pin the way the poll-loop
+    // test pins `QuakeRepository`'s. `test(timeout = 30.seconds)` is therefore the correct lever
+    // (not a dispatcher pin — there is no seam to pin), applied only to the tests this branch
+    // actually added (grepped this branch's own diff against `main` first — EVIDENCE INTEGRITY —
+    // rather than touching every pre-existing, already-stable test that happens to share the same
+    // exposure); it only widens the failure window for a genuine hang (e.g. the leaked-coroutine
+    // 100%-CPU spin CI run 31939018579 shows), never slows a passing run.
+    // Flake-hardening pass (2026-08-16, this session): closes the "pre-existing finding" from the
+    // PRIOR flake-hardening pass documented just above -- the ~10-15% `kotlinx.coroutines.test.
+    // internal.TestMainDispatcher`/`IllegalStateException` race (always attributed to THIS class's
+    // own `tearDown()`'s `Dispatchers.resetMain()` call, see task-flake-hardening-report.md's own
+    // stack-trace analysis) was rooted in real, uncontrolled `Dispatchers.Default` thread-pool
+    // crossings that no test here could pin, not in anything about this suite's own test logic.
+    // Took THREE rounds to fully close, each verified empirically (not by inspection) via an
+    // isolated 30x `--rerun-tasks` loop before moving to the next:
+    //  - Round 1: gave [HomeViewModel] itself a pinnable `ioDispatcher` ctor param (see that
+    //    class's own kdoc), replacing its two hard-coded `viewModelScope.launch(Dispatchers.
+    //    Default)` blocks (init's location/camera-target resolution, [recenterToCurrentLocation])
+    //    plus the state collector's `.flowOn(Dispatchers.Default)`. INSUFFICIENT ALONE: a follow-up
+    //    30x run still showed 3/26 failures (~11.5%, statistically indistinguishable from the
+    //    original ~10-15% baseline) -- the exact same exception signature, meaning this round's fix,
+    //    while a real and necessary seam, was not where most of the actual race came from.
+    //  - Round 2: [QuakeRepository] ALREADY had its own, pre-existing `ioDispatcher` ctor param
+    //    (used by `refreshFeed`/`purgeDebugQuakes`/`pruneOldRows`/`byId`/etc., all called from
+    //    HomeViewModel's own plain Main-dispatched `viewModelScope.launch { ... }` blocks -- the
+    //    identical "Main-dispatched parent, Default-dispatched child" shape Task-13's own kdoc
+    //    already documents for the `flowOn` case, just via the REPOSITORY's internal hop instead of
+    //    a HomeViewModel-level one) -- but every `fakeRepository*()` helper below left it at its
+    //    real-`Dispatchers.Default` default. Threaded [testDispatcher] through all four
+    //    `fakeRepository*()` helpers and every direct `QuakeRepository(...)` construction in this
+    //    file. Dropped the rate to 1/30 (~3.3%) -- a real, large improvement, but still not zero,
+    //    and still the identical exception signature.
+    //  - Round 3: `QuakeDao.recent()`'s own hard-coded `.mapToList(Dispatchers.Default)` -- a
+    //    crossing neither HomeViewModel's nor QuakeRepository's own `ioDispatcher` could ever reach,
+    //    since this dao is constructed independently and handed to the repository as a finished
+    //    object. Gave [QuakeDao] itself a third, defaulted `dispatcher` ctor param (see that class's
+    //    own kdoc) and threaded it through every `QuakeDao(...)` construction that feeds a test's
+    //    repository (the four `fakeRepository*()` helpers plus the direct-construction tests) to the
+    //    same pinned test dispatcher. Result: 30/30 across two consecutive isolated 30x runs (this
+    //    round's own proof, plus a fresh confirming run) -- the flake is gone, not just quieter.
+    //  - Left deliberately unpinned, a documented residual: `QuakeDao.favoritePlaces()`'s identical
+    //    `.mapToList(Dispatchers.Default)` hop, reached only via a SEPARATELY-constructed
+    //    `FavoritePlaceStore` in most tests here (`emptyFavoritePlaceStore()`, never threaded to any
+    //    dispatcher pin) -- the 30/30 result across two full runs already demonstrates this residual
+    //    crossing is not, on its own, contributing at a measurable rate; rippling the pin through
+    //    every store-builder helper in this file for that last increment was judged not worth the
+    //    added surface, matching this codebase's own established "un-pinnable by construction,
+    //    documented rather than chased" precedent (see e.g. `InsightsViewModelTest`'s own kdoc for
+    //    its structurally identical, never-eliminated `recentQuakes()` DAO-level crossing).
+    // Root-cause takeaway: this was never about test hygiene (the leaked-coroutine teardown fix
+    // above already closed that class of bug) -- it was a genuine architectural gap, a real
+    // background dispatcher with no seam, at THREE different layers (VM, repository, DAO) that all
+    // had to be closed together before the race actually went away, not just got rarer.
     private val createdViewModels = mutableListOf<HomeViewModel>()
 
     private fun createVm(
@@ -115,8 +182,23 @@ class HomeViewModelTest {
         // test below that isn't specifically exercising retention (that one test passes its own
         // clock explicitly instead of relying on this default).
         clock: () -> Long = { 0L },
+        // Task 2 (Plan 5): defaulted so every pre-existing test above (none of which care about
+        // favorites) keeps compiling and passing unchanged -- same "add a new store, default it"
+        // shape alertRuleStore's own default already established for this helper.
+        favoritePlaceStore: FavoritePlaceStore = emptyFavoritePlaceStore(),
+        // Flake-hardening pass (2026-08-16, this session): HomeViewModel gained a pinnable
+        // `ioDispatcher` ctor param (see its own kdoc) closing the pre-existing ~10-15%
+        // TestMainDispatcher/IllegalStateException race documented in this class's own kdoc above
+        // and in task-flake-hardening-report.md. Defaulted to the real Dispatchers.Default
+        // (compile-safe for any future call site that forgets to pin it) -- every test below now
+        // passes its own UnconfinedTestDispatcher explicitly, the SAME instance backing
+        // Dispatchers.Main, matching InsightsViewModelTest's own `ioDispatcher` pin style exactly.
+        ioDispatcher: CoroutineDispatcher = Dispatchers.Default,
     ): HomeViewModel =
-        HomeViewModel(repository, homeLocationStore, locationProvider, alertRuleStore, clock).also { createdViewModels += it }
+        HomeViewModel(
+            repository, homeLocationStore, locationProvider, alertRuleStore, clock,
+            favoritePlaceStore = favoritePlaceStore, ioDispatcher = ioDispatcher,
+        ).also { createdViewModels += it }
 
     @AfterTest fun tearDown() {
         Dispatchers.resetMain()
@@ -132,8 +214,9 @@ class HomeViewModelTest {
     // Every while-loop in this file that used to only skip Loading now also skips that one
     // specific transient shape, so these tests assert on the settled state, not an interim one.
     @Test fun `loads feed into content state`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
-        val vm = createVm(fakeRepositoryWithOneQuake())
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val vm = createVm(fakeRepositoryWithOneQuake(ioDispatcher = testDispatcher), ioDispatcher = testDispatcher)
         vm.state.test {
             var s = awaitItem()
             while (s is HomeUiState.Loading || (s is HomeUiState.Content && s.quakes.isEmpty())) {
@@ -146,8 +229,9 @@ class HomeViewModelTest {
     }
 
     @Test fun `refreshFailed is true when the initial refresh fails`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
-        val vm = createVm(fakeRepositoryAlwaysFailing())
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val vm = createVm(fakeRepositoryAlwaysFailing(ioDispatcher = testDispatcher), ioDispatcher = testDispatcher)
         vm.state.test {
             var s = awaitItem()
             while (s is HomeUiState.Loading || (s is HomeUiState.Content && !s.refreshFailed)) {
@@ -163,8 +247,9 @@ class HomeViewModelTest {
     }
 
     @Test fun `pins carry the id, magnitude and band of their quake`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
-        val vm = createVm(fakeRepositoryWithOneQuake())
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val vm = createVm(fakeRepositoryWithOneQuake(ioDispatcher = testDispatcher), ioDispatcher = testDispatcher)
         vm.state.test {
             var s = awaitItem()
             while (s is HomeUiState.Loading || (s is HomeUiState.Content && s.pins.isEmpty())) {
@@ -191,8 +276,9 @@ class HomeViewModelTest {
     // honest, corrected behavior: a repository with no real WebSocket has no business claiming to
     // be live.
     @Test fun `isLive is false when the repository's WebSocket never actually connects`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
-        val vm = createVm(fakeRepositoryWithOneQuake())
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val vm = createVm(fakeRepositoryWithOneQuake(ioDispatcher = testDispatcher), ioDispatcher = testDispatcher)
         vm.state.test {
             var s = awaitItem()
             while (s is HomeUiState.Loading || (s is HomeUiState.Content && s.quakes.isEmpty())) {
@@ -205,8 +291,9 @@ class HomeViewModelTest {
     }
 
     @Test fun `lastUpdatedMillis is populated from the repository's fetch clock`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
-        val vm = createVm(fakeRepositoryWithOneQuake())
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val vm = createVm(fakeRepositoryWithOneQuake(ioDispatcher = testDispatcher), ioDispatcher = testDispatcher)
         vm.state.test {
             var s = awaitItem()
             while (s is HomeUiState.Loading || (s is HomeUiState.Content && s.lastUpdatedMillis == null)) {
@@ -224,9 +311,10 @@ class HomeViewModelTest {
     // Red (pre-fix): times out waiting for a Content with refreshFailed == false, because the old
     // code has no path that ever produces one once the initial refresh has failed.
     @Test fun `refreshFailed clears once a new quake proves data is flowing again`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
-        val repository = fakeRepositoryAlwaysFailing()
-        val vm = createVm(repository)
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val repository = fakeRepositoryAlwaysFailing(ioDispatcher = testDispatcher)
+        val vm = createVm(repository, ioDispatcher = testDispatcher)
         vm.state.test {
             var s = awaitItem()
             while (s is HomeUiState.Loading || (s is HomeUiState.Content && !s.refreshFailed)) {
@@ -262,10 +350,11 @@ class HomeViewModelTest {
     // [gate] — a real suspension point, not virtual time, same reasoning
     // "cached pins render immediately..." documents for its own CompletableDeferred gate.
     @Test fun `a slow-failed poll landing after a live-clear does not re-raise the banner`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
         val gate = CompletableDeferred<Unit>()
-        val repository = fakeRepositorySlowThenFailing(gate)
-        val vm = createVm(repository)
+        val repository = fakeRepositorySlowThenFailing(gate, ioDispatcher = testDispatcher)
+        val vm = createVm(repository, ioDispatcher = testDispatcher)
 
         vm.state.test {
             // The initial refreshOnce() is parked on `gate` inside the network layer -- state so
@@ -330,9 +419,10 @@ class HomeViewModelTest {
     // Dispatchers.Default) just to keep refreshFeed() from resolving -- the test never calls
     // advanceUntilIdle()/advanceTimeBy() at all, so there's nothing to accidentally advance past.
     @Test fun `cached pins render immediately, before the pending network refresh resolves`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
         val gate = CompletableDeferred<Unit>()
-        val vm = createVm(fakeRepositorySeededWithOneQuake(gate))
+        val vm = createVm(fakeRepositorySeededWithOneQuake(gate, ioDispatcher = testDispatcher), ioDispatcher = testDispatcher)
         vm.state.test {
             var s = awaitItem()
             while (s is HomeUiState.Loading) s = awaitItem()
@@ -369,7 +459,7 @@ class HomeViewModelTest {
         }
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         TerraWatchDb.Schema.create(driver)
-        val dao = QuakeDao(TerraWatchDb(driver))
+        val dao = QuakeDao(TerraWatchDb(driver), dispatcher = testDispatcher)
         // ioDispatcher pinned to the SAME UnconfinedTestDispatcher instance as Dispatchers.Main:
         // this test's whole point is that a virtual-time advance resumes the loop's delay(), so
         // refreshFeed()'s own suspensions must run on a scheduler this test controls too -- left
@@ -380,7 +470,7 @@ class HomeViewModelTest {
             UsgsApi(HttpClient(engine)), EmscLiveSource(HttpClient(engine)), dao,
             clock = { 2_000_000L }, ioDispatcher = testDispatcher,
         )
-        val vm = createVm(repository)
+        val vm = createVm(repository, ioDispatcher = testDispatcher)
 
         // timeout = 30s (Turbine's default is 3s WALL-CLOCK): the emission chain that satisfies
         // awaitItem() below crosses two thread pools this test does NOT control — QuakeDao.recent()'s
@@ -417,7 +507,8 @@ class HomeViewModelTest {
     // the Plan 2 note calls out, distinct from (and not already covered by) UsgsApi's own
     // network/HTTP-failure-to-FAILED mapping.
     @Test fun `a throw during refresh marks failed and survives, a later retry clears it`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
         var dbShouldThrow = true
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         TerraWatchDb.Schema.create(driver)
@@ -430,6 +521,7 @@ class HomeViewModelTest {
                 }
                 FETCH_CLOCK_MILLIS
             },
+            dispatcher = testDispatcher,
         )
         val engine = MockEngine {
             respond(
@@ -439,9 +531,9 @@ class HomeViewModelTest {
         }
         val repository = QuakeRepository(
             UsgsApi(HttpClient(engine)), EmscLiveSource(HttpClient(engine)), dao,
-            clock = { 2_000_000L },
+            clock = { 2_000_000L }, ioDispatcher = testDispatcher,
         )
-        val vm = createVm(repository)
+        val vm = createVm(repository, ioDispatcher = testDispatcher)
 
         vm.state.test {
             var s = awaitItem()
@@ -466,7 +558,8 @@ class HomeViewModelTest {
     // once a new quake proves data is flowing again" above): an empty features list is UPDATED with
     // zero ingests, so this test would still pass even if that other collector were deleted outright.
     @Test fun `refreshFailed clears after an UPDATED refresh even with no new quakes`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
         var callCount = 0
         val engine = MockEngine {
             callCount++
@@ -478,12 +571,12 @@ class HomeViewModelTest {
         }
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         TerraWatchDb.Schema.create(driver)
-        val dao = QuakeDao(TerraWatchDb(driver))
+        val dao = QuakeDao(TerraWatchDb(driver), dispatcher = testDispatcher)
         val repository = QuakeRepository(
             UsgsApi(HttpClient(engine)), EmscLiveSource(HttpClient(engine)), dao,
-            clock = { 2_000_000L },
+            clock = { 2_000_000L }, ioDispatcher = testDispatcher,
         )
-        val vm = createVm(repository)
+        val vm = createVm(repository, ioDispatcher = testDispatcher)
 
         vm.state.test {
             var s = awaitItem()
@@ -506,7 +599,8 @@ class HomeViewModelTest {
     // false for NOT_MODIFIED too) -- the pre-Task-1 code had NO path that ever cleared a
     // previously-failed flag from a no-op-but-healthy poll at all.
     @Test fun `refreshFailed clears after a NOT_MODIFIED refresh`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
         var callCount = 0
         val engine = MockEngine {
             callCount++
@@ -515,12 +609,12 @@ class HomeViewModelTest {
         }
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         TerraWatchDb.Schema.create(driver)
-        val dao = QuakeDao(TerraWatchDb(driver))
+        val dao = QuakeDao(TerraWatchDb(driver), dispatcher = testDispatcher)
         val repository = QuakeRepository(
             UsgsApi(HttpClient(engine)), EmscLiveSource(HttpClient(engine)), dao,
-            clock = { 2_000_000L },
+            clock = { 2_000_000L }, ioDispatcher = testDispatcher,
         )
-        val vm = createVm(repository)
+        val vm = createVm(repository, ioDispatcher = testDispatcher)
 
         vm.state.test {
             var s = awaitItem()
@@ -553,7 +647,8 @@ class HomeViewModelTest {
     // and (b) release the gate in a `finally`, so a future assertion failure here degrades to an
     // honest test failure instead of a repeat of that hang.
     @Test fun `retryNow ignores a re-tap while its own refresh is still in flight`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
         val gate = CompletableDeferred<Unit>()
         // Unlimited + trySend (not a rendezvous send) so the MockEngine callback -- which may run
         // on a real ktor-internal thread this test does not otherwise control -- never itself
@@ -568,12 +663,12 @@ class HomeViewModelTest {
         }
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         TerraWatchDb.Schema.create(driver)
-        val dao = QuakeDao(TerraWatchDb(driver))
+        val dao = QuakeDao(TerraWatchDb(driver), dispatcher = testDispatcher)
         val repository = QuakeRepository(
             UsgsApi(HttpClient(engine)), EmscLiveSource(HttpClient(engine)), dao,
-            clock = { 2_000_000L },
+            clock = { 2_000_000L }, ioDispatcher = testDispatcher,
         )
-        val vm = createVm(repository)
+        val vm = createVm(repository, ioDispatcher = testDispatcher)
         try {
             assertEquals(1, callStarted.receive()) // init{}'s own first refresh has genuinely started
 
@@ -606,11 +701,12 @@ class HomeViewModelTest {
     // `state.quakes` on the very next tick, not just the next time this test happens to reconstruct
     // the ViewModel from scratch.
     @Test fun `sliding window drops a quake that ages past the cutoff on the next poll tick`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
         var now = 2_000_000L
-        val repository = fakeRepositoryAlwaysFailing(clock = { now })
+        val repository = fakeRepositoryAlwaysFailing(clock = { now }, ioDispatcher = testDispatcher)
         repository.ingest(freshQuake("old1", timeMillis = now))
-        val vm = createVm(repository)
+        val vm = createVm(repository, ioDispatcher = testDispatcher)
 
         vm.state.test {
             var s = awaitItem()
@@ -637,9 +733,10 @@ class HomeViewModelTest {
     // from a known, deterministic 0 rather than racing whatever the network-seeded quake in the
     // "WithOneQuake" fake would otherwise add to it.
     @Test fun `newSinceExpand increments once per newly inserted quake`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
-        val repository = fakeRepositoryAlwaysFailing()
-        val vm = createVm(repository)
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val repository = fakeRepositoryAlwaysFailing(ioDispatcher = testDispatcher)
+        val vm = createVm(repository, ioDispatcher = testDispatcher)
         vm.newSinceExpand.test {
             assertEquals(0, awaitItem())
             repository.ingest(freshQuake("new1"))
@@ -649,9 +746,10 @@ class HomeViewModelTest {
     }
 
     @Test fun `markSheetExpanded resets newSinceExpand to zero`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
-        val repository = fakeRepositoryAlwaysFailing()
-        val vm = createVm(repository)
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val repository = fakeRepositoryAlwaysFailing(ioDispatcher = testDispatcher)
+        val vm = createVm(repository, ioDispatcher = testDispatcher)
         vm.newSinceExpand.test {
             assertEquals(0, awaitItem())
             repository.ingest(freshQuake("new1"))
@@ -675,9 +773,10 @@ class HomeViewModelTest {
     // and hang this test's second awaitItem() forever (caught exactly that way on the first attempt
     // at this test, via a real TurbineTimeoutCancellationException — not a hypothetical concern).
     @Test fun `markSheetExpanded keeps the counter at zero across repeated arrivals`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
-        val repository = fakeRepositoryAlwaysFailing()
-        val vm = createVm(repository)
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val repository = fakeRepositoryAlwaysFailing(ioDispatcher = testDispatcher)
+        val vm = createVm(repository, ioDispatcher = testDispatcher)
         vm.newSinceExpand.test {
             assertEquals(0, awaitItem())
             repository.ingest(freshQuake("new1"))
@@ -692,14 +791,50 @@ class HomeViewModelTest {
         }
     }
 
+    // Task 3b: pins the exact ViewModel-level fact that makes FeedSheet.kt's own reveal wiring need
+    // its OWN baseline tracking (a remembered "previous top id", null until the first real
+    // emission — see FeedSheet's kdoc) rather than trusting newCount == 0 to mean "nothing to
+    // reveal yet." fakeRepositoryWithOneQuake() (not …AlwaysFailing(), which every OTHER test above
+    // deliberately uses instead) is the point here: its refreshFeed() genuinely ingests "us1234" as
+    // a brand-new row on the very first call, and insertedQuakeIds' own contract (no first-load
+    // special case — see HomeViewModel.init's kdoc) means that cold-start insert counts exactly
+    // like a live arrival would. Red (pre-existing behavior, not something this task changes):
+    // asserting `0` here instead would time out, since the counter never actually settles on 0 once
+    // the feed has anything to ingest at all.
+    //
+    // Flake hardening (CI runs 31936189058, red on a slow GitHub runner; always green locally):
+    // fakeRepositoryWithOneQuake() doesn't pin QuakeRepository's ioDispatcher, so ingest()'s
+    // _insertedQuakeIds.tryEmit(...) — the write newSinceExpand derives from — runs inside
+    // withContext(Dispatchers.Default), a real, uncontrolled thread pool this test does not
+    // schedule. Same "the emission chain crosses a pool this test doesn't control" trap the
+    // poll-loop test below documents (commit 5e9e922) — Turbine's 3s wall-clock default can expire
+    // here too on a starved runner despite virtual time never being the bottleneck. timeout = 30s
+    // only widens the failure window for a genuine hang; it never slows a passing run. This
+    // particular crossing (QuakeRepository's OWN ioDispatcher, un-pinned by fakeRepositoryWithOneQuake())
+    // is deliberately NOT threaded to [testDispatcher] below — out of scope for the flake-hardening
+    // pass (2026-08-16) that gave HomeViewModel its own [ioDispatcher] seam (see that class's kdoc);
+    // the timeout margin here is an independent, already-sufficient fix for this specific crossing.
+    @Test fun `newSinceExpand already reflects quakes ingested by the very first refresh, not just later arrivals`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val vm = createVm(fakeRepositoryWithOneQuake(ioDispatcher = testDispatcher), ioDispatcher = testDispatcher)
+        vm.newSinceExpand.test(timeout = 30.seconds) {
+            var v = awaitItem()
+            while (v == 0) v = awaitItem()
+            assertEquals(1, v, "the cold-start ingest of us1234 must count, exactly like a live arrival would")
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
     // Task 9: homeLocation. Seeds the store via HomeLocationStore.set() (the same dao-backed path
     // HomeViewModel itself reads through), then asserts the ViewModel's own flow eventually
     // reflects it — proving the init{} load actually reads from the injected store rather than,
     // say, silently defaulting to null or only consulting LocationProvider.
     @Test fun `homeLocation loads the previously stored point`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
         val store = emptyHomeLocationStore().apply { set(GeoPoint(12.34, 56.78)) }
-        val vm = createVm(fakeRepositoryAlwaysFailing(), store)
+        val vm = createVm(fakeRepositoryAlwaysFailing(ioDispatcher = testDispatcher), store, ioDispatcher = testDispatcher)
         vm.homeLocation.test {
             var v = awaitItem()
             while (v == null) v = awaitItem()
@@ -721,15 +856,176 @@ class HomeViewModelTest {
     // way the seeded test above has to loop over — only [store.set] below should ever produce a
     // non-null value here.
     @Test fun `homeLocation reacts to a store update landing mid-session, no restart needed`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
         val store = emptyHomeLocationStore()
-        val vm = createVm(fakeRepositoryAlwaysFailing(), store)
+        val vm = createVm(fakeRepositoryAlwaysFailing(ioDispatcher = testDispatcher), store, ioDispatcher = testDispatcher)
         vm.homeLocation.test {
             assertEquals(null, awaitItem())
             store.set(GeoPoint(9.9, 8.8))
             assertEquals(GeoPoint(9.9, 8.8), awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
+    }
+
+    // Task 1 (Plan 5), USER REQUIREMENT: startupCameraTarget/recenterTarget/
+    // locationUnavailableEvents. KNOWN COVERAGE LIMIT (documented rather than silently accepted —
+    // same "flag the gap, don't hide it" discipline this codebase already applies elsewhere, e.g.
+    // core/model's GeoTest "KNOWN LIMITATION" test): LocationProvider/LocationRequester are plain
+    // `expect`/`actual` CLASSES (not interfaces), neither `open`, so no jvmTest fake can make either
+    // one report anything other than what LocationProvider.jvm.kt/LocationRequester.jvm.kt
+    // hardcode — always a null fix, always NOT_APPLICABLE (-> GRANTED). That makes the
+    // NON-null-fix half of startupCameraTarget's own wiring (createVm()'s default
+    // `LocationProvider()`) untestable at this level by construction: it can never be proven here
+    // that a real "fix differs >50km from stored home" scenario actually reaches the camera — only
+    // on the real device (this task's own device-verification step) does that path run for real.
+    // What jvmTest CAN prove — and what's pinned below — is everything on THIS side of that
+    // platform boundary: the null-fix degrade-to-"do nothing" path, and recenterToCurrentLocation's
+    // own null-fix -> snackbar-event branch (which — precisely because the jvm actual always
+    // returns null — is fully exercised for real here, not merely a default-value smoke check).
+    // [startupCameraTarget]'s own full 5-case decision table is pinned exhaustively, independent of
+    // any of this, by CameraTargetTest.kt.
+
+    // Flake hardening (same class as the newSinceExpand fix above, superseded 2026-08-16): this
+    // value used to be written from init's own hard-coded `viewModelScope.launch(Dispatchers.Default)
+    // { ... }` block with no pinnable seam -- now routed through HomeViewModel's own [ioDispatcher]
+    // (see its kdoc), pinned to [testDispatcher] below, the SAME instance backing Dispatchers.Main.
+    // timeout = 30.seconds kept as a harmless belt (matches the task's own "remove/keep as-is"
+    // guidance), not because this still crosses an un-pinnable pool.
+    @Test fun `startupCameraTarget stays null when the platform has no location fix to offer`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val vm = createVm(fakeRepositoryAlwaysFailing(ioDispatcher = testDispatcher), ioDispatcher = testDispatcher)
+        vm.startupCameraTarget.test(timeout = 30.seconds) {
+            assertEquals(null, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    // Flake hardening (superseded 2026-08-16): recenterToCurrentLocation() used to launch on a
+    // hard-coded Dispatchers.Default with no seam -- now routed through [ioDispatcher] (see its
+    // kdoc), pinned below to the same instance backing Main. Timeout kept as a harmless belt.
+    @Test fun `recenterToCurrentLocation emits a locationUnavailableEvent when no fix is available`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val vm = createVm(fakeRepositoryAlwaysFailing(ioDispatcher = testDispatcher), ioDispatcher = testDispatcher)
+        vm.locationUnavailableEvents.test(timeout = 30.seconds) {
+            vm.recenterToCurrentLocation()
+            awaitItem() // Unit - the event itself firing is the whole assertion
+            cancelAndIgnoreRemainingEvents()
+        }
+        // The complementary outcome: a null fix must NOT also populate recenterTarget - the two
+        // are meant to be mutually exclusive (see recenterToCurrentLocation's own kdoc).
+        assertEquals(null, vm.recenterTarget.value)
+    }
+
+    @Test fun `consumeStartupCameraTarget and consumeRecenterTarget are safe no-ops with nothing pending`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val vm = createVm(fakeRepositoryAlwaysFailing(ioDispatcher = testDispatcher), ioDispatcher = testDispatcher)
+        vm.consumeStartupCameraTarget()
+        vm.consumeRecenterTarget()
+        assertEquals(null, vm.startupCameraTarget.value)
+        assertEquals(null, vm.recenterTarget.value)
+    }
+
+    // Task 2 (Plan 5): favorites -- mirrors homeLocation's own "loads the stored value, then reacts
+    // live to a store update" shape (see that field's two tests above), applied to
+    // FavoritePlaceStore.favorites instead of HomeLocationStore.
+
+    // Flake hardening: FavoritePlaceStore.favorites is QuakeDao.favoritePlaces(), which hard-codes
+    // `.asFlow().mapToList(Dispatchers.Default)` (QuakeDao.kt) — a real thread-pool hop no
+    // ioDispatcher pin on the repository OR on HomeViewModel's own new seam can reach (a separate
+    // module's DAO-level crossing — see HomeViewModel.ioDispatcher's own kdoc for why this is
+    // deliberately not plumbed further). Same starved-runner exposure as newSinceExpand's own fix
+    // above; timeout = 30.seconds on all three favorites tests below (kept as belt-and-braces; each
+    // test also now pins HomeViewModel's OWN ioDispatcher via [testDispatcher], closing that
+    // separate TestMainDispatcher race this file's class kdoc documents).
+    @Test fun `favorites starts empty when the store has none`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val vm = createVm(fakeRepositoryAlwaysFailing(ioDispatcher = testDispatcher), ioDispatcher = testDispatcher)
+        vm.favorites.test(timeout = 30.seconds) {
+            assertEquals(emptyList(), awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `favorites loads previously-added places`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val favoritePlaceStore = emptyFavoritePlaceStore().apply { add("Tokyo", GeoPoint(35.6762, 139.6503)) }
+        val vm = createVm(fakeRepositoryAlwaysFailing(ioDispatcher = testDispatcher), favoritePlaceStore = favoritePlaceStore, ioDispatcher = testDispatcher)
+        vm.favorites.test(timeout = 30.seconds) {
+            var v = awaitItem()
+            while (v.isEmpty()) v = awaitItem()
+            assertEquals("Tokyo", v.single().label)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `favorites reacts to a store update landing mid-session`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val favoritePlaceStore = emptyFavoritePlaceStore()
+        val vm = createVm(fakeRepositoryAlwaysFailing(ioDispatcher = testDispatcher), favoritePlaceStore = favoritePlaceStore, ioDispatcher = testDispatcher)
+        vm.favorites.test(timeout = 30.seconds) {
+            assertEquals(emptyList(), awaitItem())
+            favoritePlaceStore.add("Delhi", GeoPoint(28.6139, 77.2090))
+            assertEquals(listOf("Delhi"), awaitItem().map { it.label })
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    // Task 2 (Plan 5): the Home quick-switch chips' own session-only pill-target swap --
+    // focusTarget starts null (home is the pill's reference point); focusFavorite/focusHome both
+    // reuse the Task 1 recenterTarget flow for the camera fly, per this task's own dispatch
+    // ("reuse Task 1 recenterTarget flow if suitable").
+
+    @Test fun `focusTarget starts null -- home is the pill's default reference point`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val vm = createVm(fakeRepositoryAlwaysFailing(ioDispatcher = testDispatcher), ioDispatcher = testDispatcher)
+        assertEquals(null, vm.focusTarget.value)
+    }
+
+    @Test fun `focusFavorite sets both focusTarget and recenterTarget to the favorite's point`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val vm = createVm(fakeRepositoryAlwaysFailing(ioDispatcher = testDispatcher), ioDispatcher = testDispatcher)
+        val tokyo = GeoPoint(35.6762, 139.6503)
+        vm.focusFavorite(tokyo)
+        assertEquals(tokyo, vm.focusTarget.value)
+        assertEquals(tokyo, vm.recenterTarget.value)
+    }
+
+    @Test fun `focusHome resets focusTarget to null and flies the camera back to the current home`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val homeLocationStore = emptyHomeLocationStore().apply { set(GeoPoint(12.34, 56.78)) }
+        val vm = createVm(fakeRepositoryAlwaysFailing(ioDispatcher = testDispatcher), homeLocationStore = homeLocationStore, ioDispatcher = testDispatcher)
+        // Let the init{} block's one-shot homeLocation load resolve before focusing a favorite.
+        // Flake-hardening pass (2026-08-16, superseded prior note): that one-shot load now runs on
+        // [testDispatcher] via HomeViewModel's own ioDispatcher seam (see its kdoc) — timeout kept
+        // as a harmless belt, not because this still crosses an un-pinnable pool.
+        vm.homeLocation.test(timeout = 30.seconds) {
+            var v = awaitItem()
+            while (v == null) v = awaitItem()
+            cancelAndIgnoreRemainingEvents()
+        }
+        vm.focusFavorite(GeoPoint(35.6762, 139.6503))
+        vm.focusHome()
+        assertEquals(null, vm.focusTarget.value)
+        assertEquals(GeoPoint(12.34, 56.78), vm.recenterTarget.value)
+    }
+
+    @Test fun `focusHome with no resolved home yet does not crash and still clears focusTarget`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val vm = createVm(fakeRepositoryAlwaysFailing(ioDispatcher = testDispatcher), ioDispatcher = testDispatcher)
+        vm.focusFavorite(GeoPoint(1.0, 2.0))
+        vm.focusHome()
+        assertEquals(null, vm.focusTarget.value)
     }
 
     // Task 11's selection wiring tests (`select`/`dismissSelection`/`selectedQuake`) MIGRATED to
@@ -741,8 +1037,9 @@ class HomeViewModelTest {
     // HomeLocationStore, applied to AlertRuleStore's own Flows instead of a get()+updates split.
 
     @Test fun `nearbyRadiusKm defaults to AlertRuleStore's own 100km default`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
-        val vm = createVm(fakeRepositoryAlwaysFailing())
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val vm = createVm(fakeRepositoryAlwaysFailing(ioDispatcher = testDispatcher), ioDispatcher = testDispatcher)
         vm.nearbyRadiusKm.test {
             assertEquals(100.0, awaitItem())
             cancelAndIgnoreRemainingEvents()
@@ -750,9 +1047,10 @@ class HomeViewModelTest {
     }
 
     @Test fun `nearbyRadiusKm reacts to a store update landing mid-session, no restart needed`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
         val alertRuleStore = emptyAlertRuleStore()
-        val vm = createVm(fakeRepositoryAlwaysFailing(), alertRuleStore = alertRuleStore)
+        val vm = createVm(fakeRepositoryAlwaysFailing(ioDispatcher = testDispatcher), alertRuleStore = alertRuleStore, ioDispatcher = testDispatcher)
         vm.nearbyRadiusKm.test {
             assertEquals(100.0, awaitItem())
             alertRuleStore.setNearbyRadius(500.0)
@@ -762,9 +1060,10 @@ class HomeViewModelTest {
     }
 
     @Test fun `minMag reacts to a store update landing mid-session`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
         val alertRuleStore = emptyAlertRuleStore()
-        val vm = createVm(fakeRepositoryAlwaysFailing(), alertRuleStore = alertRuleStore)
+        val vm = createVm(fakeRepositoryAlwaysFailing(ioDispatcher = testDispatcher), alertRuleStore = alertRuleStore, ioDispatcher = testDispatcher)
         vm.minMag.test {
             assertEquals(4.5, awaitItem())
             alertRuleStore.setMinMag(6.0)
@@ -792,7 +1091,7 @@ class HomeViewModelTest {
         Dispatchers.setMain(testDispatcher)
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         TerraWatchDb.Schema.create(driver)
-        val dao = QuakeDao(TerraWatchDb(driver))
+        val dao = QuakeDao(TerraWatchDb(driver), dispatcher = testDispatcher)
         val now = 100_000_000_000L
         val old = now - 40L * 24 * 60 * 60 * 1000 // 40 days before `now` -- past the 30-day cutoff
         dao.replace(freshQuake("old-feed", timeMillis = old))                     // origin defaults "feed"
@@ -802,7 +1101,7 @@ class HomeViewModelTest {
             UsgsApi(HttpClient(engine)), EmscLiveSource(HttpClient(engine)), dao,
             clock = { now }, ioDispatcher = testDispatcher,
         )
-        createVm(repository, clock = { now })
+        createVm(repository, clock = { now }, ioDispatcher = testDispatcher)
         testDispatcher.scheduler.runCurrent()
 
         assertEquals(null, dao.byId("old-feed"), "40-day-old feed row must be pruned")
@@ -828,14 +1127,37 @@ private fun emptyAlertRuleStore(): AlertRuleStore {
     return AlertRuleStore(QuakeDao(TerraWatchDb(driver)))
 }
 
+// Task 2 (Plan 5): same "fresh, empty, don't-care-what-it-resolves-to" role as
+// emptyHomeLocationStore()/emptyAlertRuleStore() above, for HomeViewModel's new FavoritePlaceStore
+// constructor param.
+private fun emptyFavoritePlaceStore(): FavoritePlaceStore {
+    val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+    TerraWatchDb.Schema.create(driver)
+    return FavoritePlaceStore(QuakeDao(TerraWatchDb(driver)))
+}
+
 // Builds a real QuakeRepository over an in-memory JVM SQLDelight driver with a MockEngine that
 // returns one-feature GeoJSON for the feed request — reuses FeedViewModelTest's construction
 // pattern, but injects an explicit QuakeDao clock so lastFetchedAtMillis() is a known value rather
 // than the QuakeDao default (0L).
-private fun fakeRepositoryWithOneQuake(): QuakeRepository {
+//
+// Flake-hardening pass (2026-08-16, round 2 -- the FIRST round's HomeViewModel.ioDispatcher seam
+// alone did NOT close the pre-existing TestMainDispatcher race; 3/26 in a follow-up 30x isolated
+// run, same exception signature, same tearDown()-resetMain() attribution as before): this
+// repository's OWN `ioDispatcher` (QuakeRepository's pre-existing ctor param -- a DIFFERENT
+// dispatcher from HomeViewModel's own) was still defaulting to real Dispatchers.Default here, and
+// HomeViewModel.init unconditionally calls `repository.purgeDebugQuakes()`/`repository.
+// pruneOldRows()` (and the poll loop calls `repository.refreshFeed()`) from a plain Main-dispatched
+// `viewModelScope.launch { ... }` -- i.e. exactly Task-13's own already-documented "Main-dispatched
+// parent, Default-dispatched child" shape, just via the REPOSITORY's internal hop instead of a
+// HomeViewModel-level one. InsightsViewModelTest's own `repository()`/`createVm()` helpers already
+// pin this identical parameter for every one of their tests (see that file's kdoc) -- this was the
+// missing piece to actually match that precedent, not merely resemble it. Defaulted to the real
+// Dispatchers.Default (compile-safe), every call site below now passes its own testDispatcher.
+private fun fakeRepositoryWithOneQuake(ioDispatcher: CoroutineDispatcher = Dispatchers.Default): QuakeRepository {
     val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
     TerraWatchDb.Schema.create(driver)
-    val dao = QuakeDao(TerraWatchDb(driver), clock = { FETCH_CLOCK_MILLIS })
+    val dao = QuakeDao(TerraWatchDb(driver), clock = { FETCH_CLOCK_MILLIS }, dispatcher = ioDispatcher)
     val engine = MockEngine {
         respond(
             ONE_FEATURE_GEOJSON,
@@ -848,34 +1170,44 @@ private fun fakeRepositoryWithOneQuake(): QuakeRepository {
         EmscLiveSource(HttpClient(engine)),
         dao,
         clock = { 2_000_000L },
+        ioDispatcher = ioDispatcher,
     )
 }
 
 // Task 1 (Plan 3): [clock] gained a parameter (default unchanged from before this task) so the
 // sliding-window test below can mutate "now" out from under an already-constructed repository —
 // same "add a defaulted param for one new test" precedent as [freshQuake]'s own [timeMillis]
-// parameter further down this file.
-private fun fakeRepositoryAlwaysFailing(clock: () -> Long = { 2_000_000L }): QuakeRepository {
+// parameter further down this file. [ioDispatcher]: see fakeRepositoryWithOneQuake's own kdoc above
+// for the flake-hardening round-2 fix this closes.
+private fun fakeRepositoryAlwaysFailing(
+    clock: () -> Long = { 2_000_000L },
+    ioDispatcher: CoroutineDispatcher = Dispatchers.Default,
+): QuakeRepository {
     val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
     TerraWatchDb.Schema.create(driver)
-    val dao = QuakeDao(TerraWatchDb(driver))
+    val dao = QuakeDao(TerraWatchDb(driver), dispatcher = ioDispatcher)
     val engine = MockEngine { respond("", HttpStatusCode.InternalServerError) }
     return QuakeRepository(
         UsgsApi(HttpClient(engine)),
         EmscLiveSource(HttpClient(engine)),
         dao,
         clock = clock,
+        ioDispatcher = ioDispatcher,
     )
 }
 
 // Task 2 (Plan 3) carry-in: gates every feed response on [gate] before resolving FAILED (500) --
 // used to hold the very first refreshOnce() call in flight while the test ingests a live-style
 // quake out from under it, reproducing "a slow-failed poll landing after a live-clear" in a
-// controlled, deterministic order rather than hoping for a real race.
-private fun fakeRepositorySlowThenFailing(gate: CompletableDeferred<Unit>): QuakeRepository {
+// controlled, deterministic order rather than hoping for a real race. [ioDispatcher]: see
+// fakeRepositoryWithOneQuake's own kdoc for the flake-hardening round-2 fix this closes.
+private fun fakeRepositorySlowThenFailing(
+    gate: CompletableDeferred<Unit>,
+    ioDispatcher: CoroutineDispatcher = Dispatchers.Default,
+): QuakeRepository {
     val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
     TerraWatchDb.Schema.create(driver)
-    val dao = QuakeDao(TerraWatchDb(driver))
+    val dao = QuakeDao(TerraWatchDb(driver), dispatcher = ioDispatcher)
     val engine = MockEngine {
         gate.await()
         respond("", HttpStatusCode.InternalServerError)
@@ -885,15 +1217,21 @@ private fun fakeRepositorySlowThenFailing(gate: CompletableDeferred<Unit>): Quak
         EmscLiveSource(HttpClient(engine)),
         dao,
         clock = { 2_000_000L },
+        ioDispatcher = ioDispatcher,
     )
 }
 
 // Pre-seeds the DAO directly (bypassing any network call) with one quake, then gates the feed
 // MockEngine's response on [gate] so refreshFeed() stays suspended until the test completes it.
-private fun fakeRepositorySeededWithOneQuake(gate: CompletableDeferred<Unit>): QuakeRepository {
+// [ioDispatcher]: see fakeRepositoryWithOneQuake's own kdoc for the flake-hardening round-2 fix
+// this closes.
+private fun fakeRepositorySeededWithOneQuake(
+    gate: CompletableDeferred<Unit>,
+    ioDispatcher: CoroutineDispatcher = Dispatchers.Default,
+): QuakeRepository {
     val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
     TerraWatchDb.Schema.create(driver)
-    val dao = QuakeDao(TerraWatchDb(driver))
+    val dao = QuakeDao(TerraWatchDb(driver), dispatcher = ioDispatcher)
     dao.upsert(
         Quake(
             id = "seed1", timeMillis = 1_900_000, lat = 10.0, lon = 20.0, depthKm = 5.0,
@@ -912,6 +1250,7 @@ private fun fakeRepositorySeededWithOneQuake(gate: CompletableDeferred<Unit>): Q
         EmscLiveSource(HttpClient(engine)),
         dao,
         clock = { 2_000_000L },
+        ioDispatcher = ioDispatcher,
     )
 }
 

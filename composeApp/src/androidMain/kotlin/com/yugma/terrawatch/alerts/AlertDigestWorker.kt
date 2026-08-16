@@ -16,10 +16,13 @@ import com.yugma.terrawatch.MainActivity
 import com.yugma.terrawatch.R
 import com.yugma.terrawatch.data.AlertEvent
 import com.yugma.terrawatch.data.AlertRuleEngine
+import com.yugma.terrawatch.data.AlertRuleStore
+import com.yugma.terrawatch.data.FavoritePlaceStore
 import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.data.QuakeRepository
 import com.yugma.terrawatch.data.RefreshStatus
 import com.yugma.terrawatch.data.appendNotifiedIds
+import com.yugma.terrawatch.data.buildDigestRules
 import com.yugma.terrawatch.data.filterFreshAlertEvents
 import com.yugma.terrawatch.data.notifiedIdentifiers
 import com.yugma.terrawatch.data.parseNotifiedIds
@@ -29,6 +32,7 @@ import com.yugma.terrawatch.di.ensureKoinStarted
 import com.yugma.terrawatch.location.LocationProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
@@ -127,6 +131,23 @@ import org.koin.core.context.GlobalContext
  *   produces no notification, with no user-visible signal that a window was skipped, in exchange
  *   for never storming a returning user with a multi-day backlog (the same "digest, not
  *   early-warning" honesty spec §6.5 already asks of every notification's own copy).
+ *
+ * **Task 2 (Plan 5), multi-place evaluation:** step 5 above ("each new row through a fresh
+ * [AlertRuleEngine]") now evaluates against [com.yugma.terrawatch.data.buildDigestRules]'s combined
+ * list — home's own [repository]`.currentRules()` result, unchanged, PLUS one additional rule per
+ * favorite ([com.yugma.terrawatch.data.FavoritePlaceStore]), each centered on that favorite's own
+ * point and honoring its own [com.yugma.terrawatch.model.FavoriteAlertType] (ALL = home's own
+ * current min-magnitude setting; MAJOR_ONLY = fixed M≥6.0; OFF = no rule at all, that favorite
+ * skipped outright). The radius applied to every favorite rule is [AlertRuleStore.nearbyRadiusKm]'s
+ * OWN current value — read via its public `Flow` (`.first()`), not [AlertRuleStore]'s
+ * `internal`-to-`core:data` `currentRadiusKm()`/`currentMinMag()` escape hatch, which this
+ * androidMain class (a different Gradle module) can't see. "One notification per quake max
+ * across home+all favorites, first matching place wins, prefer home > favorites > world" needs
+ * ZERO changes to [AlertRuleEngine.evaluate] itself — see [buildDigestRules]'s own kdoc (Fix
+ * Round 1, Review 1 MAJOR-1) for why home's OWN "near" rule stays first, favorites come next, and
+ * "world" moves LAST (not second, as this originally shipped — "world"'s unconditional
+ * M6+/unbounded-radius match used to shadow every MAJOR_ONLY favorite, which shares that exact
+ * threshold), leaning on that function's pre-existing first-match-wins `for` loop either way.
  */
 class AlertDigestWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
@@ -146,6 +167,13 @@ class AlertDigestWorker(context: Context, params: WorkerParameters) : CoroutineW
         val repository: QuakeRepository = koin.get()
         val store: QuakeStore = koin.get()
         val homeLocationStore: HomeLocationStore = koin.get()
+        // Task 2 (Plan 5): multi-place evaluation's two new dependencies -- alertRuleStore backs
+        // the "radius = current nearbyRadiusKm setting" half of buildDigestRules below (read via
+        // its own public Flow, not AlertRuleStore's internal-to-core:data currentRadiusKm()/
+        // currentMinMag() escape hatch, which this androidMain class -- a DIFFERENT Gradle module
+        // from core:data -- has no visibility into); favoritePlaceStore supplies the favorites list.
+        val alertRuleStore: AlertRuleStore = koin.get()
+        val favoritePlaceStore: FavoritePlaceStore = koin.get()
 
         if (repository.refreshFeed() == RefreshStatus.FAILED) return Result.retry()
 
@@ -177,8 +205,19 @@ class AlertDigestWorker(context: Context, params: WorkerParameters) : CoroutineW
 
         val newRows = withContext(Dispatchers.IO) { store.newSince(lastRun) }
 
-        val rules = repository.currentRules()
+        val homeRules = repository.currentRules()
         val home = withContext(Dispatchers.IO) { homeLocationStore.get() }
+        // Task 2 (Plan 5): multi-place evaluation -- evaluate home's own rules (unchanged) PLUS one
+        // additional rule per favorite (per-place alertType honored: ALL/MAJOR_ONLY/OFF), via
+        // buildDigestRules (core:data, TDD'd) -- see that function's own kdoc (Fix Round 1, Review
+        // 1 MAJOR-1) for why home's own "near" rule stays first, favorites come next, and "world"
+        // moves LAST -- this is the ENTIRE "one notification per quake max, first matching place
+        // wins, prefer home > favorites > world" dedupe mechanism: AlertRuleEngine.evaluate's
+        // existing first-match-wins loop does the rest, unchanged.
+        val favorites = withContext(Dispatchers.IO) { favoritePlaceStore.favorites.first() }
+        val favoriteRadiusKm = withContext(Dispatchers.IO) { alertRuleStore.nearbyRadiusKm.first() }
+        val favoriteMinMag = withContext(Dispatchers.IO) { alertRuleStore.minMag.first() }
+        val rules = buildDigestRules(homeRules, favorites, favoriteRadiusKm, favoriteMinMag)
         val engine = AlertRuleEngine()
         val matched = newRows.mapNotNull { engine.evaluate(previous = null, current = it, rules = rules, home = home) }
 

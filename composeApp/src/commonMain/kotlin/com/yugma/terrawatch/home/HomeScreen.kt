@@ -1,6 +1,8 @@
 package com.yugma.terrawatch.home
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -16,12 +18,16 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.BottomSheetScaffold
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SheetValue
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -53,7 +59,12 @@ import com.yugma.terrawatch.data.pillStatus
 import com.yugma.terrawatch.detail.DetailNewsViewModel
 import com.yugma.terrawatch.detail.DetailSheet
 import com.yugma.terrawatch.location.LocationAskDialog
+import com.yugma.terrawatch.location.LocationAskUiState
+import com.yugma.terrawatch.location.LocationRequester
+import com.yugma.terrawatch.location.reduceLocationPermissionState
+import com.yugma.terrawatch.location.rememberLocationCondition
 import com.yugma.terrawatch.map.QuakeMap
+import com.yugma.terrawatch.model.FavoritePlace
 import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.model.haversineKm
 import com.yugma.terrawatch.motion.LocalReducedMotion
@@ -66,6 +77,7 @@ import com.yugma.terrawatch.ui.theme.TerraRadii
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.collectLatest
+import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 
 // Spec's Offline row (docs/superpowers/specs/2026-08-08-terrawatch-design.md): "Glass banner...
@@ -116,6 +128,15 @@ private val GEAR_CHIP_CLEARANCE = 72.dp
 // headroom that breakpoint leaves — 840dp as of Plan 4 Task 4 (c)'s material3-adaptive
 // EXPANDED-width cutover, was a raw 900dp before it).
 private val TWO_PANE_RIGHT_PANEL_WIDTH = 360.dp
+
+// Task 1 (Plan 5), USER REQUIREMENT: the my-location FAB. 48dp matches Android's own documented
+// minimum touch-target size (the brief's own explicit a11y ask) — deliberately sized as the
+// Surface's own footprint, not just the glyph inside it (contrast SettingsGearChip a few lines
+// down, whose 24dp glyph + 10dp padding footprint — 44dp — predates this task and is left
+// untouched, out of this task's scope). 16dp is this screen's own established floating-overlay
+// margin (the pill/gear chip's own windowInsetsPadding(...).padding(16.dp) two blocks below).
+private val MY_LOCATION_FAB_SIZE = 48.dp
+private val MY_LOCATION_FAB_MARGIN = 16.dp
 
 /**
  * The app's centerpiece: a full-bleed [QuakeMap] fed from [viewModel], with a translucent
@@ -198,6 +219,46 @@ fun HomeScreen(
     val state by viewModel.state.collectAsState()
     val homeLocation by viewModel.homeLocation.collectAsState()
     val newSinceExpand by viewModel.newSinceExpand.collectAsState()
+    // Task 1 (Plan 5), USER REQUIREMENT: the cold-start camera-centering signal + the my-location
+    // FAB's own recenter signal — both plain HomeViewModel StateFlows, collected once here (same
+    // "collect once at this level, thread the resolved value down" convention every other
+    // ViewModel-fed value on this screen already follows) and threaded into both PhoneLayout/
+    // TwoPaneLayout below, whose QuakeMap call sites actually apply them.
+    val startupCameraTarget by viewModel.startupCameraTarget.collectAsState()
+    val recenterTarget by viewModel.recenterTarget.collectAsState()
+    // Task 2 (Plan 5): the quick-switch chip row (Home + favorites) and its own session-only pill
+    // override — see PlaceQuickSwitchChips' own kdoc for the chips themselves, and
+    // HomeViewModel.focusTarget's kdoc for the "session swap = ViewModel state, not persisted"
+    // ruling this pair implements. pillFocusPoint (below) is what both PhoneLayout/TwoPaneLayout's
+    // pillStatus() calls read INSTEAD of homeLocation directly — QuakeMap's own homeLocation/ring
+    // stays bound to the real, persisted home unconditionally (the ring's whole meaning is "home's
+    // radius"; only the pill's verdict is meant to preview a different place for the session).
+    val favorites by viewModel.favorites.collectAsState()
+    val focusTarget by viewModel.focusTarget.collectAsState()
+    val pillFocusPoint = focusTarget ?: homeLocation
+    // Task 1 (Plan 5): the FAB's own live visibility gate — "visible only when permission granted"
+    // (the brief's own words), reactive to a grant/revoke made in system Settings while this app
+    // was merely paused (rememberLocationCondition's own ON_RESUME re-check — same helper
+    // SettingsScreen's UseMyLocationAction already uses for the identical live-permission need).
+    // koinInject() here (not through HomeViewModel's constructor) matches this app's own
+    // established "resolve a platform requester directly at the composable that needs LIVE
+    // permission state" convention (see AppModule.kt's own kdoc note on LocationRequester/
+    // NotificationPermissionRequester) — HomeViewModel's own [locationRequester] dependency is a
+    // separate, ONE-SHOT check (the cold-start decision), not a reason to duplicate this one.
+    val locationRequester = koinInject<LocationRequester>()
+    val locationCondition = rememberLocationCondition(locationRequester)
+    val locationPermissionGranted = reduceLocationPermissionState(locationCondition) == LocationAskUiState.GRANTED
+    // Task 1 (Plan 5): the FAB's "Location unavailable" snackbar — a hot, one-shot event
+    // (HomeViewModel.locationUnavailableEvents), so this LaunchedEffect's only job is showing it
+    // when it fires, never replaying it on an unrelated recomposition.
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(viewModel) {
+        // Plain collect, not collectLatest: each tap's event deserves its own shown-to-completion
+        // snackbar rather than a newer tap silently cancelling an already-showing one early (unlike
+        // rememberExpiringNewQuakeId's own collectLatest a few lines down, which specifically needs
+        // to CANCEL a stale expiry delay — there is no equivalent in-flight work here to supersede).
+        viewModel.locationUnavailableEvents.collect { snackbarHostState.showSnackbar("Location unavailable") }
+    }
     // Task 7 (Plan 3), USER REQUIREMENT: the user-settable "nearby" radius/min-magnitude — fed into
     // both pillStatus() (the pill's own verdict) and QuakeMap()'s home-radius ring below, in both
     // PhoneLayout and TwoPaneLayout, so a Settings slider change reaches whichever layout is
@@ -244,6 +305,7 @@ fun HomeScreen(
             TwoPaneLayout(
                 state = state,
                 homeLocation = homeLocation,
+                pillFocusPoint = pillFocusPoint,
                 nowMillis = nowMillis,
                 newQuakeId = newQuakeId,
                 nearbyRadiusKm = nearbyRadiusKm,
@@ -251,11 +313,17 @@ fun HomeScreen(
                 viewModel = viewModel,
                 selectionViewModel = selectionViewModel,
                 onAskLocation = { showLocationAsk = true },
+                startupCameraTarget = startupCameraTarget,
+                recenterTarget = recenterTarget,
+                locationPermissionGranted = locationPermissionGranted,
+                favorites = favorites,
+                focusTarget = focusTarget,
             )
         } else {
             PhoneLayout(
                 state = state,
                 homeLocation = homeLocation,
+                pillFocusPoint = pillFocusPoint,
                 newSinceExpand = newSinceExpand,
                 nowMillis = nowMillis,
                 newQuakeId = newQuakeId,
@@ -265,6 +333,15 @@ fun HomeScreen(
                 viewModel = viewModel,
                 selectionViewModel = selectionViewModel,
                 onAskLocation = { showLocationAsk = true },
+                startupCameraTarget = startupCameraTarget,
+                recenterTarget = recenterTarget,
+                locationPermissionGranted = locationPermissionGranted,
+                favorites = favorites,
+                focusTarget = focusTarget,
+                // Task 3b: the feed sheet's reveal wiring must not churn a scroll animation/chip
+                // pop-in while DetailSheet (below, same HomeScreen composition) sits layered on top
+                // of it — see FeedSheet.kt's own kdoc for the full "no animation churn" rule.
+                isDetailOpen = selectedQuake != null,
             )
         }
         // Task 4 (Plan 3): the settings entry point — a glass chip floating top-right, above
@@ -304,6 +381,7 @@ fun HomeScreen(
                 onSharePackaged = { pkg, text -> sharePackaged(pkg, text) },
                 newsState = newsState,
                 onNewsArticleClick = { url -> openUrl(url) },
+                onNewsRetry = detailNewsViewModel::retry,
             )
         }
         // Task 2 (Plan 3): a THIRD independent overlay layer, same "stacks on top of whichever
@@ -311,6 +389,16 @@ fun HomeScreen(
         if (showLocationAsk) {
             LocationAskDialog(onDismiss = { showLocationAsk = false })
         }
+        // Task 1 (Plan 5): the my-location FAB's "Location unavailable" snackbar — a FOURTH
+        // independent overlay layer, same shape as the three above. Lives at this HomeScreen level
+        // (not inside PhoneLayout/TwoPaneLayout) so ONE SnackbarHostState/LaunchedEffect pair
+        // serves whichever layout is active, rather than duplicating the collection wiring per
+        // layout the way the FAB itself (genuinely different bottom-clearance per layout) can't
+        // avoid doing.
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp),
+        )
     }
 }
 
@@ -329,6 +417,10 @@ fun HomeScreen(
 private fun PhoneLayout(
     state: HomeUiState,
     homeLocation: GeoPoint?,
+    // Task 2 (Plan 5): the pill's own reference point — HomeScreen's `focusTarget ?: homeLocation`;
+    // see this file's own kdoc note at that computation for why [homeLocation] itself (fed to
+    // QuakeMap's ring below, unchanged) stays separate from this.
+    pillFocusPoint: GeoPoint?,
     newSinceExpand: Int,
     nowMillis: Long,
     newQuakeId: String?,
@@ -338,6 +430,16 @@ private fun PhoneLayout(
     viewModel: HomeViewModel,
     selectionViewModel: QuakeSelectionViewModel,
     onAskLocation: () -> Unit,
+    startupCameraTarget: GeoPoint?,
+    recenterTarget: GeoPoint?,
+    locationPermissionGranted: Boolean,
+    // Task 2 (Plan 5): the quick-switch chip row's own data — see PlaceQuickSwitchChips' own kdoc.
+    favorites: List<FavoritePlace>,
+    focusTarget: GeoPoint?,
+    // Task 3b: HomeScreen's own `selectedQuake != null` — see FeedSheet.kt's kdoc for why its
+    // reveal wiring needs to know this (DetailSheet layers on top of this SAME BottomSheetScaffold,
+    // which stays mounted/composing underneath it).
+    isDetailOpen: Boolean,
 ) {
     val content = state as? HomeUiState.Content
     // Task 10 (item e): the banner's freshness-only verdict — see shouldShowStalenessBanner's own
@@ -348,16 +450,25 @@ private fun PhoneLayout(
         shouldShowStalenessBanner(it.refreshFailed, isStale(it.lastUpdatedMillis, nowMillis), it.isLive)
     } ?: false
     val scaffoldState = rememberBottomSheetScaffoldState()
+    // Task 1 (Plan 5): hoisted out of the `sheetPeekHeight = ...` parameter below so the
+    // my-location FAB (further down this function) can clear the SAME peek height the scaffold
+    // itself uses — "above sheet peek" (the brief's own words) means literally this value.
+    val sheetPeekHeight = maxHeight * SHEET_PEEK_FRACTION
     // Task 9: the sheet's "N NEW" chip clears the moment the user actually drags the sheet
     // open — SheetValue.Expanded is M3's own name for "fully open" (as opposed to peeking).
     LaunchedEffect(scaffoldState) {
         snapshotFlow { scaffoldState.bottomSheetState.currentValue }
             .collect { value -> if (value == SheetValue.Expanded) viewModel.markSheetExpanded() }
     }
+    // Task 3b: a plain property read, not a snapshotFlow — SheetState's currentValue is itself
+    // Compose-State-backed (same reason the LaunchedEffect above needs no polling), so reading it
+    // directly here already recomposes FeedSheet's own isSheetExpanded argument on every genuine
+    // peek<->expanded transition, no separate collection needed.
+    val isSheetExpanded = scaffoldState.bottomSheetState.currentValue == SheetValue.Expanded
     BottomSheetScaffold(
         modifier = Modifier.fillMaxSize(),
         scaffoldState = scaffoldState,
-        sheetPeekHeight = maxHeight * SHEET_PEEK_FRACTION,
+        sheetPeekHeight = sheetPeekHeight,
         sheetShape = RoundedCornerShape(topStart = TerraRadii.sheet, topEnd = TerraRadii.sheet),
         sheetContainerColor = MaterialTheme.colorScheme.surface,
         sheetContent = {
@@ -375,6 +486,8 @@ private fun PhoneLayout(
                 // own kdoc) — this closes that gap with the same shimmer skeleton every other
                 // Loading state in this plan now uses.
                 isLoading = state is HomeUiState.Loading,
+                isSheetExpanded = isSheetExpanded,
+                isDetailOpen = isDetailOpen,
             )
         },
     ) {
@@ -392,6 +505,10 @@ private fun PhoneLayout(
                 onDebugLongPress = { lat, lon -> viewModel.injectDebugQuake(lat, lon) },
                 homeLocation = homeLocation,
                 radiusKm = nearbyRadiusKm,
+                startupCameraTarget = startupCameraTarget,
+                onStartupCameraApplied = viewModel::consumeStartupCameraTarget,
+                recenterTarget = recenterTarget,
+                onRecenterApplied = viewModel::consumeRecenterTarget,
             )
             when (val s = state) {
                 HomeUiState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -407,7 +524,10 @@ private fun PhoneLayout(
                     // than pillStatus()'s own default parameters (Fix Round 1, entangled minor:
                     // radiusKm's default itself now reads AlertRuleStore.DEFAULT_RADIUS_KM, not an
                     // independent hardcoded 500.0 - see PillStatus.kt).
-                    val pill = pillStatus(s.quakes, homeLocation, nowMillis, radiusKm = nearbyRadiusKm, minMag = minMag)
+                    // Task 2 (Plan 5): pillFocusPoint, not homeLocation directly — a quick-switch
+                    // chip tap swaps this to a favorite's point for the session (see this file's own
+                    // kdoc note at HomeScreen's pillFocusPoint computation).
+                    val pill = pillStatus(s.quakes, pillFocusPoint, nowMillis, radiusKm = nearbyRadiusKm, minMag = minMag)
                     Column(
                         modifier = Modifier
                             .align(Alignment.TopCenter)
@@ -442,6 +562,42 @@ private fun PhoneLayout(
                     }
                 }
             }
+            // Task 1 (Plan 5), USER REQUIREMENT (dogfooding feedback item 2): the my-location FAB —
+            // bottom-END, cleared above the sheet's own peek height (see [sheetPeekHeight]'s own
+            // kdoc a few lines up). "Above ... the ad slot" (this task's own brief) needed no extra
+            // clearance once actually checked: AppNav.kt's own Column places the ad slot/bottom bar
+            // as SIBLINGS below this whole screen's composition (AppNavHost only ever gets
+            // `Modifier.weight(1f)`, the ad slot/bar claim their own row height outside it) — this
+            // Box's `fillMaxSize()` already stops exactly at that boundary, so a FAB aligned
+            // BottomEnd inside it can never physically reach into the ad-slot/bar's own space
+            // regardless of this screen's own padding.
+            if (locationPermissionGranted) {
+                MyLocationFab(
+                    onClick = viewModel::recenterToCurrentLocation,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(bottom = sheetPeekHeight + MY_LOCATION_FAB_MARGIN, end = MY_LOCATION_FAB_MARGIN),
+                )
+            }
+            // Task 2 (Plan 5), USER REQUIREMENT: the Home quick-switch chip row — "above sheet
+            // peek" (this task's own brief, same literal clearance [MyLocationFab] already uses),
+            // BottomStart so it can never collide with the FAB's own BottomEnd corner (the brief's
+            // other explicit ask: "keep chips out of the way of MyLocationFab") — its own end padding
+            // additionally reserves that corner's full footprint, not just the alignment side, so an
+            // unusually long scrolled-to-the-end chip can't visually run into the FAB either.
+            PlaceQuickSwitchChips(
+                favorites = favorites,
+                focusTarget = focusTarget,
+                onSelectHome = viewModel::focusHome,
+                onSelectFavorite = { point -> viewModel.focusFavorite(point) },
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(
+                        bottom = sheetPeekHeight + MY_LOCATION_FAB_MARGIN,
+                        start = MY_LOCATION_FAB_MARGIN,
+                        end = MY_LOCATION_FAB_SIZE + MY_LOCATION_FAB_MARGIN * 2,
+                    ),
+            )
         }
     }
 }
@@ -474,6 +630,8 @@ private fun PhoneLayout(
 private fun TwoPaneLayout(
     state: HomeUiState,
     homeLocation: GeoPoint?,
+    // Task 2 (Plan 5): see PhoneLayout's own identical parameter kdoc.
+    pillFocusPoint: GeoPoint?,
     nowMillis: Long,
     newQuakeId: String?,
     nearbyRadiusKm: Double,
@@ -481,6 +639,11 @@ private fun TwoPaneLayout(
     viewModel: HomeViewModel,
     selectionViewModel: QuakeSelectionViewModel,
     onAskLocation: () -> Unit,
+    startupCameraTarget: GeoPoint?,
+    recenterTarget: GeoPoint?,
+    locationPermissionGranted: Boolean,
+    favorites: List<FavoritePlace>,
+    focusTarget: GeoPoint?,
 ) {
     val content = state as? HomeUiState.Content
     // Task 10 (item e): same banner freshness-only verdict PhoneLayout computes - see
@@ -502,12 +665,44 @@ private fun TwoPaneLayout(
                 onDebugLongPress = { lat, lon -> viewModel.injectDebugQuake(lat, lon) },
                 homeLocation = homeLocation,
                 radiusKm = nearbyRadiusKm,
+                startupCameraTarget = startupCameraTarget,
+                onStartupCameraApplied = viewModel::consumeStartupCameraTarget,
+                recenterTarget = recenterTarget,
+                onRecenterApplied = viewModel::consumeRecenterTarget,
             )
             if (state is HomeUiState.Loading) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
             }
+            // Task 1 (Plan 5), USER REQUIREMENT: same FAB as PhoneLayout, simpler clearance — no
+            // peek/expand sheet exists in this layout (see this function's own kdoc), so a plain
+            // margin is enough; there is no ad slot in TWO_PANE either (AppNav.kt's own SCOPE NOTE,
+            // that Row branch never reserves one).
+            if (locationPermissionGranted) {
+                MyLocationFab(
+                    onClick = viewModel::recenterToCurrentLocation,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(MY_LOCATION_FAB_MARGIN),
+                )
+            }
+            // Task 2 (Plan 5): same chip row as PhoneLayout, simpler clearance — no sheet-peek
+            // concept in this layout (see this function's own kdoc), a plain bottom margin plus the
+            // FAB's own end-side reservation is enough.
+            PlaceQuickSwitchChips(
+                favorites = favorites,
+                focusTarget = focusTarget,
+                onSelectHome = viewModel::focusHome,
+                onSelectFavorite = { point -> viewModel.focusFavorite(point) },
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(
+                        bottom = MY_LOCATION_FAB_MARGIN,
+                        start = MY_LOCATION_FAB_MARGIN,
+                        end = MY_LOCATION_FAB_SIZE + MY_LOCATION_FAB_MARGIN * 2,
+                    ),
+            )
         }
         Column(
             modifier = Modifier
@@ -519,7 +714,9 @@ private fun TwoPaneLayout(
             // empty/Loading pill would have to either lie ("all calm") or invent a fourth,
             // not-yet-loaded PillStatus.Kind, neither of which this task's brief asked for.
             if (state is HomeUiState.Content) {
-                val pill = pillStatus(state.quakes, homeLocation, nowMillis, radiusKm = nearbyRadiusKm, minMag = minMag)
+                // Task 2 (Plan 5): pillFocusPoint, not homeLocation directly — see PhoneLayout's own
+                // identical comment at its pillStatus() call.
+                val pill = pillStatus(state.quakes, pillFocusPoint, nowMillis, radiusKm = nearbyRadiusKm, minMag = minMag)
                 Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
                     StatusShield(
                         status = pill,
@@ -758,6 +955,133 @@ private fun SettingsGlyph(tint: Color, modifier: Modifier = Modifier) {
                 radius = knobRadius,
                 center = Offset(knobX, y),
                 style = Stroke(width = w * 0.05f),
+            )
+        }
+    }
+}
+
+/**
+ * Task 1 (Plan 5), USER REQUIREMENT (dogfooding feedback item 2, "a button to recenter on me"):
+ * the my-location FAB — a circular glass surface, same "translucent [Surface] + tonal/shadow
+ * elevation" treatment [SettingsGearChip] above already establishes for a floating control over
+ * the map, rather than a differently-styled M3 [androidx.compose.material3.FloatingActionButton]
+ * that would introduce a second, inconsistent floating-control visual language onto this same
+ * screen.
+ *
+ * ICON DECISION (this task's own brief asked to "verify icon exists in our compose-icons set, else
+ * material icon core" before reaching for `Icons.Filled.MyLocation`): this project has NO
+ * material-icons dependency of any kind today (`composeApp/build.gradle.kts`'s `commonMain`
+ * dependencies list only `compose.runtime`/`compose.foundation`/`compose.material3`/`compose.ui` —
+ * grepped, not assumed). Checked both real candidates directly against their resolved artifacts
+ * (`unzip -l` on the actual jars/aars in `~/.gradle/caches`, the same "verify against the real
+ * artifact" discipline this codebase already applies to maplibre-compose — see QuakeMap.android.kt
+ * 's own kdoc): `androidx.compose.material:material-icons-core` (the small ~50-icon curated set)
+ * does NOT contain `MyLocation` in any style; only `material-icons-extended` (thousands of icons)
+ * has `filled/MyLocationKt.class`. Pulling in the FULL extended set for exactly one icon would be
+ * the first icon-library dependency this codebase has ever taken on — and this project has made
+ * that call three times already, always the other way (`SettingsGlyph` above, `nav/NavIcons.kt`,
+ * core:ui's `StatusShield` glyphs — each one explicitly citing "no icon-library dependency in this
+ * project" as the reason). [MyLocationGlyph] below continues that established precedent: a
+ * hand-drawn "target/crosshair" glyph (ring + center dot + four short outward ticks — the same
+ * silhouette `Icons.Filled.MyLocation` itself uses), at zero new dependency cost.
+ *
+ * [MY_LOCATION_FAB_SIZE] (48dp) is the Surface's OWN size — the full tappable footprint meets the
+ * brief's explicit a11y ask, not just the glyph inside it. `contentDescription` is the brief's own
+ * literal copy ("Go to my location").
+ */
+@Composable
+private fun MyLocationFab(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier
+            .size(MY_LOCATION_FAB_SIZE)
+            .semantics { contentDescription = "Go to my location" },
+        shape = RoundedCornerShape(TerraRadii.pill),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
+        tonalElevation = 4.dp,
+        shadowElevation = 2.dp,
+    ) {
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+            MyLocationGlyph(tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(24.dp))
+        }
+    }
+}
+
+/**
+ * A "target/crosshair" my-location glyph — a stroked ring, a filled center dot, and four short
+ * ticks just outside the ring at N/S/E/W — drawn on [Canvas], same "no icon-library dependency"
+ * reasoning as [SettingsGlyph] above (see [MyLocationFab]'s own kdoc for the full icon-vs-hand-draw
+ * investigation this glyph is the outcome of). Proportions assume a square [modifier] (the one real
+ * call site above sizes this 24dp x 24dp); `size.minDimension` (not a bare `size.width`, unlike
+ * [SettingsGlyph]'s own row-based layout, which genuinely needs width and height separately) keeps
+ * every radius/length correct even if a future caller ever passes a non-square size.
+ */
+@Composable
+private fun MyLocationGlyph(tint: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier) {
+        val d = size.minDimension
+        val center = Offset(size.width / 2f, size.height / 2f)
+        val strokeWidth = d * 0.08f
+        val ringRadius = d * 0.28f
+        val dotRadius = d * 0.12f
+        val tickGap = d * 0.06f // gap between the ring's own edge and each tick's inner end
+        val tickLength = d * 0.14f
+        val tickInner = ringRadius + tickGap
+        val tickOuter = tickInner + tickLength
+
+        // Four ticks (N/S/E/W), each a short line just outside the ring, not touching it.
+        drawLine(tint, Offset(center.x, center.y - tickOuter), Offset(center.x, center.y - tickInner), strokeWidth, StrokeCap.Round)
+        drawLine(tint, Offset(center.x, center.y + tickInner), Offset(center.x, center.y + tickOuter), strokeWidth, StrokeCap.Round)
+        drawLine(tint, Offset(center.x - tickOuter, center.y), Offset(center.x - tickInner, center.y), strokeWidth, StrokeCap.Round)
+        drawLine(tint, Offset(center.x + tickInner, center.y), Offset(center.x + tickOuter, center.y), strokeWidth, StrokeCap.Round)
+
+        drawCircle(color = tint, radius = ringRadius, center = center, style = Stroke(width = strokeWidth))
+        drawCircle(color = tint, radius = dotRadius, center = center)
+    }
+}
+
+/**
+ * Task 2 (Plan 5), USER REQUIREMENT: the Home quick-switch chip row — "Home" plus one [FilterChip]
+ * per favorite, horizontally scrollable (same idiom `HistoryScreen.HistoryFilterChips`/
+ * `InsightsScreen`'s own period selector already establish for a small set of mutually-exclusive
+ * options — a `Row` + `horizontalScroll` + [FilterChip], not a custom segmented control, matching
+ * this app's existing control idiom rather than inventing a new one). Tapping "Home" calls
+ * [onSelectHome] ([HomeViewModel.focusHome]); tapping a favorite calls [onSelectFavorite] with its
+ * own [com.yugma.terrawatch.model.GeoPoint] ([HomeViewModel.focusFavorite]) — both fly the camera
+ * AND swap the pill's session-only reference point, per [focusTarget]'s own kdoc
+ * ([HomeViewModel.focusTarget]).
+ *
+ * Rendered ONLY when [favorites] is non-empty — a lone "Home" chip with nothing else to switch to
+ * is pure clutter over the map for the common zero-favorites case (every user before this task ever
+ * ships, and every user who simply never adds one), not a real quick-switch affordance yet.
+ *
+ * [selected] is derived structurally, not by [GeoPoint] equality: "Home" is selected exactly when
+ * [focusTarget] is `null` (see that field's own kdoc — `null` IS "home is focused", not "unknown");
+ * a favorite chip is selected when [focusTarget] equals ITS OWN point. Two favorites that happen to
+ * share identical coordinates (an unlikely but possible manual entry) would both read as selected
+ * together in that edge case — accepted, since [FavoritePlace.point] (not a numeric id) is the only
+ * signal [HomeViewModel.focusTarget] itself carries, by deliberate design (see that field's kdoc for
+ * why: the pill only ever needs a point to compare against, not which favorite row produced it).
+ */
+@Composable
+private fun PlaceQuickSwitchChips(
+    favorites: List<FavoritePlace>,
+    focusTarget: GeoPoint?,
+    onSelectHome: () -> Unit,
+    onSelectFavorite: (GeoPoint) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (favorites.isEmpty()) return
+    Row(
+        modifier = modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        FilterChip(selected = focusTarget == null, onClick = onSelectHome, label = { Text("Home") })
+        favorites.forEach { favorite ->
+            FilterChip(
+                selected = focusTarget == favorite.point,
+                onClick = { onSelectFavorite(favorite.point) },
+                label = { Text(favorite.label) },
             )
         }
     }

@@ -1,0 +1,48 @@
+-- Task 2 (Plan 5): favorites beyond home — label + point + a per-place alertType (TEXT, safe-parsed
+-- by com.yugma.terrawatch.model.FavoriteAlertType.fromStored on the Kotlin side, same "DB stores the
+-- raw string, the domain layer owns safe-parsing" split this project already uses for `quake.status`/
+-- `quake.sourcesJson` in Quake.sq).
+--
+-- `favoritePlace`, camelCase — matches this project's own established SQL-identifier convention
+-- (every multi-word COLUMN in Quake.sq is already camelCase: `timeMillis`, `depthKm`, `magType`,
+-- `updatedAtMillis`, ...; this is simply the first multi-word TABLE name this project has needed).
+-- Deliberately NOT `favorite_place` (snake_case): SQLDelight derives a query file's generated row
+-- class from the table name by capitalizing only the first letter, not by splitting on underscores
+-- (confirmed by actually generating code both ways, not assumed — `favorite_place` produced a real
+-- `Favorite_place` row class, an ugly, inconsistent-with-this-file's-own-style identifier for zero
+-- benefit, since no test or caller ever references the raw SQL table name string itself).
+--
+-- Fix Round 1 (Review 1, BLOCKER-1) CORRECTION: this table's own header used to claim "NEW TABLE,
+-- NO MIGRATION PATH" and reasoned (wrongly) that skipping a migration was safe pre-release because
+-- "there is no silent data-loss risk... nothing tries to read/write it on an old schema in a way
+-- that would crash." That was wrong for the READ path — `HomeViewModel.init`/`SettingsViewModel.init`
+-- both unconditionally `collect` `favoritePlaceStore.favorites` on every cold start, with no
+-- `.catch{}` — so an already-installed (Plan 1-4) device opening this table via a bare
+-- `SELECT * FROM favoritePlace` crashed instantly (`SQLiteException: no such table: favoritePlace`,
+-- fatal, no installed `CoroutineExceptionHandler`) the moment `HomeScreen` composed. See
+-- `review-1-findings.md`'s BLOCKER-1 for the full reproduction and `1.sqm` (this same directory) for
+-- the actual fix: `TerraWatchDb.Schema.version` is now `2`, and `1.sqm`'s own
+-- `CREATE TABLE IF NOT EXISTS favoritePlace` is what an upgrade-installed device's `onUpgrade` path
+-- now runs to create this table without ever losing its existing `quake`/`meta` data.
+CREATE TABLE favoritePlace (
+  id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+  label TEXT NOT NULL,
+  lat REAL NOT NULL,
+  lon REAL NOT NULL,
+  alertType TEXT NOT NULL DEFAULT 'ALL'
+);
+
+selectAllFavoritePlaces:
+SELECT * FROM favoritePlace ORDER BY id ASC;
+
+insertFavoritePlace:
+INSERT INTO favoritePlace(label, lat, lon, alertType) VALUES (?, ?, ?, ?);
+
+deleteFavoritePlace:
+DELETE FROM favoritePlace WHERE id = ?;
+
+updateFavoritePlaceAlertType:
+UPDATE favoritePlace SET alertType = ? WHERE id = ?;
+
+countFavoritePlaces:
+SELECT COUNT(*) FROM favoritePlace;

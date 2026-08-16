@@ -39,6 +39,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 
 class HistoryViewModelTest {
     private lateinit var dao: QuakeDao
@@ -48,6 +49,16 @@ class HistoryViewModelTest {
     // any one test's runTest{} coroutine, so it must be explicitly cancelled+joined, in this exact
     // order relative to Dispatchers.resetMain(), or a still-unwinding previous test's coroutine can
     // race the next test's Dispatchers.setMain() call.
+    //
+    // Flake-hardening pass (2026-08-16, sweeping the terrawatch flaky-test playbook -- see
+    // HomeViewModelTest's own kdoc for the original Task-13/commit-5e9e922 precedent this ports):
+    // `repository(engine, dao)` below never pins QuakeRepository's `ioDispatcher`, so every
+    // `loadUntilDecided()` step (`HistoryPager.loadNext` -> `repository.loadArchivePage`/
+    // `pageBetween`) hops through a real, uncontrolled `Dispatchers.Default` thread. Every
+    // `vm.state.test { ... }` (and the two-VM `vm1`/`vm2` variant) in this class now carries
+    // `timeout = 30.seconds` for the same starved-CI-runner margin commit 5e9e922 first
+    // established -- `GroupByMonthTest` below needs none of this: it's a pure-function suite with
+    // no coroutines at all.
     private val createdViewModels = mutableListOf<HistoryViewModel>()
 
     @AfterTest fun tearDown() {
@@ -96,7 +107,7 @@ class HistoryViewModelTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val engine = MockEngine { geojson(featureCollection(featureJson("a", 9_000_000), featureJson("b", 8_000_000))) }
         val vm = createVm(engine)
-        vm.state.test {
+        vm.state.test(timeout = 30.seconds) {
             var s = awaitItem()
             while (s is HistoryUiState.LoadingFirst) s = awaitItem()
             val content = assertIs<HistoryUiState.Content>(s)
@@ -120,7 +131,7 @@ class HistoryViewModelTest {
             }
         }
         val vm = createVm(engine)
-        vm.state.test {
+        vm.state.test(timeout = 30.seconds) {
             var s = awaitItem()
             while (s is HistoryUiState.LoadingFirst) s = awaitItem()
             assertEquals(2, assertIs<HistoryUiState.Content>(s).totalQuakes())
@@ -145,7 +156,7 @@ class HistoryViewModelTest {
             else geojson(featureCollection())
         }
         val vm = createVm(engine)
-        vm.state.test {
+        vm.state.test(timeout = 30.seconds) {
             var s = awaitItem()
             while (s is HistoryUiState.LoadingFirst) s = awaitItem()
             assertFalse(assertIs<HistoryUiState.Content>(s).endReached)
@@ -165,7 +176,7 @@ class HistoryViewModelTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val engine = MockEngine { respond("boom", HttpStatusCode.InternalServerError) }
         val vm = createVm(engine)
-        vm.state.test {
+        vm.state.test(timeout = 30.seconds) {
             var s = awaitItem()
             while (s is HistoryUiState.LoadingFirst) s = awaitItem()
             assertIs<HistoryUiState.Error>(s)
@@ -182,7 +193,7 @@ class HistoryViewModelTest {
             else geojson(featureCollection(featureJson("a", 9_000_000)))
         }
         val vm = createVm(engine)
-        vm.state.test {
+        vm.state.test(timeout = 30.seconds) {
             var s = awaitItem()
             while (s is HistoryUiState.LoadingFirst) s = awaitItem()
             assertIs<HistoryUiState.Error>(s)
@@ -205,7 +216,7 @@ class HistoryViewModelTest {
             else respond("boom", HttpStatusCode.InternalServerError)
         }
         val vm = createVm(engine)
-        vm.state.test {
+        vm.state.test(timeout = 30.seconds) {
             var s = awaitItem()
             while (s is HistoryUiState.LoadingFirst) s = awaitItem()
             assertFalse(assertIs<HistoryUiState.Content>(s).loadMoreFailed)
@@ -233,7 +244,7 @@ class HistoryViewModelTest {
             }
         }
         val vm = createVm(engine)
-        vm.state.test {
+        vm.state.test(timeout = 30.seconds) {
             var s = awaitItem()
             while (s is HistoryUiState.LoadingFirst) s = awaitItem()
 
@@ -263,7 +274,7 @@ class HistoryViewModelTest {
             }
         }
         val vm = createVm(engine)
-        vm.state.test {
+        vm.state.test(timeout = 30.seconds) {
             var s = awaitItem()
             while (s is HistoryUiState.LoadingFirst) s = awaitItem()
             assertEquals(2, assertIs<HistoryUiState.Content>(s).totalQuakes())
@@ -283,7 +294,7 @@ class HistoryViewModelTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val engine = MockEngine { geojson(featureCollection()) }
         val vm = createVm(engine)
-        vm.state.test {
+        vm.state.test(timeout = 30.seconds) {
             var s = awaitItem()
             while (s is HistoryUiState.LoadingFirst) s = awaitItem()
             assertIs<HistoryUiState.Empty>(s)
@@ -300,7 +311,7 @@ class HistoryViewModelTest {
         val julyMillis = 1_782_864_000_000L
         val engine = MockEngine { geojson(featureCollection(featureJson("aug", augustMillis), featureJson("jul", julyMillis))) }
         val vm = createVm(engine)
-        vm.state.test {
+        vm.state.test(timeout = 30.seconds) {
             var s = awaitItem()
             while (s is HistoryUiState.LoadingFirst) s = awaitItem()
             val content = assertIs<HistoryUiState.Content>(s)
@@ -328,7 +339,7 @@ class HistoryViewModelTest {
             else geojson(featureCollection(featureJson("c", 7_000_000)))
         }
         val vm1 = createVm(engine1, dao = dao)
-        vm1.state.test {
+        vm1.state.test(timeout = 30.seconds) {
             var s = awaitItem()
             while (s is HistoryUiState.LoadingFirst) s = awaitItem()
             vm1.loadMore()
@@ -344,7 +355,7 @@ class HistoryViewModelTest {
         // "restarted the app while offline" -- the reviewer's case (c), the most severe of the three.
         val failingEngine = MockEngine { respond("boom", HttpStatusCode.InternalServerError) }
         val vm2 = createVm(failingEngine, dao = dao)
-        vm2.state.test {
+        vm2.state.test(timeout = 30.seconds) {
             var s = awaitItem()
             while (s is HistoryUiState.LoadingFirst) s = awaitItem()
             // Pre-fix: loadedCount starts at 0 on this brand-new instance and is never seeded from
@@ -378,7 +389,7 @@ class HistoryViewModelTest {
             }
         }
         val vm = createVm(engine)
-        vm.state.test {
+        vm.state.test(timeout = 30.seconds) {
             var s = awaitItem()
             while (s is HistoryUiState.LoadingFirst) s = awaitItem()
             vm.loadMore()

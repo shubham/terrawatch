@@ -158,4 +158,39 @@ class AlertRuleStoreTest {
         store.setNearbyRadius(250.0)
         assertEquals(250.0, store.nearbyRadiusKm.first())
     }
+
+    // --- USER REQUIREMENT (2026-08-16, binding), M4.0 magnitude-floor ruling: minMag READ clamps
+    // to [4.0, 6.0], mirroring the M2 radius clamp tests above exactly (same file, same shape, same
+    // reasoning — a corrupted row or any future non-slider caller must not round-trip an
+    // out-of-range value straight through to every reader with zero validation). ------------------
+
+    @Test fun `corrupt stored minMag below the M4 floor clamps to 4_0`() = runTest {
+        dao.metaPut("rule_minmag", "2.0")
+        assertEquals(4.0, store.minMag.first())
+        assertEquals(AlertRuleEngine.MIN_NOTIFIABLE_MAGNITUDE, store.minMag.first())
+    }
+
+    @Test fun `corrupt stored minMag above the max clamps to 6_0`() = runTest {
+        dao.metaPut("rule_minmag", "9.0")
+        assertEquals(6.0, store.minMag.first())
+        assertEquals(AlertRuleStore.MAX_MIN_MAG, store.minMag.first())
+    }
+
+    // Not just a parse-failure case: a value that parses FINE as a Double but sits outside the
+    // slider's own 4.0-6.0 range (e.g. a future non-slider caller, or a stale value carried over
+    // from before this range moved up from 3.0) must be clamped too, not merely defaulted.
+    @Test fun `a well-formed but out-of-range minMag written by a non-slider caller is clamped on read`() = runTest {
+        store.setMinMag(1.0) // bypasses the UI's own 4.0-6.0 snap entirely
+        assertEquals(4.0, store.minMag.first())
+    }
+
+    @Test fun `currentMinMag sync escape hatch also clamps out-of-range values`() {
+        dao.metaPut("rule_minmag", "0.5")
+        assertEquals(4.0, store.currentMinMag())
+    }
+
+    @Test fun `a minMag already within range round-trips unchanged, clamping is not lossy in the normal case`() = runTest {
+        store.setMinMag(5.0)
+        assertEquals(5.0, store.minMag.first())
+    }
 }

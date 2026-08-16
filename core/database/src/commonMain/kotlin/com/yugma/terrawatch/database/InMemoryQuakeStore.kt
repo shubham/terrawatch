@@ -1,5 +1,8 @@
 package com.yugma.terrawatch.database
 
+import com.yugma.terrawatch.model.FavoriteAlertType
+import com.yugma.terrawatch.model.FavoritePlace
+import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.model.Quake as DomainQuake
 import com.yugma.terrawatch.model.magnitudeBand
 import kotlinx.coroutines.flow.Flow
@@ -199,6 +202,32 @@ class InMemoryQuakeStore(private val clock: () -> Long = { 0L }) : QuakeStore {
         quakes.value.values.byRecency {
             (fetchedAt[it.id] ?: 0L) > sinceMillis && (originById[it.id] ?: QuakeStore.ORIGIN_FEED) in ALERT_ELIGIBLE_ORIGINS
         }
+
+    // Task 2 (Plan 5): favorite_place's in-memory mirror -- a MutableStateFlow (not a plain
+    // MutableList), same "Flow.map over a hot StateFlow re-emits to every collector on each
+    // mutation, no polling required" reasoning `quakes` above already documents for the identical
+    // shape. `nextFavoritePlaceId` is a plain incrementing counter standing in for SQLite's own
+    // AUTOINCREMENT -- this store only ever ships to the single-threaded wasmJs target (see this
+    // class's own Concurrency section above), so a bare `var` needs no atomic/locked increment.
+    private val favoritePlacesState = MutableStateFlow<List<FavoritePlace>>(emptyList())
+    private var nextFavoritePlaceId = 1L
+
+    override fun favoritePlaces(): Flow<List<FavoritePlace>> = favoritePlacesState
+
+    override fun insertFavoritePlace(label: String, point: GeoPoint, alertType: FavoriteAlertType) {
+        val id = nextFavoritePlaceId++
+        favoritePlacesState.update { current -> current + FavoritePlace(id, label, point, alertType) }
+    }
+
+    override fun deleteFavoritePlace(id: Long) {
+        favoritePlacesState.update { current -> current.filter { it.id != id } }
+    }
+
+    override fun updateFavoritePlaceAlertType(id: Long, alertType: FavoriteAlertType) {
+        favoritePlacesState.update { current ->
+            current.map { if (it.id == id) it.copy(alertType = alertType) else it }
+        }
+    }
 
     // `val mag = quake.mag` first, not `quake.mag` inline twice: Quake.mag is a property declared
     // in a DIFFERENT module (core:model) from this one (core:database) — Kotlin refuses to

@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TerraWatch logo direction G5 - "dial + shield-shoulder hint" (Plan 5 Task 4, round 3).
+
+  Same needle/dot as round2/direction-g.svg, unchanged in position, angle, and color. The one change
+  is the disc's own outline: instead of a perfect circle, the top ~70 degrees of the rim (roughly
+  10 o'clock to 2 o'clock) is reshaped into a shallow flat-top-with-shoulders profile, quietly
+  echoing direction A's shield silhouette (round1's store-assets/brand/direction-a.svg - the user's
+  round-1 favorite) - "marry the two quietly," per this task's brief, rather than stamping a literal
+  shield shape onto the dial (which would stack two devices into one mark, exactly the busyness
+  research.md flags in 4 of 6 competitor icons).
+
+  Construction: the bottom/side ~290 degrees of the disc stay an exact r27 circular arc (identical to
+  every other G-family disc). Only the top 70 degrees - from angle 235deg to 305deg, i.e. +-35deg
+  either side of true 12 o'clock - is replaced by two mirrored cubic-bezier curves. Each curve starts
+  at the circle's own point at +-35deg ("shoulder", at (38.51,31.88) and (69.49,31.88) - genuinely on
+  the r27 circle, no added width) and rises to a shared flat apex at (54,29.5), with control points
+  chosen so the tangent at the apex is exactly horizontal (a true flat-top moment, not a
+  disguised-corner point) - the shield-reference is entirely in "the dome is gently flattened and
+  shouldered," not in any borrowed absolute coordinate from direction-a.svg (whose shield lives at a
+  different scale/center entirely; only the *character* of its shoulder-then-flatter-apex profile is
+  echoed here, translated into this disc's own r27 geometry).
+
+  Honesty about risk, per this task's own instruction not to force it if it turns muddy: this is the
+  subtlest geometry change of the five variations (shoulder points only ~4.9 units higher than a pure
+  circle's own rim height at 12 o'clock; the flat apex only ~2.4 units above the shoulders) - by
+  design, since "quiet" was the brief, but that also means it is the variation most at risk of reading
+  as "did the disc render wrong" rather than "deliberate shield hint" once compressed to 48px. See
+  round3-rationale.md for the actual 512px/48px render verdict and the honest call on whether this
+  reads as intended or needs to ship flagged weak / get swapped for a different G-family idea.
+
+  Colors/hex budget: needle and dot are untouched (Safe green, Water blue), and the disc stays Ink -
+  this is the one G-family variation this round that changes NO color and adds NO shape, only a
+  silhouette edit, so it is the cleanest of the five against the Calm Guardian 3-hex budget (strictly
+  cleaner than G4, which adds a 4th hex for its accent dot).
+
+  Competitive check: no researched mark (research.md) combines a dial/needle device with a
+  shield-flavored container - this pairing does not exist in any of the 6 inspected marks, and is not
+  the "globe+waveform"/"volcano+waveform" style double-device stacking research.md flags, since it is
+  one silhouette modification, not a second shape.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <title>TerraWatch logo direction G5 - dial with a shield-shoulder hint</title>
+  <desc>An Ink disc, gently flat-topped and shouldered like a quiet shield, on a Water-blue field, carrying one Safe-green sweep needle and one Water contact dot.</desc>
+
+  <!-- Background: Water-blue, full 108x108 bleed. -->
+  <rect x="0" y="0" width="108" height="108" fill="#D9E9F4"/>
+
+  <!-- Disc: Ink. r27 circular arc for the bottom/side ~290deg (235deg round through 0/90/180 to
+       305deg... expressed here as a standard large-arc sweep from the right shoulder to the left
+       shoulder), then two mirrored cubic-bezier curves across the top ~70deg forming a flat apex at
+       (54,29.5) with shoulders at (38.51,31.88)/(69.49,31.88) - both shoulder points sit exactly on
+       the same r27 circle as the rest of the disc, so only the top is reshaped, nothing widened. -->
+  <path
+      d="M69.49,31.88 A27,27 0 1,1 38.51,31.88
+         C43.5,29.3 48.5,29.5 54,29.5
+         C59.5,29.5 64.5,29.3 69.49,31.88 Z"
+      fill="#17222E"/>
+
+  <!-- Sweep needle: Safe green, center to (74.85,44.28) - 23 units at -25deg, unchanged from
+       direction-g.svg. Tip stays on the untouched circular part of the disc (angle -25deg/335deg
+       falls within the preserved 290deg arc), so rim clearance is identical to G's own. -->
+  <line x1="54" y1="54" x2="74.85" y2="44.28" stroke="#2FA36B" stroke-width="5.5" stroke-linecap="round"/>
+
+  <!-- Contact dot: Water-blue, unchanged from direction-g.svg. Also on the untouched circular part
+       of the disc (~150deg falls within the preserved arc). -->
+  <circle cx="38.4" cy="63" r="4.5" fill="#D9E9F4"/>
+</svg>

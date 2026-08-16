@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TerraWatch logo direction G1 - "G refined" (Plan 5 Task 4, round 3).
+
+  User picked round 2's direction G (round2/direction-g.svg: dark scope disc, one sweep needle,
+  one contact dot) and asked for more variations in its territory. G1 is the most conservative of
+  the five: the exact same three shapes at the exact same disc radius/position - no new device, no
+  new color - with only the needle's stroke weight and the dot's radius tuned for a crisper true
+  48px raster. Everything else (disc Ink #17222E r27, needle angle -25deg, needle/dot relative
+  placement, Water #D9E9F4 background+dot, Safe #2FA36B needle) is unchanged from
+  round2/direction-g.svg.
+
+  What changed and why: at a true 48px raster, round 2's G already read cleanly (round2-rationale.md
+  called it "legible and uncluttered"), but its needle (stroke 5.5) and dot (r4.5) are the two
+  thinnest/smallest elements on the sheet next to A's shield fill or F's bold T stroke - line weights
+  that thin are the first thing antialiasing softens away at small size. Two tunings, both tested
+  against disc/rim clearance before locking in:
+
+    1. Needle stroke 5.5 -> 6.25 (a ~14% weight increase) for a bolder mark at 48px.
+    2. Needle length 23 -> 21.5 units (shortened ~7%) so the fatter stroke's round-cap tip still
+       clears the disc rim with margin: the round cap radius grows with stroke width (2.75 -> 3.125),
+       which would have pushed the old 23-unit-long needle's visual tip to ~26.25 units from center
+       (only 0.75 clear of the r27 rim, tighter than G's original 1.25 clearance) if left at the old
+       length. Recomputed for the new stroke+length: tip visual reach lands at ~24.63 units from
+       center - 2.37 clear of the rim, a wider margin than G had, despite the thicker line. Net: a
+       bolder needle that is simultaneously safer from rim contact at small size, not a wash.
+    3. Dot r4.5 -> 5.2 (~16% larger), same center (38.4,63) - a small dot is the part of a dial most
+       likely to disappear entirely into a single soft pixel at 48px; this keeps the "contact point"
+       legible as a dot rather than a fading fleck, while staying well clear of the disc's inner
+       geometry (dot outer edge at r=18.01+5.2=23.21 from center, still 3.79 inside the r27 rim).
+
+  Not re-derived from scratch and not restructured: same needle angle, same dot clock-position, same
+  disc radius/margin from the r33 safe zone (margin 6) as round2/direction-g.svg, so this reads as
+  "the same G, tuned," not a sixth new direction pretending to be a refinement.
+
+  Competitive check: no new device introduced, so round2/direction-g.svg's own collision reasoning
+  (no researched mark - research.md - uses a needle/dial device; closest adjacent convention is
+  weather-radar apps' rotating sweep-over-a-map, avoided here exactly as before: no map, no rotation,
+  no color-graded intensity, flat 2-position needle + dot) still applies unchanged. Reconfirmed this
+  round via fresh WebSearch ("radar app icon", "monitoring app icon dial gauge" - see
+  round3-rationale.md) - radar-category icons are dominated by rotating-beam-over-scope or
+  location-pin-in-dashed-circle devices, and gauge/monitoring icons are dominated by dense numbered
+  tick scales with colored bands; a single thin static needle + one static dot matches neither.
+
+  48px honesty: see round3-rationale.md - the render confirms the thicker needle and larger dot both
+  read more confidently at 48px than round 2's G did, with no new legibility cost.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <title>TerraWatch logo direction G1 - G refined for 48px crispness</title>
+  <desc>An Ink disc on a Water-blue field, carrying one bolder Safe-green sweep needle and one larger Water contact dot - same geometry as direction G, tuned for small-size legibility.</desc>
+
+  <!-- Background: Water-blue, full 108x108 bleed. -->
+  <rect x="0" y="0" width="108" height="108" fill="#D9E9F4"/>
+
+  <!-- Disc: Ink, the dial/scope face. Unchanged from direction-g.svg: r27, margin 6 under the r33 safe zone. -->
+  <circle cx="54" cy="54" r="27" fill="#17222E"/>
+
+  <!-- Sweep needle: Safe green, center to (73.49,44.91) - 21.5 units out at -25deg (~1-2 o'clock,
+       same angle as G). Stroke 6.25 (was 5.5), round cap (doubles as the hub at center). Shortened
+       from G's 23 units so the fatter round-cap tip still clears the r27 rim by ~2.37 units. -->
+  <line x1="54" y1="54" x2="73.49" y2="44.91" stroke="#2FA36B" stroke-width="6.25" stroke-linecap="round"/>
+
+  <!-- Contact dot: Water-blue, same center as G (38.4,63), r5.2 (was 4.5) for 48px legibility. -->
+  <circle cx="38.4" cy="63" r="5.2" fill="#D9E9F4"/>
+</svg>

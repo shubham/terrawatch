@@ -2,6 +2,7 @@ package com.yugma.terrawatch.di
 
 import com.yugma.terrawatch.alerts.AlertDigestScheduler
 import com.yugma.terrawatch.data.AlertRuleStore
+import com.yugma.terrawatch.data.FavoritePlaceStore
 import com.yugma.terrawatch.data.HistoryPager
 import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.data.OnboardingStore
@@ -70,6 +71,11 @@ fun appModule(
     // already does for OnboardingStore.
     single { AlertRuleStore(get()) }
     single { ThemeStore(get()) }
+    // Task 2 (Plan 5): favorites beyond home — same "plain single over the shared QuakeStore" shape
+    // as AlertRuleStore/HomeLocationStore just above. Consumed by HomeViewModel (quick-switch chips
+    // + worker-side favorites read) and SettingsViewModel (the Places section) via constructor
+    // injection, and directly by AlertDigestWorker (androidMain) via `koin.get()`.
+    single { FavoritePlaceStore(get()) }
     // Task 4 (Plan 3): resolved via koinInject<OnboardingStore>() at AppNav's composition root
     // (same non-ViewModel "plain single, plain koinInject()" shape LocationAskDialog.kt already
     // uses for HomeLocationStore/LocationRequester) rather than through any ViewModel constructor
@@ -107,7 +113,12 @@ fun appModule(
     // and they carried a latent second startLive() collector (see FeedViewModel's own former
     // init{}) that this repository never needed twice. Both deleted outright, not just
     // unregistered — see task-10-report.md's Fix Round 1 for the removal record.
-    viewModel { HomeViewModel(get(), get(), get(), get()) }
+    // Task 2 (Plan 5): favoritePlaceStore is a NAMED arg (skipping clock/locationRequester's own
+    // defaults, both already documented above as production-real defaults nothing needs to
+    // override) so the REAL, persisted FavoritePlaceStore single reaches HomeViewModel — its own
+    // default (a throwaway InMemoryQuakeStore-backed instance) exists purely so jvmTest/HomeFlowTest/
+    // OnboardingGateTest's pre-existing 4-arg construction keeps compiling, not for production use.
+    viewModel { HomeViewModel(get(), get(), get(), get(), favoritePlaceStore = get()) }
     // Task 3 (Plan 3): QuakeSelectionViewModel's second constructor param is
     // androidx.lifecycle.SavedStateHandle, which has no `single {}`/`factory {}` registration
     // anywhere in this module — and needs none. Koin's own ViewModel factory
@@ -156,5 +167,7 @@ fun appModule(
     // defaulted `= koinViewModel()` param, same shape as HistoryViewModel/InsightsViewModel above.
     // Plan 4 Task 6: 4th constructor param (EntitlementsProvider) backs the new "TerraWatch Plus"
     // row's mirrored isPlusActive — get() resolves the SAME single registered just above.
-    viewModel { SettingsViewModel(get(), get(), get(), get()) }
+    // Task 2 (Plan 5): 5th constructor param (FavoritePlaceStore) backs the Places section's own
+    // favorites list — get() resolves the SAME single HomeViewModel's own registration above uses.
+    viewModel { SettingsViewModel(get(), get(), get(), get(), get()) }
 }

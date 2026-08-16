@@ -2,14 +2,27 @@ package com.yugma.terrawatch.ads
 
 import android.content.Context
 import android.content.pm.PackageManager
+import android.view.View
 import android.view.ViewGroup
-import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -30,6 +43,12 @@ internal const val TEST_BANNER_AD_UNIT_ID = "ca-app-pub-3940256099942544/6300978
 
 private const val ADMOB_BANNER_UNIT_METADATA_KEY = "com.yugma.terrawatch.ADMOB_BANNER_UNIT"
 
+// Plan 5 Task 3: the fade-in-on-first-fill duration — no existing "content appears after loading"
+// precedent in this codebase to match exactly (SkeletonCard's shimmer/FeedSheet's live-dot pulse are
+// both *looping* animations, a different shape); 300ms is a plain, ordinary one-shot fade-in
+// duration, a deliberate pick rather than a copied convention.
+private const val AD_FADE_IN_DURATION_MS = 300
+
 /**
  * Task 6 (Plan 4): the real android actual — a `play-services-ads` anchored ADAPTIVE banner (spec
  * §3.2/§8: "anchored adaptive banner directly above the nav bar"), sized to the device's actual
@@ -41,59 +60,100 @@ private const val ADMOB_BANNER_UNIT_METADATA_KEY = "com.yugma.terrawatch.ADMOB_B
  * Ad unit id resolution: reads [ADMOB_BANNER_UNIT_METADATA_KEY] off this app's OWN merged manifest
  * meta-data (`composeApp/build.gradle.kts` writes it from `composeApp/monetization.properties` via
  * a manifest placeholder — see that file's own kdoc) rather than taking it as a parameter, so this
- * composable's signature stays the plain 2-param shape the `expect` declares — no composeApp-shaped
- * config plumbing leaks into this module's public API. Blank/absent (this repo's real state
- * throughout Task 6) falls back to [TEST_BANNER_AD_UNIT_ID].
- *
- * `visible = false`: renders nothing at all (see the `expect` declaration's own kdoc for why a
- * fully-collapsed slot, not a reserved-but-blank one, is the deliberate reading of spec §8's
- * "hidden" rule) — the `AndroidView`/`AdView` below is only ever composed while `visible = true`,
- * which also means re-showing the slot (Plus lapsing, detail sheet closing, onboarding finishing)
- * always issues a FRESH `loadAd()` rather than keeping one `AdView` alive and only toggling its
- * Android `View` visibility. Accepted v1 simplification, documented rather than silently shipped:
- * harmless for TEST ads (no real inventory/rate cost), worth revisiting once Task 8's real ad
- * inventory makes a reload-per-reveal a genuine cost concern.
+ * composable's signature stays the plain shape the `expect` declares — no composeApp-shaped config
+ * plumbing leaks into this module's public API. Blank/absent (this repo's real state throughout
+ * Task 6) falls back to [TEST_BANNER_AD_UNIT_ID].
  *
  * [AdRevenueTracker]'s `onAdImpression` hook below is a documented no-op stub, not yet wired to
  * RevenueCat's own `purchases-android` `AdTracker`/`loadAndTrack` ad-monetization surface — that
  * integration needs a configured RevenueCat account (Task 8); see that object's own kdoc.
  *
- * **Fix round (Plan 4 Task 6 review): AdView lifecycle now wired, not left to GC.** The original
- * version handed `AndroidView` a bare `factory` and nothing else — the created [AdView] was never
- * paused/resumed with the host `Activity`/screen (AdMob's own documented guidance: pause the ad
- * while its screen isn't visible, resume it when it is again, to stop background ad
- * refresh/animation work and its battery/network cost) and never `destroy()`-ed when this composable
- * left the tree either (`visible` flipping back to `false` unmounts this whole `AndroidView`, per
- * this file's own kdoc above — every one of THOSE moments used to just abandon the native `AdView`
- * for the garbage collector instead of releasing its native ad resources deterministically).
+ * **Plan 5 Task 3 rewrite (user dogfooding: "ads appearing causes glitchy experience") — replaces
+ * BOTH the Task 6 fix round's pause/resume wiring AND its own "accepted v1 simplification" note.**
+ * See [BannerAdSlot][com.yugma.terrawatch.ads.BannerAdSlot]'s (`expect`) own kdoc for the two named
+ * glitches and the high-level split of responsibility between this file and `AppNav.kt`. The
+ * mechanics, in order of appearance below:
  *
- * Two independent mechanisms, each covering the piece the other doesn't:
- * - **`onRelease` (not a `DisposableEffect`-only fallback)**: confirmed present on this exact
- *   resolved `androidx.compose.ui:ui-android:1.9.0` artifact's real `AndroidView` overload (checked
- *   directly against that artifact's own sources jar, matching this codebase's established
- *   "verify against the real resolved dependency" discipline — e.g. `QuakeMap.android.kt`'s own
- *   `javap`-against-bytecode precedent) — well past the 1.7.0 release that first added it, so no
- *   `DisposableEffect`-based substitute is needed here. Compose invokes it exactly when this
- *   `AndroidView` is released from composition for good, which is the correct "call `destroy()`
- *   now" signal.
- * - **`DisposableEffect` + [LifecycleEventObserver]** for the SEPARATE pause/resume concern
- *   `onRelease` doesn't cover: mirrors `LocationPermissionCompose.kt`/
- *   `NotificationPermissionCompose.kt`'s own established `LocalLifecycleOwner` + `ON_RESUME`-observer
- *   idiom (same `androidx-lifecycle-runtime-compose` KMP artifact, now also a `core:ads` androidMain
- *   dependency — see this module's own `build.gradle.kts`), extended here to react to `ON_PAUSE` too.
- *
- * The [AdView] itself moves out of `AndroidView`'s `factory` lambda into a `remember(context)` above
- * it, so the SAME instance is reachable from both the `DisposableEffect` (to call `pause`/`resume`
- * on) and `AndroidView`'s own `factory = { adView }` — `factory` still only ever runs once per
- * composable-instance lifetime either way, so this is not a behavior change versus the original
- * one-time construction, just a hoist that makes the instance nameable.
+ * 1. **`hasLoadedOnce`, declared BEFORE `adView`'s own `remember` block** so that block's
+ *    `AdListener.onAdLoaded()` closure captures THIS (correctly-scoped) instance — keyed on the SAME
+ *    `context` `adView` itself is keyed on (not keyless), so a context change (this file's only
+ *    AdView-recreation trigger, unchanged from Task 6) resets this alongside a genuinely fresh,
+ *    not-yet-loaded `AdView` instead of leaking a stale "already loaded" reading onto it.
+ * 2. **`adView`'s own construction is otherwise UNCHANGED from Task 6** — one instance per distinct
+ *    `context`, same adaptive-banner sizing call, same TEST-unit-id fallback, `loadAd()` still fired
+ *    immediately. The one addition is `onAdLoaded` flipping `hasLoadedOnce` — the fade-in's trigger.
+ * 3. **`adaptiveHeightDp`** is read back off the just-configured `AdView` itself
+ *    (`BaseAdView.getAdSize()`, confirmed present against the real resolved
+ *    `play-services-ads-api:25.4.0` artifact via `javap`) rather than recomputed independently, so
+ *    the reserved height below can never disagree with whatever size THIS `AdView` was actually
+ *    built with. Fed into [adSlotReservedHeightDp] (`core:ads` commonMain, TDD'd) alongside
+ *    [visible] — that function is a plain `if (eligible) adaptiveHeightDp else 0`, so the box below
+ *    is already at its FINAL size before `loadAd()`'s result ever arrives. THE fix for glitch 1
+ *    (layout jump on fill).
+ * 4. **The fade-in `animateFloatAsState`** targets `1f` exactly once `hasLoadedOnce` ever flips true
+ *    and stays there for the rest of this `AdView`'s life — no re-fade on a later detail-close
+ *    reveal. [reducedMotion] swaps the [tween] for a [snap] (same "instant instead of animated,
+ *    never skip the state change itself" shape [StatusShield]'s own `reducedMotion` parameter
+ *    already establishes in `core:ui`). `visible` deliberately does NOT gate this target: the
+ *    reserved `Box` below is 0dp tall and `clipToBounds()` whenever `visible` is false, which
+ *    already hides this content regardless of its alpha — letting the alpha resolve in the
+ *    background means the very first thing a user sees when the slot reopens is already fully
+ *    settled, not a second fade replaying. `Modifier.graphicsLayer { alpha = ... }` (not
+ *    `Modifier.alpha(state.value)`) reads the animated `State<Float>` at the DRAW phase only, same
+ *    reasoning `FeedSheet.kt`'s `LiveDot` pulse already established: this composable itself never
+ *    needs to recompose for the animation to play.
+ * 5. **Pause/resume now reacts to TWO independent signals ANDed together**, not just the host
+ *    Activity's own lifecycle: `visible` false (the detail sheet open, per `AppNav.kt`'s call site)
+ *    must ALSO pause this `AdView` even while the Activity stays fully resumed, so a hidden banner
+ *    never keeps refreshing/counting impressions behind the sheet — the same AdMob "pause while
+ *    off-screen" guidance Task 6 already cited, now covering a second reason to be off-screen.
+ *    `lifecycleResumed` is tracked as plain `State` (the observer only ever sets it, never calls
+ *    `pause`/`resume` directly) specifically so both signals combine in ONE place: two independent
+ *    effects each calling `resume()`/`pause()` off their own signal could otherwise race — e.g.
+ *    backgrounding the app while the detail sheet happens to be open, then returning to the
+ *    foreground with that sheet still open, would have the Activity's own `ON_RESUME` incorrectly
+ *    call `resume()` on an `AdView` that's still supposed to be hidden.
+ * 6. **The reserved-height `Box` + the native `View.visibility` together are what `visible`
+ *    collapses** — the `AndroidView`/`AdView` inside is composed continuously for as long as this
+ *    composable itself stays mounted (`AppNav.kt` decides that, gated on Plus/onboarding only — never
+ *    on `visible` itself). `onRelease = { it.destroy() }` therefore now only fires on a REAL
+ *    end-of-life (Plus purchased, onboarding not finished — both unmount this composable structurally
+ *    from `AppNav.kt`'s call site), not on every detail-sheet open. THE fix for glitch 2 (reload jank
+ *    on hide -> show). `clipToBounds()` is defensive belt-and-suspenders, not load-bearing: Compose's
+ *    own constraint propagation already forces the `AndroidView`'s native measure pass to 0 height
+ *    whenever this `Box` resolves to 0dp (an entirely ordinary Android measure/layout case), kept in
+ *    case a future AdMob SDK version's own internal drawing ever tries to paint past its measured
+ *    bounds.
+ *    **Fix Round 2 (Review 3, B-1)**: until this fix, that 0dp squeeze was the ONLY thing standing
+ *    between a live, already-loaded native `AdView` and "genuinely hidden" — nothing in this file
+ *    actually set `adView.visibility`, so spec §8's hard "no banner ever sits next to disaster detail
+ *    content" rule rested entirely on trusting `play-services-ads`'s own `onMeasure` to honor a 0dp
+ *    constraint, unverified on this specific SDK/OEM combination. Closed for free by also setting
+ *    `adView.visibility = if (visible) View.VISIBLE else View.GONE` directly in the pause/resume
+ *    `LaunchedEffect` below (same `visible` source of truth, same effect block) — `GONE` removes the
+ *    view from layout/draw/hit-testing unconditionally, regardless of what the SDK's own measure pass
+ *    does internally. Belt-and-braces, not a behavior change: an immutable ad-ethics rule is exactly
+ *    the case where redundant enforcement is the point.
+ *    **Device-verification-pending** (98bc1cd8 not connected this session, per this task's own
+ *    Global Constraints): a 0-height squeeze of a REAL native `AdView` — as opposed to a plain
+ *    Compose-only child — has not been watched happen on this specific OEM build; nothing in
+ *    `play-services-ads`'s own public contract suggests it should misbehave, and the new
+ *    `visibility = GONE` toggle now makes this a belt-and-braces gap rather than a load-bearing one —
+ *    but a real screenshot/tap-through check with the detail sheet open is still the highest-value
+ *    item on the device matrix below.
  */
 @Composable
-actual fun BannerAdSlot(visible: Boolean, modifier: Modifier) {
-    if (!visible) return
+actual fun BannerAdSlot(visible: Boolean, reducedMotion: Boolean, modifier: Modifier) {
     val context = LocalContext.current
     val adWidthDp = LocalConfiguration.current.screenWidthDp
-    val adView = remember(context) {
+
+    var hasLoadedOnce by remember(context) { mutableStateOf(false) }
+
+    // Fix Round 2 (Review 3, N-1): keyed on (context, adWidthDp), not context alone — future-proofs
+    // against a config that keeps context stable but resizes width (not possible today, since no
+    // configChanges is declared for MainActivity and any orientation change recreates the Activity
+    // wholesale; see this composable's own kdoc point 3).
+    val adView = remember(context, adWidthDp) {
         val bannerUnitId = readBannerUnitId(context)
         AdView(context).apply {
             layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -103,32 +163,68 @@ actual fun BannerAdSlot(visible: Boolean, modifier: Modifier) {
                 override fun onAdImpression() {
                     AdRevenueTracker.onAdImpression(bannerUnitId)
                 }
+                override fun onAdLoaded() {
+                    hasLoadedOnce = true
+                }
             }
             loadAd(AdRequest.Builder().build())
         }
     }
 
-    // Fix round: pause/resume the SAME AdView instance alongside the host screen's own
-    // lifecycle — standard AdMob guidance, not this app's own invention (see this function's
-    // own kdoc above).
+    // `BaseAdView.getAdSize()` resolves as nullable in Kotlin (this exact resolved artifact
+    // annotates it `@Nullable` — the SDK models "no size set yet," a real state for a bare
+    // `AdView()` an XML-inflating caller could leave unconfigured). `adView` above always calls
+    // `setAdSize(...)` immediately at construction, so the `?: 0` fallback should never actually
+    // trigger in practice — kept as a graceful "reserve nothing" degradation rather than a `!!`
+    // that would crash on the one path the type system can't rule out from here.
+    // Fix Round 2 (Review 3, N-1): `adWidthDp` added alongside `adView` as an explicit key — `adView`
+    // already changes in lockstep with `adWidthDp` (same key list above), so this is redundant today,
+    // but ties this remember's own key list directly to the real dependency rather than relying on
+    // that lockstep staying manually in sync with the block above forever.
+    val adaptiveHeightDp = remember(adView, adWidthDp) { adView.adSize?.height ?: 0 }
+    val reservedHeightDp = adSlotReservedHeightDp(eligible = visible, adaptiveHeightDp = adaptiveHeightDp)
+
+    val animatedAlpha = animateFloatAsState(
+        targetValue = if (hasLoadedOnce) 1f else 0f,
+        animationSpec = if (reducedMotion) snap() else tween(durationMillis = AD_FADE_IN_DURATION_MS),
+        label = "bannerAdFadeIn",
+    )
+
     val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner, adView) {
+    var lifecycleResumed by remember { mutableStateOf(true) }
+    DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_PAUSE -> adView.pause()
-                Lifecycle.Event.ON_RESUME -> adView.resume()
+                Lifecycle.Event.ON_PAUSE -> lifecycleResumed = false
+                Lifecycle.Event.ON_RESUME -> lifecycleResumed = true
                 else -> Unit
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
+    LaunchedEffect(visible, lifecycleResumed, adView) {
+        // Fix Round 2 (Review 3, B-1): belt-and-braces defense-in-depth for spec §8's hard "no
+        // banner ever sits next to disaster detail content" rule — see this composable's own kdoc
+        // point 6. Same `visible` source of truth as the pause/resume line below, same effect block.
+        // Deliberately NOT ANDed with `lifecycleResumed`: this toggle is about the detail sheet
+        // covering the ad, not about the host Activity's own foreground/background state (that's
+        // already handled by pause()/resume() below reacting to `lifecycleResumed` on its own).
+        adView.visibility = if (visible) View.VISIBLE else View.GONE
+        if (visible && lifecycleResumed) adView.resume() else adView.pause()
+    }
 
-    AndroidView(
-        modifier = modifier.wrapContentHeight(),
-        factory = { adView },
-        onRelease = { it.destroy() },
-    )
+    Box(
+        modifier = modifier
+            .height(reservedHeightDp.dp)
+            .clipToBounds(),
+    ) {
+        AndroidView(
+            modifier = Modifier.fillMaxSize().graphicsLayer { alpha = animatedAlpha.value },
+            factory = { adView },
+            onRelease = { it.destroy() },
+        )
+    }
 }
 
 private fun readBannerUnitId(context: Context): String {

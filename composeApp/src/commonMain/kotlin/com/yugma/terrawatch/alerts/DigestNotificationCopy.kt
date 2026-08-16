@@ -1,6 +1,7 @@
 package com.yugma.terrawatch.alerts
 
 import com.yugma.terrawatch.data.AlertEvent
+import com.yugma.terrawatch.data.favoriteLabelFromRuleId
 import com.yugma.terrawatch.ui.format.formatMagnitude
 import com.yugma.terrawatch.ui.format.formatRelativeTime
 
@@ -22,6 +23,13 @@ private const val NEAR_RULE_ID = "near"
  * dishonesty spec §6.5 exists to rule out, one step further than just avoiding the phrase
  * "early warning."
  *
+ * Task 2 (Plan 5) adds a THIRD case: a favorite-place match ([com.yugma.terrawatch.data.
+ * favoriteLabelFromRuleId] resolves non-null). "near you" would be wrong here too — the matched
+ * place is a saved favorite, not necessarily where the user actually is — so this names the
+ * favorite's own label instead ("near Tokyo"), the same honest, place-specific phrasing "world"'s
+ * own [com.yugma.terrawatch.model.Quake.place] naming already establishes for an unbounded match,
+ * just naming the CONFIGURED place rather than the quake's own reported location.
+ *
  * Reuses [formatRelativeTime] verbatim (its own already-TDD'd "X h ago" spacing) rather than a
  * second hand-rolled "how long ago" string — same copy convention every other "ago" label in this
  * app (DetailSheet's revision badge, QuakeCard) already uses, so a digest notification reads like
@@ -30,15 +38,16 @@ private const val NEAR_RULE_ID = "near"
 fun digestNotificationTitle(event: AlertEvent, nowMillis: Long): String {
     val magText = "M${formatMagnitude(event.quake.mag)}"
     val timeText = formatRelativeTime(event.quake.timeMillis, nowMillis)
-    // "near": one joined clause ("M6.2 near you") then time -- "near you" reads as a description
-    // OF the magnitude clause, not a separate fact. "world": three independent segments, each its
-    // own `·`-separated fact (magnitude / place / time) -- there is no single natural clause to
-    // join "M6.5" and an arbitrary place name into, and forcing one would blur the honesty split
-    // this function exists for.
-    return if (event.matchedRuleId == NEAR_RULE_ID) {
-        "$magText near you · $timeText"
-    } else {
-        "$magText · ${event.quake.place} · $timeText"
+    val favoriteLabel = favoriteLabelFromRuleId(event.matchedRuleId)
+    // "near"/favorite: one joined clause ("M6.2 near you"/"M6.2 near Tokyo") then time -- the
+    // location phrase reads as a description OF the magnitude clause, not a separate fact. "world":
+    // three independent segments, each its own `·`-separated fact (magnitude / place / time) --
+    // there is no single natural clause to join "M6.5" and an arbitrary place name into, and forcing
+    // one would blur the honesty split this function exists for.
+    return when {
+        event.matchedRuleId == NEAR_RULE_ID -> "$magText near you · $timeText"
+        favoriteLabel != null -> "$magText near $favoriteLabel · $timeText"
+        else -> "$magText · ${event.quake.place} · $timeText"
     }
 }
 
@@ -47,10 +56,14 @@ fun digestNotificationTitle(event: AlertEvent, nowMillis: Long): String {
  * rather than naming a place), this is the quake's own place — the one honest location detail the
  * title left out. For a "world" match (whose title already names the place), this instead names
  * WHICH rule matched, so a user who never configured a "worldwide M6+" rule mentally isn't left
- * wondering why a quake nowhere near them showed up at all.
+ * wondering why a quake nowhere near them showed up at all. A favorite-place match (Task 2, Plan 5)
+ * reuses the "near"/favorite title's own shape: the title already names the favorite, so — same as
+ * "near" — this is just the quake's own place, the one detail the title left out; there is no
+ * "worldwide"-style rule-name claim to make here (a favorite's rule is radius-bounded, exactly the
+ * opposite of "world"'s unbounded reach), so applying that copy would be dishonest.
  */
 fun digestNotificationBody(event: AlertEvent): String =
-    if (event.matchedRuleId == NEAR_RULE_ID) {
+    if (event.matchedRuleId == NEAR_RULE_ID || favoriteLabelFromRuleId(event.matchedRuleId) != null) {
         event.quake.place
     } else {
         "${event.quake.place} — matches your worldwide M6+ alert rule"

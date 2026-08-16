@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TerraWatch logo direction G - "Dial: one sweep needle, one contact dot" (Plan 5 Task 4, round 2).
+
+  Monitoring metaphor, not seismograph: a dark scope/dial (Ink disc) carries one clean needle
+  (Safe green, center to near the rim) and one fixed contact dot elsewhere on the face (Water) -
+  "TerraWatch keeps watch so you don't have to stare at the screen," and a literal nod to "Watch" in
+  the app's own name. Deliberately NOT a radar-style repeating/fading sweep trail (the actual
+  animated-radar-app convention) and not a full rotating-beam wedge - see the rejected first pass
+  below - just one static needle + one static dot, calm rather than busy.
+
+  Design history worth keeping, not hiding: the first pass drew the "sweep" as a ~45deg filled pie
+  wedge (like a classic radar-scope beam) with the contact dot placed off to one side. Rendered at
+  both 512px and a true 48px raster, it read unmistakably as a Pac-Man / cartoon-face silhouette
+  (wide "mouth" wedge + a single "eye" dot) - a real, unintended cliche this task's own honesty bar
+  exists to catch, not a subjective nitpick (confirmed by direct visual inspection of the rendered
+  PNGs, not assumed). Fixed by narrowing the sweep to a thin needle/clock-hand line (no wide angle to
+  read as a mouth) and moving the dot to the opposite side of the disc on roughly the same
+  horizontal axis as the needle's own angle, rather than a diagonal placement that would still
+  triangulate into eyes-and-a-mouth. Confirmed by re-rendering: reads as a dial/gauge, not a face.
+
+  Not derivative of any researched mark: none of the 6 marks actually inspected (research.md) use a
+  needle/dial or radar-scope device at all - closest adjacent-category convention is literal weather-
+  radar apps' rotating green sweep-over-a-map, which this avoids by staying a flat 2-position
+  needle+dot (no map, no rotation implied, no green/yellow/red intensity gradient - just the Calm
+  Guardian palette's own Ink/Safe/Water, 3 colors).
+
+  Geometry: 108x108 viewBox, safe zone = r33 circle centered (54,54). Disc: r27 (margin 6, smaller
+  than A's own r29.5/32 ring specifically so this doesn't read as "the same ring size as A" - see
+  round2-rationale.md's cross-cutting notes). Needle: center (54,54) to (74.85,44.28) - i.e. 23
+  units out at -25deg (~"1-2 o'clock"), stroke-width 5.5, round cap (the round cap at the center end
+  also reads as the needle's hub/pivot, which is the correct look for a dial). Contact dot: center
+  (38.4,63) r4.5 - roughly "8 o'clock," diametrically clear of the needle's angular position.
+
+  Monochrome-able: three flat shapes (disc, needle, dot), no gradient - collapses cleanly to a single
+  color; the needle and dot both already read as distinct silhouette shapes against the disc even
+  without color, so nothing is lost in a monochrome pass.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <title>TerraWatch logo direction G - dial with one sweep needle and one contact dot</title>
+  <desc>An Ink disc on a Water-blue field, carrying one Safe-green sweep needle and one Water contact dot.</desc>
+
+  <!-- Background: Water-blue, full 108x108 bleed. -->
+  <rect x="0" y="0" width="108" height="108" fill="#D9E9F4"/>
+
+  <!-- Disc: Ink, the dial/scope face. -->
+  <circle cx="54" cy="54" r="27" fill="#17222E"/>
+
+  <!-- Sweep needle: Safe green, center to near the rim, round cap (doubles as the hub at center). -->
+  <line x1="54" y1="54" x2="74.85" y2="44.28" stroke="#2FA36B" stroke-width="5.5" stroke-linecap="round"/>
+
+  <!-- Contact dot: Water-blue, opposite side of the disc from the needle. -->
+  <circle cx="38.4" cy="63" r="4.5" fill="#D9E9F4"/>
+</svg>

@@ -3,21 +3,29 @@ package com.yugma.terrawatch.home
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yugma.terrawatch.data.AlertRuleStore
+import com.yugma.terrawatch.data.FavoritePlaceStore
 import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.data.QuakeRepository
 import com.yugma.terrawatch.data.RefreshStatus
+import com.yugma.terrawatch.database.InMemoryQuakeStore
+import com.yugma.terrawatch.location.LocationAskUiState
 import com.yugma.terrawatch.location.LocationProvider
+import com.yugma.terrawatch.location.LocationRequester
+import com.yugma.terrawatch.location.reduceLocationPermissionState
 import com.yugma.terrawatch.map.QuakePin
+import com.yugma.terrawatch.model.FavoritePlace
 import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.model.MagRevision
 import com.yugma.terrawatch.model.Quake
 import com.yugma.terrawatch.model.QuakeStatus
 import com.yugma.terrawatch.model.Source
 import com.yugma.terrawatch.model.magnitudeBand
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -84,6 +92,54 @@ class HomeViewModel(
     // Koin wiring, HomeFlowTest/OnboardingGateTest's androidInstrumentedTest call sites) — none of
     // them need to change to keep compiling.
     private val clock: () -> Long = { Clock.System.now().toEpochMilliseconds() },
+    // Task 1 (Plan 5): appended as a 6th, DEFAULTED param — same "doesn't disturb any existing
+    // positional construction" reasoning [clock] itself already established just above (see
+    // HomeViewModelTest's createVm(), HomeFlowTest/OnboardingGateTest's own construction sites —
+    // none supply a 6th argument, all keep compiling unchanged). LocationRequester()'s no-arg
+    // constructor is real and uniform on every target (see its own kdoc) — same "a real, working
+    // default, not a test stub" shape [clock]'s own default expression already is — so production
+    // Koin wiring (AppModule.kt's `HomeViewModel(get(), get(), get(), get())`) needs no change
+    // either; it simply keeps falling through to this default, exactly like it already does for
+    // [clock].
+    private val locationRequester: LocationRequester = LocationRequester(),
+    // Task 2 (Plan 5): appended as an 8th, DEFAULTED param — same "doesn't disturb any existing
+    // positional construction" reasoning [clock]/[locationRequester] already established above.
+    // Unlike [locationRequester] (a real, uniform-across-targets no-arg constructor), there is no
+    // equivalent no-arg [FavoritePlaceStore] — its own constructor always needs a [QuakeStore]
+    // [com.yugma.terrawatch.database.QuakeStore]. [InMemoryQuakeStore] (core:database, commonMain,
+    // pure Kotlin — no SqlDriver needed) is what makes a REAL, working default possible here
+    // regardless of target: a genuinely functioning, empty [FavoritePlaceStore], not a mock — same
+    // spirit as [locationRequester]'s own default, just backed by a throwaway in-memory map instead
+    // of the real persisted store production Koin wiring always supplies explicitly (`AppModule.kt`'s
+    // `favoritePlaceStore = get()`).
+    private val favoritePlaceStore: FavoritePlaceStore = FavoritePlaceStore(InMemoryQuakeStore()),
+    // Flake-hardening pass (2026-08-16): this class's own three hard-coded `Dispatchers.Default`
+    // crossings (the init{} location/camera-target resolution below, the state collector's
+    // `.flowOn(Dispatchers.Default)`, and [recenterToCurrentLocation]'s own launch) had no seam a
+    // test could pin — see task-flake-hardening-report.md's "pre-existing finding" section for the
+    // ~10-15% `kotlinx.coroutines.test.internal.TestMainDispatcher` `IllegalStateException` this
+    // closes (root-caused via A/B + decompiled sources jar, not guessed: a still-unwinding
+    // real-thread-pool coroutine from one of these three launches racing the NEXT test's
+    // `Dispatchers.setMain()` in the narrow window `HomeViewModelTest`'s own `tearDown()` —
+    // `resetMain()`-before-`cancelAndJoin()`, see that class's kdoc's "Fix Round 1" — leaves open
+    // between the reset and the cancellation actually finishing). Appended as a 9th, DEFAULTED
+    // param — same "doesn't disturb any existing positional construction" reasoning [clock]/
+    // [locationRequester]/[favoritePlaceStore] above already established: `AppModule.kt`'s real Koin
+    // wiring and both androidInstrumentedTest call sites (HomeFlowTest/OnboardingGateTest) construct
+    // this class positionally only up through [alertRuleStore] (then named args), so none of them
+    // need to change to keep compiling. Named `ioDispatcher`, not e.g. `backgroundDispatcher` —
+    // matches [QuakeRepository]'s own established name for this identical "pin the background
+    // dispatcher a test can control" seam (its own `ioDispatcher` ctor param, already relied on by
+    // InsightsViewModelTest/HomeViewModelTest's poll-loop and retention tests), rather than inventing
+    // a second name for the same concept in this codebase. Does NOT reach `QuakeDao.recent()`'s own
+    // hard-coded `.mapToList(Dispatchers.Default)` (a separate, un-pinnable-by-construction hop in a
+    // different module) — deliberately: InsightsViewModelTest's outer suite crosses that identical
+    // DAO-level hop with only a VM/repository-level `ioDispatcher` pin (no DAO-level seam at all) and
+    // is 20/20, and — more directly — that suite has never exhibited this `TestMainDispatcher`
+    // exception at all despite sharing the identical DAO-level crossing, which is the empirical
+    // signal that crossing isn't implicated in this specific race; see the 30x proof after this pin
+    // for the direct confirmation on this class.
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) : ViewModel() {
     private val _state = MutableStateFlow<HomeUiState>(HomeUiState.Loading)
     val state: StateFlow<HomeUiState> = _state
@@ -100,6 +156,49 @@ class HomeViewModel(
     // in both cases: nothing to be unsafe *about* without a reference point.
     private val _homeLocation = MutableStateFlow<GeoPoint?>(null)
     val homeLocation: StateFlow<GeoPoint?> = _homeLocation
+
+    // Task 1 (Plan 5), USER REQUIREMENT: the cold-start camera-centering signal — see
+    // startupCameraTarget's own kdoc (CameraTarget.kt) for the decision this reduces to. Null means
+    // "nothing to do", either because the decision itself resolved null, or because a non-null
+    // value was already applied and consumed (see consumeStartupCameraTarget below). ONE-SHOT by
+    // construction: the init{} block below writes this exactly once, and HomeViewModel itself is
+    // constructed exactly once per real process start — Koin's `viewModel {}` scoping (koin-
+    // compose-viewmodel's koinViewModel<HomeViewModel>() at App()'s composition root) means a
+    // rotation/config change reuses this SAME instance rather than re-running init{}, so this
+    // StateFlow can never spontaneously become non-null a second time for the life of the process.
+    private val _startupCameraTarget = MutableStateFlow<GeoPoint?>(null)
+    val startupCameraTarget: StateFlow<GeoPoint?> = _startupCameraTarget
+
+    // Task 1 (Plan 5): the my-location FAB's own recenter target — independent of
+    // [_startupCameraTarget] (a different trigger, a different zoom level at the call site, and no
+    // rotation-survival requirement of its own — see recenterToCurrentLocation's own kdoc below).
+    private val _recenterTarget = MutableStateFlow<GeoPoint?>(null)
+    val recenterTarget: StateFlow<GeoPoint?> = _recenterTarget
+
+    // Task 1 (Plan 5): the FAB's "Location unavailable" snackbar trigger — a hot, fire-and-forget
+    // event (same SharedFlow shape [newQuakeIds] above already establishes for exactly this
+    // "notify once, don't replay" reason), not sticky state: a recomposition well after the tap
+    // that caused it must never re-show the same snackbar.
+    private val _locationUnavailableEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val locationUnavailableEvents: SharedFlow<Unit> = _locationUnavailableEvents
+
+    // Task 2 (Plan 5): the Home quick-switch chip row — mirrored live from [FavoritePlaceStore],
+    // same "MutableStateFlow seeded empty, then updated by a live collector in init{}" shape
+    // [homeLocation]/[nearbyRadiusKm] already use for their own store-backed values.
+    private val _favorites = MutableStateFlow<List<FavoritePlace>>(emptyList())
+    val favorites: StateFlow<List<FavoritePlace>> = _favorites
+
+    // Task 2 (Plan 5): the quick-switch chips' own session-only pill-target override — `null` means
+    // "home is the pill's reference point" (the default, and the ONLY persisted binding: neither
+    // this field nor [focusFavorite]/[focusHome] below ever write [homeLocationStore]). A non-null
+    // value is a favorite's [GeoPoint], set by [focusFavorite] and cleared back to `null` by
+    // [focusHome] — plain in-memory ViewModel state, gone the moment this ViewModel is (process
+    // death, not persisted anywhere), exactly matching this task's own dispatch: "pill primary
+    // binding stays home; session swap = ViewModel state, not persisted." `HomeScreen`'s own
+    // `pillStatus(...)` call sites read `focusTarget ?: homeLocation` instead of `homeLocation`
+    // directly — see that composable's own kdoc note at those call sites.
+    private val _focusTarget = MutableStateFlow<GeoPoint?>(null)
+    val focusTarget: StateFlow<GeoPoint?> = _focusTarget
 
     // Task 7 (Plan 3), USER REQUIREMENT: the pill's radius/minMag are now user-settable (Settings
     // screen slider -> AlertRuleStore) - every real pillStatus() call site (HomeScreen) threads that
@@ -229,16 +328,51 @@ class HomeViewModel(
             }
         }
 
-        // Task 9: home location, resolved once at startup. Dispatchers.Default because
-        // HomeLocationStore.get() is a synchronous DAO read (SQLDelight) and LocationProvider's
-        // android actual reads a system service — neither belongs on Main. A stored point always
-        // wins over asking the platform again; a freshly-resolved fix gets remembered as home so
-        // this only ever asks the platform once (matches the brief's `get() ?: current()?.also
-        // { set(it) }` — HomeLocationStore.set() is itself an ordinary synchronous DAO write, and
-        // running it here, still on Dispatchers.Default, keeps it off Main too).
-        viewModelScope.launch(Dispatchers.Default) {
+        // Task 9: home location, resolved once at startup. Off Main (ioDispatcher, defaults to
+        // Dispatchers.Default) because HomeLocationStore.get() is a synchronous DAO read
+        // (SQLDelight) and LocationProvider's android actual reads a system service — neither
+        // belongs on Main. A stored point always wins over asking the platform again; a
+        // freshly-resolved fix gets remembered as home so this only ever asks the platform once
+        // (matches the brief's `get() ?: current()?.also { set(it) }` — HomeLocationStore.set() is
+        // itself an ordinary synchronous DAO write, and running it here, still off Main, keeps it
+        // off Main too).
+        //
+        // Task 1 (Plan 5): this block now ALSO resolves [_startupCameraTarget] — folded into the
+        // SAME launch rather than a separate one, since it needs the exact same [stored]/[fix]
+        // values this block already computes (a second independent call to
+        // [locationProvider.current] would be a redundant platform read for no benefit).
+        // [permissionGranted] is resolved via [locationRequester] (the same reducer Settings'/
+        // onboarding's own location-ask UI already reads —
+        // [com.yugma.terrawatch.location.reduceLocationPermissionState]) rather than inferred from
+        // [fix]'s nullity: [LocationProvider.current]'s own contract already returns null without
+        // permission (see its own kdoc), which WOULD make the two collapse to an identical outcome
+        // here today — but [startupCameraTarget]'s own contract wants an explicit, real signal, not
+        // one silently borrowed from a different class's side effect that could drift later.
+        //
+        // BEHAVIOR NOTE: before this task, [locationProvider.current] was only ever called when
+        // [stored] was null (the elvis operator's lazy right-hand side) — a device with an
+        // already-known home never re-read the platform location at all. It's now called on EVERY
+        // start (gated only on [permissionGranted], not on [stored]'s nullity), because comparing a
+        // fresh fix against the stored reference point is the whole point of this task's feature
+        // (e.g. the user travelled since their last session — home is still the old city, but the
+        // map should open on where they actually are now). [LocationProvider.current]'s android
+        // actual is a cheap, side-effect-free `LocationManager.getLastKnownLocation` cache read (no
+        // active GPS request, no permission dialog — permission is already resolved by this point),
+        // so one extra call per cold start is a deliberate, low-cost trade, not an oversight. The
+        // `stored ?: fix?.also { homeLocationStore.set(it) }` write below still only ever fires
+        // when [stored] is null, exactly as before — [fix] being eagerly resolved doesn't change
+        // WHEN the store gets written, only when the platform gets asked.
+        // Flake-hardening pass (2026-08-16): was a hard-coded Dispatchers.Default — now the
+        // pinnable [ioDispatcher] (defaults to the identical Dispatchers.Default, zero prod
+        // behavior change). See [ioDispatcher]'s own kdoc above for the flake this closes.
+        viewModelScope.launch(ioDispatcher) {
             val stored = homeLocationStore.get()
-            _homeLocation.value = stored ?: locationProvider.current()?.also { homeLocationStore.set(it) }
+            val permissionGranted =
+                reduceLocationPermissionState(locationRequester.currentCondition()) == LocationAskUiState.GRANTED
+            val fix = if (permissionGranted) locationProvider.current() else null
+            _homeLocation.value = stored ?: fix?.also { homeLocationStore.set(it) }
+            _startupCameraTarget.value =
+                startupCameraTarget(savedTarget = stored, fix = fix, permissionGranted = permissionGranted)
         }
 
         // Task 2 (Plan 3), "close the location loop": homeLocation used to be resolved exactly
@@ -266,6 +400,15 @@ class HomeViewModel(
         }
         viewModelScope.launch {
             alertRuleStore.minMag.collect { minMag -> _minMag.value = minMag }
+        }
+
+        // Task 2 (Plan 5): the quick-switch chip row — FavoritePlaceStore.favorites is itself a
+        // reactive Flow (SQLDelight's own asFlow()/InMemoryQuakeStore's MutableStateFlow, see
+        // QuakeStore.favoritePlaces' own kdoc), so a plain collect{} is all this needs: no separate
+        // one-shot initial read, same reasoning the nearbyRadiusKm/minMag collectors just above
+        // already give for AlertRuleStore's identically-shaped Flows.
+        viewModelScope.launch {
+            favoritePlaceStore.favorites.collect { places -> _favorites.value = places }
         }
 
         // The cache-driven state loop. Starts collecting immediately — does NOT wait on the
@@ -303,8 +446,8 @@ class HomeViewModel(
             // Fix Round 2 (review finding): pin mapping and the lastFetchedAtMillis() read used to
             // run directly inside collect{}'s lambda — i.e. on Dispatchers.Main, once per
             // recentQuakes() emission. Both now happen inside this upstream .map{}, pushed off
-            // Main via flowOn(Dispatchers.Default); collect{} below only assigns the already-built
-            // result to _state.value.
+            // Main via flowOn(ioDispatcher, defaults to Dispatchers.Default); collect{} below only
+            // assigns the already-built result to _state.value.
             //
             // Task 1 (Plan 3): recentQuakes() itself still returns a single frozen-cutoff Flow
             // (see its own kdoc) — the sliding window lives here, in re-subscribing via
@@ -320,7 +463,9 @@ class HomeViewModel(
                             lastUpdatedMillis = repository.lastFetchedAtMillis(),
                         )
                     }
-                    .flowOn(Dispatchers.Default),
+                    // Flake-hardening pass (2026-08-16): was a hard-coded Dispatchers.Default —
+                    // now the pinnable [ioDispatcher] (defaults identically). See its own kdoc.
+                    .flowOn(ioDispatcher),
                 refreshFailed,
                 // Task 10: the Task 8/Plan 1 TODO dies here — isLive now reflects whether the
                 // EMSC WebSocket is actually open (QuakeRepository.liveConnected ->
@@ -412,6 +557,69 @@ class HomeViewModel(
      * `.Expanded` — the user has now seen the list, so the "N NEW" chip resets. */
     fun markSheetExpanded() {
         _newSinceExpand.value = 0
+    }
+
+    /** Called by `QuakeMap` once it has actually applied [startupCameraTarget] to the camera —
+     * clears the signal so a later recomposition/rotation can never re-apply the same cold-start
+     * jump again (mirrors `MainActivity`'s own `pendingQuakeId`/`onQuakeIdConsumed` "consume once"
+     * shape). */
+    fun consumeStartupCameraTarget() {
+        _startupCameraTarget.value = null
+    }
+
+    /** Called by `QuakeMap` once it has actually applied [recenterTarget] to the camera — same
+     * one-shot "consume, don't replay" contract as [consumeStartupCameraTarget]. */
+    fun consumeRecenterTarget() {
+        _recenterTarget.value = null
+    }
+
+    /**
+     * Task 1 (Plan 5), USER REQUIREMENT (dogfooding feedback item 2, "a button to recenter on
+     * me"): the my-location FAB's tap action — a fresh, one-shot fix, independent of
+     * [homeLocation]/[startupCameraTarget]: this never writes [HomeLocationStore] and never moves
+     * the alert ring/pill's own reference point, only the camera — "where is the device right
+     * now, for the map" is a strictly narrower question than "where is home."
+     *
+     * The FAB itself is only ever visible when permission is granted (`HomeScreen`'s own live gate,
+     * via [com.yugma.terrawatch.location.rememberLocationCondition]), so a null result here in
+     * practice means "permission granted, but nothing cached yet" (e.g. an emulator with no
+     * location provider enabled) rather than a missing permission — either way, the brief's own
+     * "brief snackbar" treatment applies identically.
+     */
+    fun recenterToCurrentLocation() {
+        // Flake-hardening pass (2026-08-16): was a hard-coded Dispatchers.Default — now the
+        // pinnable [ioDispatcher] (defaults identically). See its own kdoc above.
+        viewModelScope.launch(ioDispatcher) {
+            val fix = locationProvider.current()
+            if (fix != null) _recenterTarget.value = fix else _locationUnavailableEvents.emit(Unit)
+        }
+    }
+
+    /**
+     * Task 2 (Plan 5), USER REQUIREMENT: a Home quick-switch chip tap on a FAVORITE — flies the
+     * camera there (reuses [recenterTarget], same one-shot "consume once" contract
+     * [recenterToCurrentLocation]'s own fixes already establish for that flow — `QuakeMap`'s
+     * existing `recenterTarget`/`onRecenterApplied` wiring needs no change at all) AND swaps the
+     * pill's own reference point to [point] for the rest of this session ([focusTarget]).
+     *
+     * Deliberately never touches [homeLocationStore]/[_homeLocation] — see [focusTarget]'s own kdoc
+     * for the "session swap = ViewModel state, not persisted" ruling this method exists to honor.
+     */
+    fun focusFavorite(point: GeoPoint) {
+        _recenterTarget.value = point
+        _focusTarget.value = point
+    }
+
+    /**
+     * Task 2 (Plan 5): the Home quick-switch chip row's "Home" chip — flies the camera back to
+     * whatever [homeLocation] currently resolves to (a no-op camera move, not a crash, when home
+     * itself isn't resolved yet — `null.let{}` below simply skips setting [recenterTarget] in that
+     * case) and clears [focusTarget] back to `null`, restoring the pill's default home-relative
+     * reading.
+     */
+    fun focusHome() {
+        homeLocation.value?.let { home -> _recenterTarget.value = home }
+        _focusTarget.value = null
     }
 
     /**

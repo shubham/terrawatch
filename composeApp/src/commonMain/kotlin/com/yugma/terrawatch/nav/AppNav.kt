@@ -1,5 +1,11 @@
 package com.yugma.terrawatch.nav
 
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -36,6 +42,7 @@ import com.yugma.terrawatch.home.QuakeSelectionViewModel
 import com.yugma.terrawatch.home.layoutMode
 import com.yugma.terrawatch.insights.InsightsScreen
 import com.yugma.terrawatch.monetization.EntitlementsProvider
+import com.yugma.terrawatch.motion.LocalReducedMotion
 import com.yugma.terrawatch.onboarding.OnboardingScreen
 import com.yugma.terrawatch.paywall.PaywallScreen
 import com.yugma.terrawatch.settings.SettingsScreen
@@ -69,6 +76,48 @@ object Routes {
 /** The 3 routes that show bottom-nav/rail chrome — [Routes.SETTINGS]/[Routes.ONBOARDING] render
  * full-screen with no tab chrome, same as a typical "settings is a stack push, not a tab" app. */
 private val TAB_ROUTES = setOf(Routes.HOME, Routes.HISTORY, Routes.INSIGHTS)
+
+/**
+ * Plan 5's Settings-nav ad-reload follow-up (user dogfooding follow-up — the Settings-navigation gap
+ * Task 3's own report named as a deliberate, out-of-scope finding: "TAB_ROUTES excludes
+ * Routes.SETTINGS, so navigating Home→Settings→Home ALSO still structurally unmounts/remounts
+ * BannerAdSlot's call site... which still triggers a real destroy()/fresh loadAd() on that particular
+ * round trip" — task-3-report.md section 4/Concerns; full report: task-adview-settings-report.md).
+ * Deliberately NOT labeled "Task 3b" despite directly following Task 3, the same way Task 2b/3b
+ * themselves were inserted bug-fixes off a dogfooding report rather than numbered plan-5 tasks in
+ * their own right — "Task 3b" is already the feed-sheet live-reveal fix
+ * (`task-3b-feed-reveal-report.md`, committed earlier on this same branch); reusing that label here
+ * would silently misattribute this fix's history to a different, already-shipped feature.
+ * Which routes are ever ELIGIBLE to show an ad, as its own named concept —
+ * deliberately NOT the same boolean as [showTabChrome] below, even though the two happen to share
+ * membership today. [TAB_ROUTES] answers "does the bottom bar/rail show on this route" (a
+ * navigation-chrome question); [AD_ELIGIBLE_ROUTES] answers "should [BannerAdSlot] ever be visible
+ * on this route" (a monetization/ad-ethics-adjacent question). Reusing [showTabChrome] directly at
+ * the ad call site would make that coupling implicit and accidental — hiding the ad on Settings
+ * would read as a side effect of the bottom bar also being hidden there, rather than a rule a future
+ * route can be opted into/out of on its own terms, independent of whatever the bottom bar does.
+ * `= TAB_ROUTES` (not a second, independently-typed `setOf(...)` literal) because no route
+ * currently wants one axis without the other — a real future divergence (e.g. a full-screen
+ * tab-less route that SHOULD still carry ads) is then a one-line change to just this declaration,
+ * with nothing else to touch.
+ */
+private val AD_ELIGIBLE_ROUTES = TAB_ROUTES
+
+/**
+ * The Settings-nav follow-up ([AD_ELIGIBLE_ROUTES]'s own kdoc above has the "not Task 3b" note),
+ * TDD'd ([AppNavAdEligibilityTest], jvmTest — no Compose runtime needed, same
+ * "extract the pure fn" convention [com.yugma.terrawatch.home.layoutMode]/
+ * [com.yugma.terrawatch.home.shouldShowStalenessBanner] already established for this codebase):
+ * pure route → ad-eligibility predicate. Kept OUTSIDE `core:ads`' [com.yugma.terrawatch.ads.
+ * adSlotVisible] on purpose — that function's 3-input ad-ethics signature is spec §8 IMMUTABLE
+ * (Plan 5 Task 3's own NON-NEGOTIABLE carries forward unchanged here too: no route input is ever
+ * added to it). This is a SECOND, independent gate, ANDed with [com.yugma.terrawatch.ads.
+ * adSlotVisible]'s result at the [AppNav] call site below — not a 4th input smuggled into that
+ * function, and not a reason to weaken what "eligible" already means there: a Plus-free,
+ * non-onboarding, detail-closed user on Settings still has `adSlotVisible(...) == true`;
+ * [isAdEligibleRoute] is the separate reason the ad still doesn't show there.
+ */
+internal fun isAdEligibleRoute(route: String?): Boolean = route in AD_ELIGIBLE_ROUTES
 
 /**
  * Task 13: `testTag`s for [AppBottomBar]/[AppNavigationRail]'s three tab items — `internal`, same
@@ -119,7 +168,8 @@ internal const val NAV_INSIGHTS_TAG = "nav-insights"
  *
  * Plan 4 Task 6: [entitlementsProvider] is the SAME "defaulted `koinInject()`" shape as
  * [onboardingStore] just above, for the identical reason — it feeds [adSlotVisible] below (spec §8,
- * IMMUTABLE), the one thing that decides whether [BannerAdSlot] shows anything at all.
+ * IMMUTABLE) — one of the two ANDed conditions (the Settings-nav follow-up added [isAdEligibleRoute], the
+ * route-based other half) that decide whether [BannerAdSlot] shows anything at all.
  */
 @Composable
 fun AppNav(
@@ -148,11 +198,12 @@ fun AppNav(
     val showTabChrome = currentRoute in TAB_ROUTES
 
     // Plan 4 Task 6: adSlotVisible's 3 inputs. [isOnboarding] is computed generally here (not
-    // hardcoded `false`) even though the one real call site below sits inside `if (showTabChrome)`,
-    // which already structurally excludes Routes.ONBOARDING (see TAB_ROUTES) — self-documenting
-    // correctness over relying on a reader to trace that exclusion back to this composable's own
-    // `when` of routes. [isDetailOpen]/[isPlusActive] are the two inputs that actually vary while
-    // tab chrome is showing.
+    // hardcoded `false`) because the real call site below (the Settings-nav follow-up: no longer nested inside
+    // `if (showTabChrome)` — see AD_ELIGIBLE_ROUTES'/isAdEligibleRoute's own kdoc above) gates its
+    // OWN mount directly on `!isPlusActive && !isOnboarding`, not on TAB_ROUTES membership — this
+    // val is what actually feeds that condition now, not merely a redundant-but-safe echo of an
+    // exclusion TAB_ROUTES happened to already guarantee. [isDetailOpen]/[isPlusActive] are the two
+    // inputs that actually vary while the ad slot stays mounted.
     val isOnboarding = currentRoute == Routes.ONBOARDING
     val selectedQuake by selectionViewModel.selectedQuake.collectAsState()
     val isDetailOpen = selectedQuake != null
@@ -200,20 +251,48 @@ fun AppNav(
                     onboardingStore = onboardingStore,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
-                if (showTabChrome) {
-                    // Task 4's ad-slot placeholder Spacer is replaced here (Plan 4 Task 6) by the
-                    // real BannerAdSlot — spec §8's IMMUTABLE ad-ethics rule, as the pure
-                    // adSlotVisible truth table (core:ads). `visible = false` renders nothing at all
-                    // (see BannerAdSlot's own kdoc), so this Column's height simply shrinks by the
-                    // ad's own height whenever it's hidden — no dead reserved gap.
+                // Task 4's ad-slot placeholder Spacer was replaced here (Plan 4 Task 6) by the real
+                // BannerAdSlot — spec §8's IMMUTABLE ad-ethics rule, as the pure adSlotVisible truth
+                // table (core:ads).
+                //
+                // Plan 5 Task 3 (user dogfooding: "ads appearing causes glitchy experience"): this
+                // call site does TWO separate things, not one — see BannerAdSlot's own (expect)
+                // kdoc for the full split. (a) This `if` gates whether BannerAdSlot is called AT
+                // ALL: only while `!isPlusActive && !isOnboarding`, i.e. exactly the two axes that
+                // are meant to be a genuine destroy()/recreate (Plus purchase, onboarding
+                // finishing) rather than a frequent, in-session toggle. (b) The full 3-input
+                // adSlotVisible (isDetailOpen included) still feeds `visible` below, interpreted by
+                // BannerAdSlot as "collapse the reserved height + pause," never as "tear the AdView
+                // down" — so isDetailOpen toggling (opening/closing the quake detail sheet) never
+                // destroys/reloads the ad.
+                //
+                // The Settings-nav follow-up (user dogfooding follow-up — see AD_ELIGIBLE_ROUTES'/
+                // isAdEligibleRoute's own kdoc above for the full gap this closes, named but
+                // deliberately left unfixed by task-3-report.md section 4): THIS call site is no
+                // longer nested inside `if (showTabChrome)` — that nesting was the bug. Settings/
+                // Paywall navigation no longer tears this composable down and rebuilds a fresh
+                // AdView, because neither route flips `isPlusActive` or `isOnboarding`,  the only
+                // two things gate (a) above still checks. `isAdEligibleRoute(currentRoute)`, ANDed
+                // into `visible` alongside the untouched 3-input adSlotVisible, is what keeps
+                // Settings from ever visually showing an ad despite the AdView staying mounted
+                // underneath it — the same "collapse reserved height + pause + View.GONE" path
+                // adSlotVisible's own isDetailOpen=true case already takes, never a destroy.
+                // AppBottomBar's own `if (showTabChrome)` gate (below) is now a fully independent
+                // `if` — the two only ever rose and fell together before because they were written
+                // inside the same block, not because either one's OWN lifecycle actually depended
+                // on the other; conflating them is exactly what caused this bug.
+                if (!isPlusActive && !isOnboarding) {
                     BannerAdSlot(
                         visible = adSlotVisible(
                             isPlusActive = isPlusActive,
                             isDetailOpen = isDetailOpen,
                             isOnboarding = isOnboarding,
-                        ),
+                        ) && isAdEligibleRoute(currentRoute),
+                        reducedMotion = LocalReducedMotion.current,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                }
+                if (showTabChrome) {
                     AppBottomBar(currentRoute = currentRoute, navController = navController)
                 }
             }
@@ -265,6 +344,37 @@ private fun navigateToTab(navController: NavHostController, route: String) {
     }
 }
 
+// UI polish findings (docs/superpowers/plans/2026-08-16-ui-polish-findings.md), Part 3 item 3: none
+// of this NavHost's composable() call sites set an explicit enterTransition/exitTransition, so tab
+// switches (Home/History/Insights/Settings) fell through to Navigation Compose's own unreviewed
+// default. A deliberate crossfade replaces that un-reviewed default with an intentional one -
+// specifically NOT a lateral slide, since these are sibling tabs/a settings push, not a forward
+// navigation-stack step. Duration/easing are the real M3 MotionTokens.kt values the doc sourced
+// directly from this project's resolved material3:1.8.2 dependency (m3.material.io's own motion
+// pages proved unfetchable - a client-rendered SPA, see the doc's Sources section) rather than
+// guessed: Medium2 = 300ms; EmphasizedDecelerate = cubic-bezier(0.05, 0.7, 0.1, 1) for the entering
+// tab, Standard = cubic-bezier(0.2, 0, 0, 1) for the exiting one. `MotionTokens` itself isn't part
+// of material3's public API surface, so these are reconstructed directly as `CubicBezierEasing`
+// (a stable, public, constructible type) from the doc's own sourced control points, rather than
+// depended on internally.
+private const val TAB_CROSSFADE_DURATION_MS = 300
+private val TabEnterEasing = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f) // EmphasizedDecelerate
+private val TabExitEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f) // Standard
+
+private fun tabEnterTransition(reducedMotion: Boolean): EnterTransition =
+    if (reducedMotion) {
+        EnterTransition.None
+    } else {
+        fadeIn(tween(TAB_CROSSFADE_DURATION_MS, easing = TabEnterEasing))
+    }
+
+private fun tabExitTransition(reducedMotion: Boolean): ExitTransition =
+    if (reducedMotion) {
+        ExitTransition.None
+    } else {
+        fadeOut(tween(TAB_CROSSFADE_DURATION_MS, easing = TabExitEasing))
+    }
+
 @Composable
 private fun AppNavHost(
     navController: NavHostController,
@@ -275,8 +385,25 @@ private fun AppNavHost(
     onboardingStore: OnboardingStore,
     modifier: Modifier = Modifier,
 ) {
+    // Read once per recomposition of this composable (an accessibility-setting-driven value, not
+    // something that changes mid-gesture) and captured by the plain (non-@Composable)
+    // enterTransition/exitTransition lambdas below - the same "read LocalReducedMotion.current once,
+    // thread the plain Boolean down" shape this app already uses throughout (e.g. BannerAdSlot's
+    // `reducedMotion = LocalReducedMotion.current` at its AppNav call site below).
+    val reducedMotion = LocalReducedMotion.current
     NavHost(navController = navController, startDestination = startDestination, modifier = modifier) {
-        composable(Routes.HOME) {
+        // Only the 4 routes the doc's own Part 3 table names (Home/History/Insights/Settings) get
+        // the crossfade - Paywall/Onboarding keep whatever default Navigation Compose already
+        // applies, deliberately out of this item's named scope (a first-run-only pager and a rare
+        // purchase-flow push read differently from a "switching sibling tabs" crossfade).
+        // popEnterTransition/popExitTransition default to enterTransition/exitTransition when not
+        // set explicitly, so back-direction (e.g. a Settings->Home system-back) gets the identical
+        // fade, not a directional asymmetry.
+        composable(
+            Routes.HOME,
+            enterTransition = { tabEnterTransition(reducedMotion) },
+            exitTransition = { tabExitTransition(reducedMotion) },
+        ) {
             HomeScreen(
                 viewModel = homeViewModel,
                 selectionViewModel = selectionViewModel,
@@ -294,7 +421,11 @@ private fun AppNavHost(
         // be the SAME Activity-scoped instance Home shares, never a second nav-back-stack-entry-
         // scoped one (see HistoryScreen's own kdoc). detailNewsViewModel (Plan 4 Task 5): same
         // Activity-scoped sharing reasoning.
-        composable(Routes.HISTORY) {
+        composable(
+            Routes.HISTORY,
+            enterTransition = { tabEnterTransition(reducedMotion) },
+            exitTransition = { tabExitTransition(reducedMotion) },
+        ) {
             HistoryScreen(selectionViewModel = selectionViewModel, detailNewsViewModel = detailNewsViewModel)
         }
         // Task 6 (Plan 3): same shape as HISTORY above -- InsightsViewModel resolves via
@@ -303,7 +434,11 @@ private fun AppNavHost(
         // detailNewsViewModel (Plan 4 Task 5): same Activity-scoped sharing reasoning; Insights'
         // OWN separate "In the news" card resolves InsightsNewsViewModel via its own defaulted
         // param instead, see InsightsScreen's own kdoc.
-        composable(Routes.INSIGHTS) {
+        composable(
+            Routes.INSIGHTS,
+            enterTransition = { tabEnterTransition(reducedMotion) },
+            exitTransition = { tabExitTransition(reducedMotion) },
+        ) {
             InsightsScreen(selectionViewModel = selectionViewModel, detailNewsViewModel = detailNewsViewModel)
         }
         // Task 7 (Plan 3): the real SettingsScreen replaces the placeholder — its own
@@ -313,7 +448,11 @@ private fun AppNavHost(
         // all (unlike HOME/HISTORY/INSIGHTS, this isn't a tab with its own back-stack root).
         // Plan 4 Task 6: onPlusClick pushes the new PAYWALL route — same "stack-only route reached
         // from a tab, popped via onBack" shape.
-        composable(Routes.SETTINGS) {
+        composable(
+            Routes.SETTINGS,
+            enterTransition = { tabEnterTransition(reducedMotion) },
+            exitTransition = { tabExitTransition(reducedMotion) },
+        ) {
             SettingsScreen(
                 onBack = { navController.popBackStack() },
                 onPlusClick = { navController.navigate(Routes.PAYWALL) },

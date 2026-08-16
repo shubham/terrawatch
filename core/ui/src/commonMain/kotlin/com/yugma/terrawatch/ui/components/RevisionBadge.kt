@@ -18,8 +18,19 @@ import com.yugma.terrawatch.ui.theme.TerraColors
 import com.yugma.terrawatch.ui.theme.TerraRadii
 
 // Task 10 (item a): the badge-revise micro scale-in - starts slightly shrunk, springs up to full
-// size. Same DampingRatioMediumBouncy spring StatusShield's own shape-morph and QuakeMap.android.kt's
-// pin-drop pop already use for this app's one signature "bouncy settle" motion language.
+// size.
+//
+// UI polish findings (docs/superpowers/plans/2026-08-16-ui-polish-findings.md), Part 3 item 1: this
+// used to share DampingRatioMediumBouncy (0.5, ~15% overshoot, source-confirmed via the real
+// animation-core:1.9.0 VectorizedAnimationSpec.kt - the 2nd-bounciest of 4 built-in presets) with
+// StatusShield's shape-morph and QuakeMap.android.kt's pin-drop pop - the app's 3 "signature"
+// springs, all directly magnitude/severity-adjacent (this one literally pulses ON a magnitude
+// revision), sitting in real tension with "calm brand, nothing playful about severity." Swapped to
+// DampingRatioNoBouncy (1.0, critically damped, zero overshoot) uniformly across all 3 - the doc
+// offered NoBouncy/LowBouncy as alternatives without a strict per-site mapping; NoBouncy was chosen
+// for all 3 rather than differentiating, since the doc's own framing treats them as equally
+// magnitude-adjacent (even the pin-drop's size+color are magnitude-derived) and NoBouncy most
+// directly and unambiguously serves "never playful about severity."
 private const val PULSE_START_SCALE = 0.82f
 
 /**
@@ -53,7 +64,7 @@ fun RevisionBadge(text: String, modifier: Modifier = Modifier, reducedMotion: Bo
             scale.snapTo(1f)
         } else {
             scale.snapTo(PULSE_START_SCALE)
-            scale.animateTo(1f, spring(dampingRatio = Spring.DampingRatioMediumBouncy))
+            scale.animateTo(1f, spring(dampingRatio = Spring.DampingRatioNoBouncy))
         }
     }
     Surface(

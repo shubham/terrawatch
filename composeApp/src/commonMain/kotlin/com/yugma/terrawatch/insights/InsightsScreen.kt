@@ -23,6 +23,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -134,6 +135,7 @@ fun InsightsScreen(
                         newsState = newsCardState,
                         nowMillis = nowMillis,
                         onArticleClick = { url -> openUrl(url) },
+                        onRetry = newsViewModel::retry,
                         reducedMotion = LocalReducedMotion.current,
                         modifier = Modifier.padding(horizontal = 16.dp),
                     )
@@ -150,6 +152,7 @@ fun InsightsScreen(
                     onSharePackaged = { pkg, text -> sharePackaged(pkg, text) },
                     newsState = detailNewsState,
                     onNewsArticleClick = { url -> openUrl(url) },
+                    onNewsRetry = detailNewsViewModel::retry,
                 )
             }
         }
@@ -308,12 +311,19 @@ private fun CardEyebrow(text: String, trailing: String? = null, modifier: Modifi
  * (`InsightsScreen`'s own `if (newsCardState != NewsUiState.Hidden)` guard - this composable is
  * never even called for that case); [NewsUiState.Loading] reuses [SkeletonCard] ("loading shimmer
  * reuse" per the brief, same shimmer every other Loading state in this app already uses).
+ *
+ * Task 2b (dogfooding fix, task-2b-news-fix-report.md): [NewsUiState.Empty] ("No news coverage
+ * yet" + an optional "More on USGS" link) and [NewsUiState.Error] ("Couldn't load news" + Retry,
+ * wired to [onRetry]) both render a plain message [Row] straight inside [InsightsCard]'s own
+ * padded slot - no extra [Surface] wrapper needed here the way `DetailSheet`'s own
+ * `NewsMessageCard` needs one, since [InsightsCard] already IS this card's surface.
  */
 @Composable
 private fun NewsCard(
     newsState: NewsUiState,
     nowMillis: Long,
     onArticleClick: (String) -> Unit,
+    onRetry: () -> Unit,
     reducedMotion: Boolean,
     modifier: Modifier = Modifier,
 ) {
@@ -335,6 +345,29 @@ private fun NewsCard(
                     }
                 }
             }
+            is NewsUiState.Empty -> NewsCardMessageRow(
+                message = "No news coverage yet",
+                actionLabel = newsState.usgsEventUrl?.let { "More on USGS" },
+                onAction = newsState.usgsEventUrl?.let { url -> { onArticleClick(url) } },
+            )
+            NewsUiState.Error -> NewsCardMessageRow(message = "Couldn't load news", actionLabel = "Retry", onAction = onRetry)
+        }
+    }
+}
+
+/** Task 2b: the message-plus-optional-action row [NewsUiState.Empty]/[NewsUiState.Error] share
+ * inside [NewsCard] - see [com.yugma.terrawatch.detail.NewsMessageCard]'s own kdoc for why
+ * DetailSheet's sibling needs its own [Surface] wrapper where this one doesn't. */
+@Composable
+private fun NewsCardMessageRow(message: String, actionLabel: String?, onAction: (() -> Unit)?, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier.fillMaxWidth().padding(top = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(text = message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (actionLabel != null && onAction != null) {
+            TextButton(onClick = onAction) { Text(actionLabel) }
         }
     }
 }

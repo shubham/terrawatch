@@ -1,11 +1,19 @@
 package com.yugma.terrawatch.data
 
+import com.yugma.terrawatch.model.FavoriteAlertType
+import com.yugma.terrawatch.model.FavoritePlace
+
 /**
  * Task 3 (Plan 4): the two pure pieces `AlertDigestWorker`'s (androidMain, `composeApp`) periodic
  * run leans on — pulled into `core:data` rather than living inline in that androidMain class so
  * both are TDD-able with zero Android/WorkManager dependency, the same "thin platform wiring over
  * a tested common core" split every other androidMain-only caller in this codebase already follows
  * for its own DAO/repository pass-throughs.
+ *
+ * Task 2 (Plan 5) adds a third pure piece, [buildDigestRules] (plus its two small string-encoding
+ * helpers, [favoriteRuleId]/[favoriteLabelFromRuleId]) — the worker's own multi-place evaluation,
+ * extending this same "TDD-able, zero-Android-dependency" home rather than inlining the favorite-vs-
+ * home rule assembly directly into `AlertDigestWorker.doWork()`.
  */
 
 /**
@@ -130,4 +138,86 @@ fun planDigestNotifications(events: List<AlertEvent>, maxIndividual: Int = 3): D
     val individual = events.take(maxIndividual)
     val summaryExtraCount = (events.size - individual.size).coerceAtLeast(0)
     return DigestPlan(individual, summaryExtraCount)
+}
+
+/**
+ * Task 2 (Plan 5): [AlertRule.id] prefix an [AlertRuleEngine]-matched event uses to say "this
+ * matched a favorite place, not home's own near/world rules" — [DigestNotificationCopy]'s title/body
+ * builders (`composeApp`) check this to render an honest "near <label>" phrase instead of either the
+ * "near you" (home) or "worldwide M6+" (world) copy, both of which would misdescribe a favorite
+ * match. A plain string-prefix encoding, not a richer [AlertRule]/[AlertEvent] field of its own —
+ * mirrors [DigestNotificationCopy]'s own pre-existing "near"/"world" literal-string discriminator
+ * convention rather than introducing a second, parallel way to tag a rule's origin.
+ */
+private const val FAVORITE_RULE_PREFIX = "favorite:"
+
+/** See [FAVORITE_RULE_PREFIX]'s own kdoc. [label] is embedded verbatim (not the favorite's numeric
+ * id) — two favorites sharing an identical label is a low-severity, display-only edge case (at
+ * worst, a matched favorite's notification copy names the wrong of two identically-labeled places),
+ * traded for a MUCH simpler encoding/decoding pair than a delimited "id:label" scheme would need. */
+fun favoriteRuleId(label: String): String = "$FAVORITE_RULE_PREFIX$label"
+
+/** The inverse of [favoriteRuleId] — `null` for any [ruleId] that isn't one this function produced
+ * (i.e. "near", "world", or any other future non-favorite rule id), so a caller can branch on
+ * "was this a favorite match, and if so, which label" with one nullable call. */
+fun favoriteLabelFromRuleId(ruleId: String): String? =
+    ruleId.takeIf { it.startsWith(FAVORITE_RULE_PREFIX) }?.removePrefix(FAVORITE_RULE_PREFIX)
+
+/**
+ * Task 2 (Plan 5): the worker's own multi-place rule list — one additional rule per favorite in
+ * [favorites] whose own [FavoritePlace.alertType] isn't [FavoriteAlertType.OFF] (an OFF favorite
+ * contributes NOTHING — not a disabled rule, an absent one), combined with [homeRules] (`AlertDigest
+ * Worker`'s existing `repository.currentRules()` result, [DEFAULT_RULES]-shaped: "near" + "world",
+ * both `center = null`, relying on [AlertRuleEngine.evaluate]'s own `home` fallback).
+ *
+ * **Fix Round 1 (Review 1, MAJOR-1): re-pinned ordering — `near, <favorite rules>, world` — NOT
+ * `homeRules + favoriteRules` (i.e. NOT `near, world, <favorite rules>`) as this function originally
+ * shipped.** The original ordering put "world" (mag >=6.0, `radiusKm = null` i.e. UNBOUNDED) ahead of
+ * every favorite rule; since [FavoriteAlertType.MAJOR_ONLY] uses that exact same 6.0 threshold
+ * (`majorOnlyMinMag`, bounded only to that one favorite's radius), "world"'s condition was a strict
+ * superset of any `MAJOR_ONLY` favorite's condition and, being earlier in the list, intercepted
+ * 100% of the quakes a `MAJOR_ONLY` favorite could ever match — the notification still fired (world
+ * fires unconditionally), but the favorite's OWN attribution could never win, making the whole
+ * `MAJOR_ONLY` mode indistinguishable from `ALL` at that magnitude and from having no favorite at
+ * all. See `review-1-findings.md`'s MAJOR-1 for the full reasoning this fix closes.
+ *
+ * **This ordering is the entire mechanism behind the "one notification per quake max, first matching
+ * place wins, prefer home > favorites > world" dedupe ruling** — [AlertRuleEngine.evaluate]'s own
+ * `for (rule in rules)` loop already returns on the FIRST rule that matches and never considers the
+ * rest, so feeding it `homeRules.take(1) + favoriteRules + homeRules.drop(1)` makes home's own "near"
+ * win any overlap with a favorite (unchanged from before this fix), a more SPECIFIC (radius-bound)
+ * favorite rule win over the unconditional "world" catch-all, and the earliest-listed of several
+ * overlapping favorites win among themselves (also unchanged) — zero changes needed to
+ * [AlertRuleEngine] itself (see AlertDigestSupportTest's own "dedupe" section for the proof, run
+ * against the real engine, not just an assertion about this function's own output list).
+ * `homeRules.take(1) + homeRules.drop(1)` reproduces `homeRules` exactly regardless of its size (the
+ * zero-favorites regression test below pins this), so this split is safe even if [homeRules] is ever
+ * anything other than exactly `[near, world]`.
+ *
+ * Each favorite's own [AlertRule] always centers on [FavoritePlace.point] (so [AlertRuleEngine.
+ * evaluate]'s `home` parameter is irrelevant to it — only home's OWN `center = null` rules ever
+ * consult that fallback) and always uses [favoriteRadiusKm] (the worker's own "current
+ * nearbyRadiusKm setting," per this task's own dispatch — the SAME radius home's "near" rule
+ * currently applies, not an independent per-favorite radius) for its `radiusKm`. Only `minMag`
+ * differs by [FavoritePlace.alertType]: [FavoriteAlertType.ALL] uses [favoriteMinMag] (home's own
+ * current min-magnitude setting — "existing min-mag rule semantics," per this task's own dispatch);
+ * [FavoriteAlertType.MAJOR_ONLY] uses the fixed [majorOnlyMinMag] (6.0, mirroring "world"'s own fixed
+ * threshold, but radius-bounded to this one favorite rather than unbounded).
+ */
+fun buildDigestRules(
+    homeRules: List<AlertRule>,
+    favorites: List<FavoritePlace>,
+    favoriteRadiusKm: Double,
+    favoriteMinMag: Double,
+    majorOnlyMinMag: Double = 6.0,
+): List<AlertRule> {
+    val favoriteRules = favorites.mapNotNull { favorite ->
+        val minMag = when (favorite.alertType) {
+            FavoriteAlertType.OFF -> return@mapNotNull null
+            FavoriteAlertType.ALL -> favoriteMinMag
+            FavoriteAlertType.MAJOR_ONLY -> majorOnlyMinMag
+        }
+        AlertRule(id = favoriteRuleId(favorite.label), minMag = minMag, radiusKm = favoriteRadiusKm, center = favorite.point)
+    }
+    return homeRules.take(1) + favoriteRules + homeRules.drop(1)
 }

@@ -144,6 +144,7 @@ fun HistoryScreen(
                     onSharePackaged = { pkg, text -> sharePackaged(pkg, text) },
                     newsState = newsState,
                     onNewsArticleClick = { url -> openUrl(url) },
+                    onNewsRetry = detailNewsViewModel::retry,
                 )
             }
         }

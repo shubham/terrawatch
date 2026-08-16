@@ -63,4 +63,50 @@ class AlertRuleEngineTest {
         val e = engine.evaluate(q(null, lat = 35.0, lon = 140.0), q(6.2, lat = 35.0, lon = 140.0), DEFAULT_RULES, home)
         assertEquals("world", assertNotNull(e).matchedRuleId)
     }
+
+    // --- USER REQUIREMENT (2026-08-16, binding), M4.0 magnitude-floor ruling: a hard floor beneath
+    // EVERY rule's own minMag, enforced in evaluate() itself (see that method's own kdoc). Uses a
+    // permissive custom rule (minMag well below 4.0, radiusKm=null so home/location never enters
+    // into it) to isolate the floor from every other one of evaluate's own checks. -------------------
+
+    @Test fun `a custom rule with minMag below the M4 floor does not fire for a sub-4 quake`() {
+        val permissive = AlertRule(id = "custom", minMag = 3.0, radiusKm = null, center = null)
+        assertNull(engine.evaluate(null, q(3.9), listOf(permissive), home = null))
+    }
+
+    @Test fun `a custom rule with minMag below the M4 floor fires at exactly M4point0 -- inclusive`() {
+        val permissive = AlertRule(id = "custom", minMag = 3.0, radiusKm = null, center = null)
+        val e = assertNotNull(engine.evaluate(null, q(4.0), listOf(permissive), home = null))
+        assertEquals("custom", e.matchedRuleId)
+    }
+
+    @Test fun `a rule already stricter than the M4 floor is unaffected -- its own higher minMag still governs`() {
+        val strict = AlertRule(id = "custom", minMag = 5.0, radiusKm = null, center = null)
+        assertNull(engine.evaluate(null, q(4.5), listOf(strict), home = null)) // above the floor, below the rule's own 5.0
+        val e = assertNotNull(engine.evaluate(null, q(5.0), listOf(strict), home = null))
+        assertEquals("custom", e.matchedRuleId)
+    }
+
+    @Test fun `world (fixed at M6) is unaffected by the M4 floor -- it never lowers an already-stricter rule`() {
+        val e = assertNotNull(engine.evaluate(null, q(6.2, lat = 35.0, lon = 140.0), DEFAULT_RULES, home))
+        assertEquals("world", e.matchedRuleId)
+        assertNull(engine.evaluate(null, q(5.9, lat = 35.0, lon = 140.0), DEFAULT_RULES, home))
+    }
+
+    @Test fun `a revision crossing the M4 floor fires even though the rule's own permissive minMag was already cleared`() {
+        val permissive = AlertRule(id = "custom", minMag = 2.0, radiusKm = null, center = null)
+        // previous 3.5 (below the floor, so never counted as "already fired"), current 4.0 (clears it).
+        val e = engine.evaluate(q(3.5), q(4.0), listOf(permissive), home = null)
+        assertEquals("custom", assertNotNull(e).matchedRuleId)
+    }
+
+    @Test fun `an update that stays below the M4 floor never fires, regardless of the rule's own permissive minMag`() {
+        val permissive = AlertRule(id = "custom", minMag = 2.0, radiusKm = null, center = null)
+        assertNull(engine.evaluate(q(3.0), q(3.8), listOf(permissive), home = null))
+    }
+
+    @Test fun `once a quake has cleared the M4 floor, a later revision that stays above it does not refire`() {
+        val permissive = AlertRule(id = "custom", minMag = 2.0, radiusKm = null, center = null)
+        assertNull(engine.evaluate(q(4.2), q(4.6), listOf(permissive), home = null))
+    }
 }

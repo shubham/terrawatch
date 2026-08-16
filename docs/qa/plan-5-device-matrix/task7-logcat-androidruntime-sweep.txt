@@ -1,0 +1,36 @@
+--------- beginning of crash
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: FATAL EXCEPTION: main
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: PID: 9156
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: java.lang.SecurityException: com.android.shell was not granted  this permission: android.permission.WRITE_SETTINGS.
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: 	at android.os.Parcel.createExceptionOrNull(Parcel.java:3109)
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: 	at android.os.Parcel.createException(Parcel.java:3093)
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: 	at android.os.Parcel.readException(Parcel.java:3076)
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: 	at android.os.Parcel.readException(Parcel.java:3018)
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: 	at android.os.IPowerManager$Stub$Proxy.setStayOnSetting(IPowerManager.java:2250)
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: 	at com.android.commands.svc.PowerCommand.run(PowerCommand.java:94)
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: 	at com.android.commands.svc.Svc.main(Svc.java:41)
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: 	at com.android.internal.os.RuntimeInit.nativeFinishInit(Native Method)
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: 	at com.android.internal.os.RuntimeInit.main(RuntimeInit.java:379)
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: Caused by: android.os.RemoteException: Remote stack trace:
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: 	at android.provider.Settings.isCallingPackageAllowedToPerformAppOpsProtectedOperation(Settings.java:20118)
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: 	at android.provider.Settings.checkAndNoteWriteSettingsOperation(Settings.java:20006)
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: 	at com.android.server.power.PowerManagerService$BinderService.setStayOnSetting(PowerManagerService.java:7327)
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: 	at android.os.IPowerManager$Stub.onTransact(IPowerManager.java:1167)
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: 	at android.os.Binder.execTransactInternal(Binder.java:1387)
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: 
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: Error reporting crash
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: java.lang.RuntimeException: Bad file descriptor
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: 	at android.os.BinderProxy.transactNative(Native Method)
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: 	at android.os.BinderProxy.transact(BinderProxy.java:685)
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: 	at android.os.IServiceManager$Stub$Proxy.checkService(IServiceManager.java:443)
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: 	at android.os.ServiceManagerProxy.getService(ServiceManagerNative.java:63)
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: 	at android.os.ServiceManager.rawGetService(ServiceManager.java:378)
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: 	at android.os.ServiceManager.getService(ServiceManager.java:147)
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: 	at android.app.ActivityManager$3.create(ActivityManager.java:5217)
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: 	at android.app.ActivityManager$3.create(ActivityManager.java:5214)
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: 	at android.util.Singleton.get(Singleton.java:43)
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: 	at android.app.ActivityManager.getService(ActivityManager.java:5205)
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: 	at com.android.internal.os.RuntimeInit$KillApplicationHandler.uncaughtException(RuntimeInit.java:175)
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: 	at java.lang.ThreadGroup.uncaughtException(ThreadGroup.java:1098)
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: 	at java.lang.ThreadGroup.uncaughtException(ThreadGroup.java:1093)
+08-16 09:33:50.983  9156  9156 E AndroidRuntime: 	at java.lang.Thread.dispatchUncaughtException(Thread.java:3387)

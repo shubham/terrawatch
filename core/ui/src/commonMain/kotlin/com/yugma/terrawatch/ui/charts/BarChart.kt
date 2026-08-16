@@ -32,8 +32,16 @@ internal const val MIN_HEIGHT_FRACTION = 0.06f
  * plan's own Tech Stack constraint: "charts hand-rolled; no chart lib per spec"). One vertical bar
  * per entry in [values], evenly spaced with rounded tops/square bottoms; every bar is Water-blue
  * except the LAST one (always "today", by construction of the caller's own bucket range - see
- * `com.yugma.terrawatch.insights.InsightsViewModel`), which renders in Safe-green - the same
- * today's-bar-is-the-accent treatment the approved mockup uses.
+ * `com.yugma.terrawatch.insights.InsightsViewModel`), which renders in a neutral highlight color -
+ * the same today's-bar-is-the-accent treatment the approved mockup uses.
+ *
+ * UI polish findings (docs/superpowers/plans/2026-08-16-ui-polish-findings.md), Part 1 row 9: this
+ * highlight used to reuse `Safe` (the app's "all calm" semantic green) purely as a positional
+ * "this is today" marker. On the doc's own captured screenshot, today's bar happened to be both the
+ * tallest AND a real M7.7 struck that day - "safe green" for a purely positional highlight read as
+ * an avoidable, coincidental semantic clash against a genuinely severe day. Switched to `InfoBlue`
+ * (the doc's first-named alternative) - a neutral "here's a fact" tone with no calm/severity
+ * connotation either way, so the highlight can never accidentally claim a bad day was "safe."
  *
  * [values] is expected already gap-filled by the caller (`com.yugma.terrawatch.insights.
  * fillDayGaps`) - every calendar day in the period gets an entry, zero-quake days included as
@@ -48,7 +56,7 @@ internal const val MIN_HEIGHT_FRACTION = 0.06f
 @Composable
 fun BarChart(values: List<Long>, labels: Pair<String, String>, modifier: Modifier = Modifier) {
     val barColor = TerraColors.Water
-    val highlightColor = TerraColors.Safe
+    val highlightColor = TerraColors.InfoBlue
     Column(modifier.fillMaxWidth()) {
         Canvas(Modifier.fillMaxWidth().height(CHART_HEIGHT)) {
             if (values.isEmpty()) return@Canvas

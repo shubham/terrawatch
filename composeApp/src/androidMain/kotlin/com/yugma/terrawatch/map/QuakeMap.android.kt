@@ -38,6 +38,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.maplibre.compose.camera.CameraPosition
+import org.maplibre.compose.camera.CameraState
 import org.maplibre.compose.camera.rememberCameraState
 import org.maplibre.compose.expressions.dsl.asString
 import org.maplibre.compose.expressions.dsl.case
@@ -102,6 +103,13 @@ private const val HOME_RADIUS_RING_POINTS = 64
 private const val HOME_RADIUS_FILL_OPACITY = 0.25f
 private const val HOME_RADIUS_STROKE_WIDTH_DP = 1.5f
 private const val HOME_RADIUS_RING_SOURCE_ID = "home-radius-ring"
+
+// Task 1 (Plan 5), USER REQUIREMENT: the two camera-jump zoom levels the brief itself specifies —
+// cold-start centering is a wider "which city am I in" view (~6); the my-location FAB's own
+// recenter is a closer "where exactly, on this street" view (~8), matching the established
+// distinction between a first orientation and a deliberate "take me there" tap.
+private const val STARTUP_CAMERA_ZOOM = 6.0
+private const val RECENTER_ZOOM = 8.0
 
 // STRONG/MAJOR/UNKNOWN keep Task 8's original always-all-bands per-band treatment (see
 // QuakeBandCircleLayer's kdoc for why that shape matters); LOW/MODERATE move to
@@ -215,6 +223,43 @@ private val UNCLUSTERED_BANDS = listOf(MagnitudeBand.STRONG, MagnitudeBand.MAJOR
  * `shouldShowStalenessBanner(...)` verdict) already communicates the same "you're offline"
  * information textually on every layout that hosts this map, so no alert-relevant information is
  * lost — only this map's own visual treatment stays unchanged while offline.
+ *
+ * Task 1 (Plan 5) blue current-location dot — SPIKE, time-boxed per the brief ("implement if
+ * trivial, else skip w/ note — the FAB is the feature"): `unzip -l`/`javap` against this exact
+ * resolved `maplibre-compose-android-0.14.0` artifact (same discipline as every other API claim in
+ * this file) turned up a real, fuller-than-expected location-puck API —
+ * `org.maplibre.compose.location.LocationPuck` (a public composable: `id`, `location: Location`,
+ * `cameraState: CameraState`, `bearing: BearingWithAccuracy?`, colors/sizes, click handlers — all
+ * with real Kotlin default values per its mangled name's trailing default-mask ints),
+ * `rememberUserLocationState(locationProvider, orientationProvider, ...)`, and convenience
+ * factories `rememberDefaultLocationProvider(...)`/`rememberDefaultOrientationProvider(...)` that
+ * resolve to real Android implementations (`AndroidLocationProvider`/`AndroidOrientationProvider`)
+ * with sensible defaulted accuracy/interval params — this is NOT the "maybe doesn't exist" shrug
+ * the brief's own phrasing anticipated.
+ *
+ * **SKIPPED anyway, for reasons the spike itself surfaced, not time alone:**
+ * 1. Name collision: `org.maplibre.compose.location.LocationProvider` is a DIFFERENT type from
+ *    this app's own `com.yugma.terrawatch.location.LocationProvider` (this file already imports
+ *    the latter's sibling types) — wiring both into the same file needs import aliasing, a small
+ *    but real correctness-sensitive detail to get right under a time-box, not a copy-paste addition.
+ * 2. A public `PermissionException` class exists on this same package — strongly suggesting
+ *    `AndroidLocationProvider`'s internal `LocationManager` calls THROW without a granted
+ *    permission, rather than degrading to null the way this app's own `LocationProvider.current()`
+ *    already does (see that class's own kdoc). Shipping this safely needs the puck gated on the
+ *    exact same live `locationPermissionGranted` signal `HomeScreen`'s FAB already reads
+ *    ([com.yugma.terrawatch.location.rememberLocationCondition]) — buildable, but another real
+ *    wiring decision, not a trivial addition.
+ * 3. **No way to visually verify it** — this session had zero device access (device 98bc1cd8 not
+ *    connected; see this task's own device-verification section) and the emulator has its own
+ *    documented map-rendering problem noted a few paragraphs up. Shipping an unverified new visual
+ *    element on the one live, judged map target directly contradicts this file's own repeated
+ *    "confirmed on real device / against the real artifact" discipline — the FAB (this task's
+ *    actual, explicitly-named feature) is real-device-verifiable the moment a device is connected;
+ *    the dot, once added, would not be until separately re-verified.
+ *
+ * Net: real API, not a dead end — a reasonable next task if/when there's device time to spare for
+ * it specifically. Not added here so this dispatch doesn't ship an unverified map-rendering change
+ * alongside a device-unverified FAB in the same commit.
  */
 @Composable
 actual fun QuakeMap(
@@ -225,6 +270,10 @@ actual fun QuakeMap(
     onDebugLongPress: (lat: Double, lon: Double) -> Unit,
     homeLocation: GeoPoint?,
     radiusKm: Double,
+    startupCameraTarget: GeoPoint?,
+    onStartupCameraApplied: () -> Unit,
+    recenterTarget: GeoPoint?,
+    onRecenterApplied: () -> Unit,
 ) {
   val cameraState =
       rememberCameraState(
@@ -242,6 +291,25 @@ actual fun QuakeMap(
   // [pins] does.
   val pinsState = rememberUpdatedState(pins)
   val reducedMotion = LocalReducedMotion.current
+
+  // Task 1 (Plan 5), USER REQUIREMENT: cold-start centering + the my-location FAB's recenter —
+  // both are the identical "a non-null GeoPoint means jump the camera there, then tell the caller
+  // to consume it" shape (see QuakeMap.kt's own kdoc for [startupCameraTarget]/[recenterTarget]),
+  // just at a different zoom and with a different trigger, so [applyCameraTarget] below is shared
+  // rather than duplicated. Keyed on the target VALUE (not Unit): HomeViewModel clears each signal
+  // back to null once applied (onStartupCameraApplied/onRecenterApplied below), so this effect
+  // only ever actually moves the camera on the null -> GeoPoint transition, exactly once per
+  // signal — a later recomposition/rotation re-reads the (by-then-null-again) StateFlow value and
+  // this effect's own body returns immediately without touching the camera again.
+  LaunchedEffect(startupCameraTarget) {
+    applyCameraTarget(cameraState, startupCameraTarget, STARTUP_CAMERA_ZOOM, reducedMotion)
+    if (startupCameraTarget != null) onStartupCameraApplied()
+  }
+  LaunchedEffect(recenterTarget) {
+    applyCameraTarget(cameraState, recenterTarget, RECENTER_ZOOM, reducedMotion)
+    if (recenterTarget != null) onRecenterApplied()
+  }
+
   // Task 11: cluster tap-to-zoom needs a coroutine to drive CameraState.animateTo (a suspend fun,
   // confirmed via the resolved sources jar - see ClusteredLowModerateLayer's own kdoc) from inside
   // a plain, non-suspend FeaturesClickHandler lambda.
@@ -275,7 +343,13 @@ actual fun QuakeMap(
       ring1Progress.snapTo(0f)
       ring2Progress.snapTo(0f)
       coroutineScope {
-        launch { scale.animateTo(1f, spring(dampingRatio = Spring.DampingRatioMediumBouncy)) }
+        // UI polish findings (docs/superpowers/plans/2026-08-16-ui-polish-findings.md), Part 3
+        // item 1: was Spring.DampingRatioMediumBouncy (see NewQuakePinOverlay's own kdoc below for
+        // the full history) - swapped to DampingRatioNoBouncy along with this app's other 2
+        // signature springs (RevisionBadge/StatusShield), chosen uniformly rather than
+        // differentiated since a new pin's size+color are themselves magnitude-derived, making this
+        // pop just as severity-adjacent as the other two.
+        launch { scale.animateTo(1f, spring(dampingRatio = Spring.DampingRatioNoBouncy)) }
         launch { ring1Progress.animateTo(1f, tween(RING_DURATION_MS)) }
         launch {
           delay(RING_STAGGER_MS)
@@ -418,6 +492,28 @@ actual fun QuakeMap(
     // Top-most: the animating pin itself, so it's never covered by any static layer beneath it.
     NewQuakePinOverlay(pin = activePin, scale = scale)
   }
+}
+
+/**
+ * Task 1 (Plan 5), USER REQUIREMENT: shared by [startupCameraTarget]'s and [recenterTarget]'s own
+ * [LaunchedEffect]s in [QuakeMap] above — both are the identical "move the camera to this point at
+ * this zoom, snap or animate depending on [reducedMotion]" operation, just triggered by a different
+ * signal at a different zoom. A no-op when [target] is null (the "nothing to do" steady state both
+ * signals settle back into once consumed — see [QuakeMap]'s own kdoc on why each effect is keyed on
+ * the target value itself). `cameraState.animateTo(position)` (no explicit duration argument) is
+ * the exact same call [ClusteredLowModerateLayer]'s own `onClusterTap` already makes a few lines
+ * above in this file — reusing an already-proven-working call shape rather than guessing at
+ * `animateTo`'s optional duration parameter.
+ */
+private suspend fun applyCameraTarget(
+    cameraState: CameraState,
+    target: GeoPoint?,
+    zoom: Double,
+    reducedMotion: Boolean,
+) {
+  val point = target ?: return
+  val position = CameraPosition(target = Position(longitude = point.lon, latitude = point.lat), zoom = zoom)
+  if (reducedMotion) cameraState.position = position else cameraState.animateTo(position)
 }
 
 /**
@@ -764,12 +860,17 @@ private fun NewQuakeRingLayer(id: String, pin: QuakePin?, progress: Animatable<F
 /**
  * The Task 10 pin-drop "pop" itself — a single-feature layer, always on top (see the call site in
  * [QuakeMap]), rendering the currently-animating pin at `pinRadiusDp(band) * scale.value` so it
- * grows from nothing (scale 0) through the spring's natural overshoot (~1.15x, an emergent
- * property of `Spring.DampingRatioMediumBouncy`'s underdamped physics, not a separate hardcoded
- * keyframe) and settles at its true resting size (scale 1) — at which point it's visually
- * indistinguishable from [QuakeBandCircleLayer]'s own rendering of the same pin, so the handoff
- * back to the normal band layer (once the animation completes and [QuakeMap] stops excluding this
- * pin's id from it) is seamless.
+ * grows from nothing (scale 0) and settles at its true resting size (scale 1) — at which point it's
+ * visually indistinguishable from [QuakeBandCircleLayer]'s own rendering of the same pin, so the
+ * handoff back to the normal band layer (once the animation completes and [QuakeMap] stops
+ * excluding this pin's id from it) is seamless.
+ *
+ * UI polish findings (docs/superpowers/plans/2026-08-16-ui-polish-findings.md), Part 3 item 1: this
+ * pop used to grow through the spring's natural overshoot (~1.15x, an emergent property of
+ * `Spring.DampingRatioMediumBouncy`'s underdamped physics, not a separate hardcoded keyframe) before
+ * settling - the spring driving it is now `Spring.DampingRatioNoBouncy` (critically damped), so the
+ * pin grows straight to its resting size with no overshoot at all, in tension-free service of "calm
+ * brand, nothing playful about severity" (this pin's own size+color are already magnitude-derived).
  */
 @Composable
 private fun NewQuakePinOverlay(pin: QuakePin?, scale: Animatable<Float, AnimationVector1D>) {

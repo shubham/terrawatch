@@ -47,7 +47,6 @@ WHAT IT DOES
   the window you pick.
 • Nearby radius — a ring on the map shows exactly what "nearby" means for your alerts, and you
   choose the distance.
-• In the news — for major quakes, related headlines from public news sources, one tap away.
 
 HONEST BY DESIGN
 TerraWatch does not predict earthquakes and is not a substitute for official emergency alerts,
@@ -59,8 +58,7 @@ PRIVACY
 No account required. Your home location is stored only on this device and is never uploaded
 anywhere — not even to check for nearby quakes (that check runs locally, against a global feed).
 
-Built on public data: USGS and EMSC for quake feeds, OpenFreeMap/OpenStreetMap for map tiles,
-GDELT for related news links.
+Built on public data: USGS and EMSC for quake feeds, OpenFreeMap/OpenStreetMap for map tiles.
 
 TerraWatch is free, supported by ads (Google AdMob) shown between screens — never over the map,
 and never during onboarding. TerraWatch Plus removes ads. More Plus features are in development.
@@ -82,8 +80,9 @@ memory):
   / `InsightsScreen.kt` exactly — `store-assets/screenshots/03-insights.png`.
 - "a ring on the map shows exactly what 'nearby' means": the real radius-ring map overlay —
   `store-assets/screenshots/04-settings-radius-ring.png`.
-- "In the news ... related headlines": `GdeltClient.kt` / `DetailNewsViewModel` /
-  `InsightsNewsViewModel` (Plan 4 Task 5).
+- "In the news" feature REMOVED from this listing 2026-08-16: the news code remains in the app
+  (`GdeltClient.kt` et al.) but is disabled by `NewsFeature.ENABLED = false` (GDELT unreliable
+  from target networks — user decision). Do not re-add the bullet unless the flag is flipped on.
 - "home location is stored only on this device ... never uploaded, not even to check for nearby
   quakes": verified by reading `UsgsApi.kt`'s real method signatures (`fetchFeed`, `queryArchive`,
   `queryCount`) — none take a latitude/longitude parameter. The feed fetch is always global by

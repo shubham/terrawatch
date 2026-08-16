@@ -16,8 +16,22 @@ private val TerraLightColorScheme = lightColorScheme(
     onPrimary = TerraColors.Canvas,
     secondary = TerraColors.InfoBlue,
     onSecondary = Color.White,
+    // UI polish findings, Part 1 row 6: previously undefined, so M3's stock baseline purple
+    // (#E8DEF8/#1D192B) leaked onto every selected FilterChip, the Settings sliders' inactive
+    // track, and the bottom-nav selected-tab pill (confirmed via source + pixel sampling - see
+    // Tokens.kt's own kdoc on DuskInfoContainer for the full finding). Water is an existing token,
+    // not a fresh hue - Ink-on-Water measures 12.96:1 (ContrastTest).
+    secondaryContainer = TerraColors.Water,
+    onSecondaryContainer = TerraColors.Ink,
     tertiary = TerraColors.Safe,
     onTertiary = Color.White,
+    // Doc asked to also "check tertiaryContainer" - no current call site in this app defaults to
+    // it (same grep that found zero secondaryContainer overrides also found none for
+    // tertiaryContainer), so unlike secondaryContainer this isn't a proven leak. Defined anyway as
+    // a defensive completion (reusing existing Land/Ink, no fresh hue) so the identical M3-default
+    // leak can't silently reappear the moment a future component call site defaults to this role.
+    tertiaryContainer = TerraColors.Land,
+    onTertiaryContainer = TerraColors.Ink,
     background = TerraColors.Canvas,
     onBackground = TerraColors.Ink,
     surface = Color.White,
@@ -43,8 +57,19 @@ private val TerraDarkColorScheme = darkColorScheme(
     onPrimary = TerraColors.Ink,
     secondary = TerraColors.InfoBlue,
     onSecondary = TerraColors.Ink,
+    // UI polish findings, Part 1 row 6: the dark-theme half of the same undefined-role leak (M3
+    // stock #4A4458/#E8DEF8, pixel-sampled exactly on real screenshots - see Tokens.kt's own kdoc
+    // on DuskInfoContainer). DuskInfoContainer is a deliberate InfoBlue-tinted derived tone (not a
+    // fresh hue), measuring 8.33:1 with Water text on top (ContrastTest).
+    secondaryContainer = TerraColors.DuskInfoContainer,
+    onSecondaryContainer = TerraColors.Water,
     tertiary = TerraColors.Safe,
     onTertiary = TerraColors.Ink,
+    // Defensive completion, mirroring the light scheme's own note just above - no proven leak here
+    // (same grep found zero tertiaryContainer overrides too), but left undefined would silently
+    // reintroduce the identical M3-default-leak risk the moment a future call site defaults to it.
+    tertiaryContainer = TerraColors.DuskCardVariant,
+    onTertiaryContainer = TerraColors.Canvas,
     background = TerraColors.DuskCanvas,
     onBackground = TerraColors.Canvas,
     surface = TerraColors.DuskCard,

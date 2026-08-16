@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TerraWatch logo direction B - "Concentric epicenter rings, negative-space T" (Plan 5 Task 4).
+
+  Concentric rings around a common center are a real cartographic convention this category uses
+  for genuine reasons (USGS/EMSC shake-intensity contour maps draw exactly this around an
+  epicenter) - research.md also found QuakeFeed's own app icon uses plain concentric ripple rings
+  (in an orange gradient circle, with a red seismograph spike through the middle). This direction
+  shares that broad "rings = epicenter" convention but diverges from QuakeFeed's specific execution
+  in every particular that matters: Calm Guardian palette instead of orange gradient, no
+  seismograph waveform anywhere in the mark, and an ownable device no researched competitor mark
+  has - a "T" (for TerraWatch) built entirely from negative space cut through the rings, rather
+  than an added letterform or wordmark.
+
+  Construction: an SVG mask (real alpha, not a same-color-paint-over trick) punches the T shape out
+  of a group containing all three ring/disc elements, so the T reads as background showing through
+  a gap in the rings - true transparency, which matters if this direction is ever split into
+  separate adaptive-icon foreground/background layers later (out of scope for this task).
+  NOTE for whoever implements this later: Android's VectorDrawable format has limited <mask>
+  support - the punch-through would need to be re-expressed as compound paths with
+  android:fillType="evenOdd" instead of an SVG <mask> element. Not done here since this task stops
+  at the design/preview stage.
+
+  Geometry: 108x108 viewBox, safe zone = r33 circle centered at (54,54) (same convention as the
+  shipped icon-source.svg). Outer ring r=29.5 stroke5 (outer edge 32, margin 1 - identical to the
+  shipped mark's own ring). Middle ring r=20 stroke4.5. Center disc r=10.5. T crossbar
+  40,25 - 68,32 (corners ~32.2 from center, just inside the safe zone); T stem 50,32 - 58,77
+  (well within safe zone throughout, since it's narrow and stays close to the vertical centerline).
+
+  Monochrome-able: arguably the most natural fit of the three directions for Android's themed-icon
+  system, since the T is *already* pure alpha (no pixels drawn there) rather than a same-color
+  fill - a single-color monochrome pass just needs to recolor the three ring/disc shapes and the
+  T stays exactly as transparent as it already is.
+
+  Legibility note (see rationale.md for the full writeup): the T reads clearly as a letterform at
+  512px; at 48dp it's more honest to say it reads as a deliberate cross-shaped notch in the rings
+  than as a crisp "T" - acceptable for a brand mark, but worth a real device check before this
+  direction is picked over the other two.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <title>TerraWatch logo direction B - concentric rings with a negative-space T</title>
+  <desc>Ink and Safe-green concentric rings around a Safe-green disc, with a T-shaped gap cut through all three, on a Water-blue field.</desc>
+
+  <defs>
+    <mask id="t-cutout" maskUnits="userSpaceOnUse" x="0" y="0" width="108" height="108">
+      <!-- White = visible, black = punched out. -->
+      <rect x="0" y="0" width="108" height="108" fill="#FFFFFF"/>
+      <rect x="40" y="25" width="28" height="7" fill="#000000"/>
+      <rect x="50" y="32" width="8" height="45" fill="#000000"/>
+    </mask>
+  </defs>
+
+  <!-- Background: Water-blue, full 108x108 bleed. -->
+  <rect x="0" y="0" width="108" height="108" fill="#D9E9F4"/>
+
+  <g mask="url(#t-cutout)">
+    <!-- Outer ring: Ink, r=29.5, stroke 5 (matches the shipped mark's own ring geometry exactly). -->
+    <circle cx="54" cy="54" r="29.5" fill="none" stroke="#17222E" stroke-width="5"/>
+    <!-- Middle ring: Safe green, r=20, stroke 4.5. -->
+    <circle cx="54" cy="54" r="20" fill="none" stroke="#2FA36B" stroke-width="4.5"/>
+    <!-- Center disc: Safe green, r=10.5. -->
+    <circle cx="54" cy="54" r="10.5" fill="#2FA36B"/>
+  </g>
+</svg>

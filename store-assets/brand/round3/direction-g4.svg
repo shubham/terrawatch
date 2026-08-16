@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TerraWatch logo direction G4 - "epicenter accent dot" (Plan 5 Task 4, round 3).
+
+  Same disc/needle as round2/direction-g.svg, unchanged in position, angle, and color. The one
+  change: the contact dot recolors from Water-blue to a single warm accent, "popping" as the mark's
+  one focal point at launcher size while the disc and needle stay exactly as calm as G already was.
+
+  Color choice, argued honestly rather than just asserted: the Calm Guardian palette
+  (core/ui/.../theme/Tokens.kt, grepped fresh this session) has exactly three genuinely warm hexes -
+  WarnInk #B08A2E (amber/gold), MagStrong #F0663B (orange), MagMajor #C43A2F (red). MagStrong/
+  MagMajor were deliberately ruled out, not just skipped: both round 1's rationale.md and round 2's
+  round2-rationale.md state explicitly, twice, that those two are reserved for the app's magnitude-
+  severity system and are NOT brand-identity colors ("not a 'brand identity' color in this app's own
+  token set today" - rationale.md; "this app's own reserved magnitude-severity color, not a
+  brand-identity color" - round2-rationale.md) - putting either on the brand mark itself would blur
+  exactly the distinction those two documents went out of their way to protect. Alarm red/orange is
+  also research.md's single most crowded competitor convention (4 of 6 marks inspected use it as
+  their dominant device) - the one color choice this whole project has consistently steered away
+  from. WarnInk (amber/gold) is the one remaining warm hex that is neither reserved nor the
+  category's own cliche, so it is used here.
+
+  Honest trade-off, flagged rather than glossed over: this is a genuine departure from the Calm
+  Guardian 3-hex budget (Ink/Water/Safe) every other direction across all three rounds has held to -
+  the mark now uses four hexes (Water background, Ink disc, Safe needle, WarnInk dot), and WarnInk
+  itself already carries a "warning/caution" meaning elsewhere in the app's own design system
+  (Tokens.kt pairs it with WarnBg for warning banners), which is a real tension against using it as a
+  neutral "focal accent" on a brand mark instead. If G4 is picked, that tension deserves an explicit
+  design-system-owner sign-off before shipping, not a silent assumption that "warm but not
+  MagStrong/MagMajor" fully resolves it.
+
+  Geometry: dot center unchanged (38.4,63), radius 4.5 -> 5.25 (a further bump beyond G1's 5.2,
+  reasoned the same way - a bigger dot reads more confidently as a deliberate focal point rather than
+  a fleck - the accent color and the accent's own visibility should reinforce each other).
+
+  Competitive check: no researched mark (research.md) pairs a dark dial/scope with a single warm
+  accent dot; this is a new combination, not derivative of anything inspected.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <title>TerraWatch logo direction G4 - dial with a warm epicenter accent dot</title>
+  <desc>An Ink disc on a Water-blue field, carrying a Safe-green sweep needle and one warm WarnInk accent dot as the mark's single focal point.</desc>
+
+  <!-- Background: Water-blue, full 108x108 bleed. -->
+  <rect x="0" y="0" width="108" height="108" fill="#D9E9F4"/>
+
+  <!-- Disc: Ink, the dial/scope face. Unchanged from direction-g.svg. -->
+  <circle cx="54" cy="54" r="27" fill="#17222E"/>
+
+  <!-- Sweep needle: Safe green, unchanged from direction-g.svg. -->
+  <line x1="54" y1="54" x2="74.85" y2="44.28" stroke="#2FA36B" stroke-width="5.5" stroke-linecap="round"/>
+
+  <!-- Contact dot: recolored Water -> WarnInk (#B08A2E, warm amber/gold - see rationale above for
+       why this hex and not MagStrong/MagMajor), same center as G, radius bumped 4.5 -> 5.25 for a
+       more confident focal pop at 48px. -->
+  <circle cx="38.4" cy="63" r="5.25" fill="#B08A2E"/>
+</svg>

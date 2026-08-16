@@ -15,6 +15,10 @@ import com.yugma.terrawatch.model.GeoPoint
 // actual itself still isn't reachable yet — wasmJsMain/main.kt renders WebPlaceholder(), not
 // HomeScreen (web's data layer is Plan 3) — but it now matches jvm's real fallback instead of a
 // bespoke placeholder, ready the moment web's App() does reach HomeScreen.
+//
+// Task 1 (Plan 5): [startupCameraTarget]/[onStartupCameraApplied]/[recenterTarget]/
+// [onRecenterApplied] are accepted for expect/actual signature parity only — same "no camera to
+// move" reasoning QuakeMap.jvm.kt's own identical addition documents.
 @Composable
 actual fun QuakeMap(
     pins: List<QuakePin>,
@@ -24,6 +28,10 @@ actual fun QuakeMap(
     onDebugLongPress: (lat: Double, lon: Double) -> Unit,
     homeLocation: GeoPoint?,
     radiusKm: Double,
+    startupCameraTarget: GeoPoint?,
+    onStartupCameraApplied: () -> Unit,
+    recenterTarget: GeoPoint?,
+    onRecenterApplied: () -> Unit,
 ) {
   FallbackMapPane(pins = pins, onPinTap = onPinTap, modifier = modifier, homeLocation = homeLocation, radiusKm = radiusKm)
 }

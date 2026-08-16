@@ -1,6 +1,7 @@
 package com.yugma.terrawatch.alerts
 
 import com.yugma.terrawatch.data.AlertEvent
+import com.yugma.terrawatch.data.favoriteRuleId
 import com.yugma.terrawatch.model.Quake
 import com.yugma.terrawatch.model.QuakeStatus
 import com.yugma.terrawatch.model.Source
@@ -77,5 +78,26 @@ class DigestNotificationCopyTest {
 
     @Test fun `summary text for multiple extras uses plural wording`() {
         assertEquals("5 more earthquakes matched your alerts", summaryNotificationText(5))
+    }
+
+    // --- Task 2 (Plan 5): favorite-place matches -- honest, distinct from both near/world copy ----
+
+    @Test fun `favorite-rule title names the favorite's own label, never claims 'near you'`() {
+        val event = AlertEvent(quake(mag = 5.8, place = "12 km NE of Tokyo", timeMillis = nowMillis - 7_200_000L), favoriteRuleId("Tokyo"))
+        val title = digestNotificationTitle(event, nowMillis)
+        assertEquals("M5.8 near Tokyo · 2 h ago", title)
+        assertTrue("near you" !in title)
+    }
+
+    @Test fun `favorite-rule body is the quake's place, not a worldwide-rule claim`() {
+        val event = AlertEvent(quake(place = "12 km NE of Tokyo"), favoriteRuleId("Tokyo"))
+        val body = digestNotificationBody(event)
+        assertEquals("12 km NE of Tokyo", body)
+        assertTrue("worldwide" !in body.lowercase())
+    }
+
+    @Test fun `favorite-rule title formats magnitude and time exactly like the near-rule title does`() {
+        val event = AlertEvent(quake(mag = null, timeMillis = nowMillis), favoriteRuleId("Mumbai"))
+        assertEquals("M— near Mumbai · just now", digestNotificationTitle(event, nowMillis))
     }
 }

@@ -47,6 +47,7 @@ import com.yugma.terrawatch.location.LocationRequester
 import com.yugma.terrawatch.location.canRequestLocation
 import com.yugma.terrawatch.location.reduceLocationPermissionState
 import com.yugma.terrawatch.location.rememberLocationCondition
+import com.yugma.terrawatch.motion.LocalReducedMotion
 import com.yugma.terrawatch.notifications.NotificationAlertsUiState
 import com.yugma.terrawatch.notifications.NotificationPermissionRequester
 import com.yugma.terrawatch.notifications.reduceNotificationPermissionState
@@ -146,6 +147,14 @@ internal fun defaultRuleSummary(minMag: Double, radiusKm: Double): String =
 fun OnboardingScreen(onFinish: () -> Unit) {
     val pagerState = rememberPagerState(pageCount = { STEP_COUNT })
     val scope = rememberCoroutineScope()
+    // UI polish findings (docs/superpowers/plans/2026-08-16-ui-polish-findings.md), Part 3 item 2:
+    // this pager's 2 animateScrollToPage call sites had no reducedMotion gate at all - a real gap
+    // in an otherwise 100%-consistent, already-shipped convention every other animated element in
+    // this app follows (e.g. FeedSheet.kt's identical `if (reducedMotion) listState.scrollToItem(0)
+    // else listState.animateScrollToItem(0)` shape) - on the very first screen a reduced-motion user
+    // sees. `scrollToPage` is `PagerState`'s own instant counterpart to `animateScrollToPage`, same
+    // "scrollToX vs animateScrollToX" pairing `LazyListState` already has.
+    val reducedMotion = LocalReducedMotion.current
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Box(Modifier.fillMaxSize()) {
@@ -157,7 +166,11 @@ fun OnboardingScreen(onFinish: () -> Unit) {
                     when (page) {
                         0 -> WhatItDoesStep(modifier = Modifier.fillMaxSize())
                         1 -> LocationStep(
-                            onAdvance = { scope.launch { pagerState.animateScrollToPage(2) } },
+                            onAdvance = {
+                                scope.launch {
+                                    if (reducedMotion) pagerState.scrollToPage(2) else pagerState.animateScrollToPage(2)
+                                }
+                            },
                             modifier = Modifier.fillMaxSize(),
                         )
                         else -> NotificationsAskStep(modifier = Modifier.fillMaxSize())
@@ -169,7 +182,10 @@ fun OnboardingScreen(onFinish: () -> Unit) {
                         if (pagerState.currentPage == STEP_COUNT - 1) {
                             onFinish()
                         } else {
-                            scope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
+                            val next = pagerState.currentPage + 1
+                            scope.launch {
+                                if (reducedMotion) pagerState.scrollToPage(next) else pagerState.animateScrollToPage(next)
+                            }
                         }
                     },
                 )

@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TerraWatch logo direction G3 - "needle sweep with a faint arc trail" (Plan 5 Task 4, round 3).
+
+  Same disc/needle/dot as round2/direction-g.svg, unchanged, plus one new device: a single thin,
+  faint arc trailing behind the needle's own tip, implying the needle just swept forward into its
+  current position - motion suggested, nothing rotating or animated-looking in the static mark.
+
+  Explicitly NOT the radar-scope cliche this exact file's lineage already caught and rejected once:
+  round2/direction-g.svg's own history is a filled ~45deg pie wedge that read as a Pac-Man mouth. This
+  is the opposite construction on every axis that mattered there - a stroked arc (not a filled wedge),
+  thin (stroke-width 2.5 versus the needle's own 5.5), and faint (stroke-opacity 0.32) rather than a
+  solid high-contrast shape - so it cannot repeat that failure mode. It is also deliberately not a
+  full-circle ring (which would read as the "rotating beam over a scope" convention that literal
+  weather-radar apps use, reconfirmed via this round's WebSearch "radar app icon" - see
+  round3-rationale.md): the arc spans only 40 degrees, well short of implying full rotation, and there
+  is no color gradient suggesting intensity/distance the way a real radar sweep or QuakeFeed's
+  ripple-ring device (research.md) does.
+
+  Geometry: arc centered on (54,54), radius 23 - exactly the needle's own length, so the arc traces
+  the precise path the needle tip would travel - spanning -65deg to -25deg (40 degrees), ending
+  exactly at the needle's own tip (74.84,44.28) so the trail reads as flowing directly into the
+  needle rather than floating disconnected near it. Stroke-width 2.5, round cap, Safe green (the same
+  hue as the needle - the trail is the needle's own afterimage, not a new hue) at stroke-opacity 0.32.
+  Drawn BEFORE the needle in document order so the needle sits visually on top of/emerges from the
+  trail, reinforcing "trailing behind," not "floating beside."
+
+  Clearance check: arc radius 23 plus half the 2.5-unit stroke (1.25) reaches 24.25 units from center
+  at most - 2.75 clear of the disc's own r27 rim, comparable margin to the needle's own tip clearance.
+  The arc spans 295deg-335deg in absolute terms and the contact dot sits at ~150deg - over 100 degrees
+  of clear separation, no visual merging between the two.
+
+  Competitive check: none of the 6 marks in research.md use any needle/dial/sweep device, so the
+  category-specific check is a non-issue by construction (same finding round2/direction-g.svg's own
+  comment already established). The broader adjacent "radar icon" convention (reconfirmed this round,
+  see round3-rationale.md) is dominated by either a filled rotating beam or a location-pin-in-a-dashed-
+  circle - a faint 40deg trail behind a static needle matches neither.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <title>TerraWatch logo direction G3 - dial with a faint needle-sweep trail</title>
+  <desc>An Ink disc on a Water-blue field, carrying a faint Safe-green arc trailing behind a Safe-green sweep needle, and one Water contact dot.</desc>
+
+  <!-- Background: Water-blue, full 108x108 bleed. -->
+  <rect x="0" y="0" width="108" height="108" fill="#D9E9F4"/>
+
+  <!-- Disc: Ink, the dial/scope face. Unchanged from direction-g.svg. -->
+  <circle cx="54" cy="54" r="27" fill="#17222E"/>
+
+  <!-- Faint sweep trail: Safe green at 0.32 opacity, thin (stroke 2.5, vs. the needle's 5.5), radius
+       23 (== needle length), spanning -65deg to -25deg (40deg), ending exactly at the needle tip.
+       Drawn before the needle so it reads as trailing behind/underneath it. -->
+  <path d="M 63.72,33.15 A 23,23 0 0 1 74.84,44.28"
+        fill="none" stroke="#2FA36B" stroke-width="2.5" stroke-linecap="round" stroke-opacity="0.32"/>
+
+  <!-- Sweep needle: Safe green, center to (74.85,44.28) - 23 units at -25deg, unchanged from
+       direction-g.svg. -->
+  <line x1="54" y1="54" x2="74.85" y2="44.28" stroke="#2FA36B" stroke-width="5.5" stroke-linecap="round"/>
+
+  <!-- Contact dot: Water-blue, unchanged from direction-g.svg. -->
+  <circle cx="38.4" cy="63" r="4.5" fill="#D9E9F4"/>
+</svg>

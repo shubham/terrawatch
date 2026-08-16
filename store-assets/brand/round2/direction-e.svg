@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TerraWatch logo direction E - "Globe tile: meridian arc + quake dot + one thin ring"
+  (Plan 5 Task 4, round 2).
+
+  Varies A's container from a circular disc-in-ring to a rounded-square badge/tile - a materially
+  different silhouette, not a recolor of A's circle. The earthquake tie also moves from A's
+  ring-gap to a globe reference (one meridian arc, evoking a longitude line / the visible curvature
+  of a sphere) plus a single quake dot with one thin ring around it (a location marker, closer to a
+  map-pin halo than an "epicenter blast" - research.md explicitly notes the brief's assumed "red
+  pins" cliche did NOT show up in any of the 5 marks actually inspected, so this device is genuine
+  whitespace, not a repeat of something already crowded). Deliberately ONE ring, not several: several
+  concentric rings is round 1's own direction B's device (rings-as-epicenter, which the user
+  rejected) and also QuakeFeed's device (research.md) - one ring only keeps this from drifting back
+  into either.
+
+  Same "negative space, not an added shape" discipline as A/D: the arc, dot, and ring are all
+  painted in the same Water-blue as the background (a same-color paint-over technique, not a true
+  alpha cutout - see the Android-implementation note below), so the mark stays a strict 2-color
+  design (Water + Safe) exactly like the shipped mark's own 2-color-plus-neutral-ring economy.
+
+  Not derivative of any researched mark: Earthquake Network's icon (research.md) is the one globe
+  reference actually found in the category, and it is a wireframe grid-sphere (many lat/long lines
+  at every intersection) with a red seismograph spike cut through the middle - the opposite of this
+  direction's single-arc minimalism, no grid, no red, no waveform, and a SQUARE tile rather than a
+  circle in the first place.
+
+  Geometry: 108x108 viewBox, safe zone = r33 circle centered (54,54). Tile: rounded rect (34,34) to
+  (74,74), corner radius 10 - every corner sits at r~28.3 from center, comfortably inside the safe
+  zone (margin ~4.7). Meridian arc: quadratic curve (44,40) -> (38,54) -> (44,68), stroke-width 4,
+  round caps. Quake dot: center (60,58) r4. Thin ring: same center, r8.5, stroke-width 2.5 (outline
+  only, fill none) - a visible ~3-unit gap from the dot at this scale, closing at true 48px (see
+  round2-rationale.md's honest small-size note).
+
+  Monochrome-able: tile + arc + dot + ring are all flat, ungraded shapes - a single-color pass
+  recolors the tile and the cutout content becomes true alpha in that pass. Implementation note for
+  later (not done here, matches round 1's own direction-B precedent): the arc/dot/ring are drawn
+  here as same-color paint-over for simplicity; a real adaptive-icon foreground/background split
+  would want these re-expressed as true cutouts (compound path, evenOdd fill) so they read as real
+  transparency rather than a second flat color underneath.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <title>TerraWatch logo direction E - globe tile with meridian arc, quake dot and one thin ring</title>
+  <desc>A rounded-square Safe-green tile on a Water-blue field, carrying one pale meridian arc and one quake dot with a single thin ring, both painted in Water-blue.</desc>
+
+  <!-- Background: Water-blue, full 108x108 bleed. -->
+  <rect x="0" y="0" width="108" height="108" fill="#D9E9F4"/>
+
+  <!-- Tile: Safe green, rounded square badge. -->
+  <rect x="34" y="34" width="40" height="40" rx="10" fill="#2FA36B"/>
+
+  <!-- Meridian arc: Water-blue, single quadratic curve suggesting the globe's curvature. -->
+  <path d="M44,40 Q38,54 44,68" fill="none" stroke="#D9E9F4" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- Quake dot: Water-blue. -->
+  <circle cx="60" cy="58" r="4" fill="#D9E9F4"/>
+
+  <!-- One thin ring around the dot: Water-blue, stroke only. -->
+  <circle cx="60" cy="58" r="8.5" fill="none" stroke="#D9E9F4" stroke-width="2.5"/>
+</svg>

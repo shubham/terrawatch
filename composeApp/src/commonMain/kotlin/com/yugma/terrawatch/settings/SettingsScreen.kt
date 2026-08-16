@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
@@ -54,6 +56,8 @@ import com.yugma.terrawatch.location.LocationRequester
 import com.yugma.terrawatch.location.canRequestLocation
 import com.yugma.terrawatch.location.reduceLocationPermissionState
 import com.yugma.terrawatch.location.rememberLocationCondition
+import com.yugma.terrawatch.model.FavoriteAlertType
+import com.yugma.terrawatch.model.FavoritePlace
 import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.notifications.NotificationAlertsUiState
 import com.yugma.terrawatch.notifications.NotificationPermissionRequester
@@ -134,6 +138,12 @@ internal const val SETTINGS_BACK_TAG = "settings-back"
  * test/device-verification pass can pin it" convention as [SETTINGS_BACK_TAG] just above. */
 internal const val SETTINGS_PLUS_ROW_TAG = "settings-plus-row"
 
+/** Task 2 (Plan 5): `testTag` for the Places section's "Add place" row — same "internal, so a
+ * device-verification pass can pin it" convention as [SETTINGS_PLUS_ROW_TAG] just above. Per-favorite
+ * remove buttons use [favoriteRemoveTag] instead (their own id-keyed tag) since there can be more
+ * than one, unlike this single fixed row. */
+internal const val SETTINGS_ADD_PLACE_TAG = "settings-add-place"
+
 /**
  * Task 7 (Plan 3): the Settings screen — replaces `AppNav.kt`'s `PlaceholderScreen("Settings —
  * Task 7")`. Four sections per the plan brief: ALERTS (the flagship user-settable "nearby" radius
@@ -171,7 +181,14 @@ fun SettingsScreen(
     val theme by viewModel.theme.collectAsState()
     val homeLocation by viewModel.homeLocation.collectAsState()
     val isPlusActive by viewModel.isPlusActive.collectAsState()
+    // Task 2 (Plan 5): the Places section's own favorites list.
+    val favorites by viewModel.favorites.collectAsState()
     var showCityPicker by remember { mutableStateOf(false) }
+    // Task 2 (Plan 5): a SEPARATE flag from showCityPicker above — this one opens CityPickerDialog
+    // in its "add favorite" reuse mode (onCityPicked non-null), never home's own "Change" mode; the
+    // two must stay independent so tapping "Add place" can never accidentally overwrite home, and
+    // vice versa.
+    var showAddFavoritePicker by remember { mutableStateOf(false) }
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
@@ -194,10 +211,32 @@ fun SettingsScreen(
                     AlertsPermissionRow()
                 }
                 SettingsCard {
-                    SettingsSectionLabel("PLACE")
+                    // Task 2 (Plan 5): "PLACE" -> "PLACES" — this section now covers home AND every
+                    // favorite beyond it, not home alone.
+                    SettingsSectionLabel("PLACES")
                     PlaceRow(
                         homeLocation = homeLocation,
                         onChangeClick = { showCityPicker = true },
+                    )
+                    favorites.forEach { favorite ->
+                        Spacer(Modifier.height(12.dp))
+                        FavoriteRow(
+                            favorite = favorite,
+                            onAlertTypeChange = { type -> viewModel.setFavoriteAlertType(favorite.id, type) },
+                            onRemove = { viewModel.removeFavorite(favorite.id) },
+                        )
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    AddPlaceRow(
+                        onClick = {
+                            // Task 2 (Plan 5), FIRST REAL PLUS GATE: checked at the moment of the
+                            // tap, against THIS instant's own favorites count — see
+                            // SettingsViewModel.canAddFavorite's own kdoc. Blocked -> the paywall
+                            // (the existing Plan 4 Task 6 Plus row/paywall wiring, reused verbatim
+                            // via the SAME onPlusClick callback the PLUS row below already calls),
+                            // never the picker.
+                            if (viewModel.canAddFavorite()) showAddFavoritePicker = true else onPlusClick()
+                        },
                     )
                 }
                 SettingsCard {
@@ -217,6 +256,12 @@ fun SettingsScreen(
         }
         if (showCityPicker) {
             CityPickerDialog(onDismiss = { showCityPicker = false })
+        }
+        if (showAddFavoritePicker) {
+            CityPickerDialog(
+                onDismiss = { showAddFavoritePicker = false },
+                onCityPicked = { city -> viewModel.addFavorite(city.name, city.point) },
+            )
         }
     }
 }
@@ -334,9 +379,15 @@ private fun MinMagSlider(minMag: Double, onMinMagChange: (Double) -> Unit, modif
             onValueChangeFinished = {
                 onMinMagChange(pendingMinMag)
             },
-            valueRange = 3.0f..6.0f,
-            // 3.0..6.0 in steps of 0.5 = 7 stops = start + 5 intermediate + end.
-            steps = 5,
+            // USER REQUIREMENT (2026-08-16, binding), M4.0 magnitude-floor ruling: floor raised
+            // 3.0 -> 4.0, matching AlertRuleStore.readMinMag's own read-clamp and, ultimately,
+            // AlertRuleEngine.MIN_NOTIFIABLE_MAGNITUDE (the actual notification-path backstop —
+            // see that constant's own kdoc) — a user can no longer configure a value the engine
+            // would silently override anyway.
+            valueRange = 4.0f..6.0f,
+            // 4.0..6.0 in steps of 0.5 = 5 stops = start + 3 intermediate + end (was 7 stops/5
+            // steps over the old 3.0..6.0 range — same 0.5 granularity, just a shorter range).
+            steps = 3,
         )
     }
 }
@@ -455,6 +506,88 @@ private fun PlaceRow(
         if (canRequestLocation()) {
             UseMyLocationAction(modifier = Modifier.padding(top = 4.dp))
         }
+    }
+}
+
+/**
+ * Task 2 (Plan 5): one favorite in the Places section — label, a 3-state alert-type control, and a
+ * remove action. [FilterChip] x3 (All/Major only/Off), not a custom segmented control — matches this
+ * app's existing "a small set of mutually-exclusive options is a horizontally-scrollable row of
+ * [FilterChip]s" idiom (`HistoryScreen.HistoryFilterChips`'s own magnitude/year chips,
+ * `InsightsScreen`'s period selector, and this same screen's own `HomeScreen.PlaceQuickSwitchChips`
+ * for the identical reason), rather than introducing a new control shape for this one row.
+ */
+@Composable
+private fun FavoriteRow(
+    favorite: FavoritePlace,
+    onAlertTypeChange: (FavoriteAlertType) -> Unit,
+    onRemove: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = favorite.label,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(
+                onClick = onRemove,
+                modifier = Modifier.testTag(favoriteRemoveTag(favorite.id)),
+            ) { Text("Remove") }
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 4.dp)
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            FavoriteAlertType.entries.forEach { type ->
+                FilterChip(
+                    selected = favorite.alertType == type,
+                    onClick = { onAlertTypeChange(type) },
+                    label = { Text(type.displayName()) },
+                )
+            }
+        }
+    }
+}
+
+private fun FavoriteAlertType.displayName(): String = when (this) {
+    FavoriteAlertType.ALL -> "All"
+    FavoriteAlertType.MAJOR_ONLY -> "Major only"
+    FavoriteAlertType.OFF -> "Off"
+}
+
+/** `internal` so a future device-verification pass can pin a specific favorite's own remove button
+ * without depending on row order/label text — same "so a test can pin it" convention every other
+ * `testTag` constant in this file already establishes. */
+internal fun favoriteRemoveTag(id: Long): String = "settings-favorite-remove-$id"
+
+/**
+ * Task 2 (Plan 5): the Places section's own "Add place" action — [onClick] is the gate-check-then-
+ * route decision (`SettingsScreen`'s own call site: canAddFavorite() -> open the picker, else ->
+ * the paywall), never decided here — this row is purely presentational, same "dumb row, smart
+ * caller" split every other action row on this screen (`PlusRow`, `PlaceRow`'s own "Change" button)
+ * already follows.
+ */
+@Composable
+private fun AddPlaceRow(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .testTag(SETTINGS_ADD_PLACE_TAG),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "Add place",
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+        )
     }
 }
 

@@ -2,11 +2,15 @@ package com.yugma.terrawatch.database
 
 import app.cash.sqldelight.coroutines.asFlow
 import app.cash.sqldelight.coroutines.mapToList
+import com.yugma.terrawatch.model.FavoriteAlertType
+import com.yugma.terrawatch.model.FavoritePlace as DomainFavoritePlace
+import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.model.MagRevision
 import com.yugma.terrawatch.model.MagnitudeBand
 import com.yugma.terrawatch.model.Quake as DomainQuake
 import com.yugma.terrawatch.model.QuakeStatus
 import com.yugma.terrawatch.model.Source
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -42,7 +46,34 @@ private fun bandFromLabel(label: String?): MagnitudeBand =
 // this task (verified by the full jvmTest suite staying green with zero edits to this class's logic).
 // Task 2 (Plan 4) grew the interface to 15 methods (metaPutAll, pruneOldRows) — see QuakeStore's
 // own kdoc for the three carried Plan 3 exit-condition items (F1/M1/origin-tagging) that closes.
-class QuakeDao(private val db: TerraWatchDb, private val clock: () -> Long = { 0L }) : QuakeStore {
+//
+// Flake-hardening pass (2026-08-16, round 3): [recent]/[favoritePlaces] both hard-coded
+// `.mapToList(Dispatchers.Default)` with no seam at all — a real, un-pinnable-by-any-caller
+// thread-pool hop that persisted even after HomeViewModel and QuakeRepository both gained their
+// own pinnable `ioDispatcher` seams (rounds 1-2 of this same pass; see HomeViewModel.ioDispatcher's
+// own kdoc). Confirmed empirically, not just by inspection: round 2's fix (VM + repository-level
+// pinning only) dropped HomeViewModelTest's pre-existing TestMainDispatcher/IllegalStateException
+// flake from ~11.5% (3/26) to ~3.3% (1/30) but did not eliminate it — the exact same exception
+// signature recurred, root-causing to this class's own two hard-coded crossings (this dao is
+// constructed independently of QuakeRepository, so neither of that class's own dispatcher params
+// could ever have reached it). [dispatcher] is a 3rd, DEFAULTED ctor param (defaults to the
+// identical Dispatchers.Default every existing call site already relied on implicitly — every
+// production call site (`main.kt`, `KoinBootstrap.android.kt`) and the ~30 test call sites across
+// core:database/core:data/composeApp that construct this class positionally or with only `clock`
+// keep compiling and behaving unchanged; grepped every `QuakeDao(` construction site in the repo
+// first — EVIDENCE INTEGRITY — before adding this, confirming a trailing default is safe
+// everywhere). Only HomeViewModelTest's own dao construction sites that feed a test's repository
+// were actually threaded to a pinned test dispatcher (see that file's own fakeRepository* helpers)
+// — the highest-value crossing ([recent], exercised by literally every test's `state` collector);
+// [favoritePlaces]'s own crossing (reached only via a SEPARATE, independently-constructed
+// `FavoritePlaceStore`-backed dao in most tests, e.g. `emptyFavoritePlaceStore()`) remains a
+// smaller, documented residual, deliberately left unpinned rather than rippling this fix through
+// every store-builder helper in that file for a comparatively small further reduction.
+class QuakeDao(
+    private val db: TerraWatchDb,
+    private val clock: () -> Long = { 0L },
+    private val dispatcher: CoroutineDispatcher = Dispatchers.Default,
+) : QuakeStore {
     private val json = Json
 
     fun upsert(quake: DomainQuake) = db.transaction { upsertInternal(quake) }
@@ -71,7 +102,7 @@ class QuakeDao(private val db: TerraWatchDb, private val clock: () -> Long = { 0
         db.quakeQueries.byId(id).executeAsOneOrNull()?.toDomain()
 
     override fun recent(sinceMillis: Long): Flow<List<DomainQuake>> =
-        db.quakeQueries.recent(sinceMillis).asFlow().mapToList(Dispatchers.Default)
+        db.quakeQueries.recent(sinceMillis).asFlow().mapToList(dispatcher)
             .map { rows -> rows.map { it.toDomain() } }
 
     override fun pageBefore(timeMillis: Long, limit: Int, minMag: Double?): List<DomainQuake> =
@@ -201,6 +232,37 @@ class QuakeDao(private val db: TerraWatchDb, private val clock: () -> Long = { 0
     /** Task 3 (Plan 4): see [QuakeStore.newSince]'s own kdoc. */
     override fun newSince(sinceMillis: Long): List<DomainQuake> =
         db.quakeQueries.newSince(sinceMillis).executeAsList().map { it.toDomain() }
+
+    /** Task 2 (Plan 5): see [QuakeStore.favoritePlaces]'s own kdoc. */
+    override fun favoritePlaces(): Flow<List<DomainFavoritePlace>> =
+        db.favoritePlaceQueries.selectAllFavoritePlaces().asFlow().mapToList(dispatcher)
+            .map { rows -> rows.map { it.toDomain() } }
+
+    /** Task 2 (Plan 5): see [QuakeStore.insertFavoritePlace]'s own kdoc — the new row's id is
+     * SQLite's own `AUTOINCREMENT`, never computed here. */
+    override fun insertFavoritePlace(label: String, point: GeoPoint, alertType: FavoriteAlertType) {
+        db.favoritePlaceQueries.insertFavoritePlace(label, point.lat, point.lon, alertType.name)
+    }
+
+    /** Task 2 (Plan 5): see [QuakeStore.deleteFavoritePlace]'s own kdoc. */
+    override fun deleteFavoritePlace(id: Long) { db.favoritePlaceQueries.deleteFavoritePlace(id) }
+
+    /** Task 2 (Plan 5): see [QuakeStore.updateFavoritePlaceAlertType]'s own kdoc. */
+    override fun updateFavoritePlaceAlertType(id: Long, alertType: FavoriteAlertType) {
+        db.favoritePlaceQueries.updateFavoritePlaceAlertType(alertType.name, id)
+    }
+
+    /** Row -> domain mapping for the SQLDelight-generated `favoritePlace` row type — named
+     * `FavoritePlace` (first-letter capitalization of the table name, see FavoritePlace.sq's own
+     * kdoc for why the table itself is camelCase), which collides with the domain model of the same
+     * name — the domain type is imported as [DomainFavoritePlace] here to disambiguate, same "Quake
+     * as DomainQuake" aliasing this file already does at its own top for the identical `quake`
+     * table/domain-model name collision. [FavoriteAlertType.fromStored] is what makes an
+     * unrecognized/corrupt stored string degrade to [FavoriteAlertType.ALL] instead of throwing —
+     * see that function's own kdoc. */
+    private fun FavoritePlace.toDomain() = DomainFavoritePlace(
+        id = id, label = label, point = GeoPoint(lat, lon), alertType = FavoriteAlertType.fromStored(alertType),
+    )
 
     // [origin] defaults to QuakeStore.ORIGIN_FEED so upsert()/upsertAll() (QuakeDao-only test
     // helpers, never on the QuakeStore interface — see that interface's own kdoc) keep compiling

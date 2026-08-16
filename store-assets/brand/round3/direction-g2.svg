@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TerraWatch logo direction G2 - "dial + cardinal ticks" (Plan 5 Task 4, round 3).
+
+  Same disc/needle/dot as round2/direction-g.svg, unchanged in position, angle, and color, plus
+  exactly one new device: four short hairline tick marks at the cardinal points (12/3/6/9 o'clock)
+  near the rim. The brief for this variation was "more instrument, still minimal" - ticks are the
+  one addition that reads as "calibrated dial" rather than "plain disc with a needle" without
+  stacking a second color or a second load-bearing shape onto the mark.
+
+  Why 4 ticks, not a full graduated scale: real gauge/speedometer icons (reconfirmed this round via
+  WebSearch "monitoring app icon design dial gauge" - see round3-rationale.md) are dominated by dense
+  10-20-tick scales, often with a colored band arc and numerals. Four ticks - just the cardinal
+  points, no numbers, no band - is deliberately the lightest possible version of "instrument," short
+  of that convention rather than a recolor of it. 3 ticks (dropping one cardinal) was considered and
+  rejected: an asymmetric 3-tick set reads as an accident/incomplete render rather than a deliberate
+  minimal scale, where 4 reads immediately as "the four cardinal points, on purpose."
+
+  Geometry: ticks are radial hairlines from r23 to r26 (i.e. just inside the disc's own r27 edge,
+  never touching or crossing it), stroke-width 1.5, round cap, at angles 0/90/180/270deg (screen
+  positions 3/6/9/12 o'clock respectively, in this file's y-down SVG coordinate convention). Painted
+  Water (the same hex already used for the contact dot and the background) at stroke-opacity 0.6 -
+  reusing an existing hue at reduced opacity rather than introducing a fourth color, so this stays
+  inside the Calm Guardian three-hex budget (Ink/Water/Safe) round 1 and round 2 both held to.
+
+  Collision check with the needle/dot: needle sits at -25deg (335deg, ~1-2 o'clock) and the dot at
+  ~150deg (~8 o'clock) - neither aligns with any tick angle (0/90/180/270), so nothing overlaps or
+  visually merges with the ticks. Also re-checked for the specific "face" failure mode direction G's
+  own history already caught once (round2/direction-g.svg's Pac-Man near-miss): four symmetric
+  cardinal ticks plus one off-axis needle plus one off-axis dot does not triangulate into eyes/mouth
+  the way two diagonally-placed shapes did before - the 4-fold radial symmetry of the ticks reads as
+  a compass/dial rose, not a face, confirmed by looking at the actual render (see round3-rationale.md),
+  not assumed from the geometry alone.
+
+  Competitive check: none of the 6 marks in research.md use any tick/gauge device at all. The
+  adjacent "gauge icon" convention (dense numbered ticks + colored arc bands, confirmed via this
+  round's WebSearch) is a different, busier device than four bare hairlines - this stays clearly on
+  the "calm monitoring dial" side of that line, not the "speedometer" side.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <title>TerraWatch logo direction G2 - dial with cardinal tick marks</title>
+  <desc>An Ink disc on a Water-blue field, carrying one Safe-green sweep needle, one Water contact dot, and four faint Water hairline ticks at the cardinal points.</desc>
+
+  <!-- Background: Water-blue, full 108x108 bleed. -->
+  <rect x="0" y="0" width="108" height="108" fill="#D9E9F4"/>
+
+  <!-- Disc: Ink, the dial/scope face. Unchanged from direction-g.svg. -->
+  <circle cx="54" cy="54" r="27" fill="#17222E"/>
+
+  <!-- Four cardinal tick marks: Water, hairline, r23->r26 (just inside the r27 rim), stroke-opacity
+       0.6 so they read as "instrument," not a second load-bearing shape. Drawn before the needle/dot
+       so nothing sits visually on top of them. -->
+  <g stroke="#D9E9F4" stroke-width="1.5" stroke-linecap="round" stroke-opacity="0.6">
+    <line x1="77" y1="54" x2="80" y2="54"/>   <!-- East / 3 o'clock, 0deg -->
+    <line x1="54" y1="77" x2="54" y2="80"/>   <!-- South / 6 o'clock, 90deg -->
+    <line x1="31" y1="54" x2="28" y2="54"/>   <!-- West / 9 o'clock, 180deg -->
+    <line x1="54" y1="31" x2="54" y2="28"/>   <!-- North / 12 o'clock, 270deg -->
+  </g>
+
+  <!-- Sweep needle: Safe green, center to (74.85,44.28) - 23 units at -25deg (~1-2 o'clock),
+       unchanged from direction-g.svg. -->
+  <line x1="54" y1="54" x2="74.85" y2="44.28" stroke="#2FA36B" stroke-width="5.5" stroke-linecap="round"/>
+
+  <!-- Contact dot: Water-blue, unchanged from direction-g.svg. -->
+  <circle cx="38.4" cy="63" r="4.5" fill="#D9E9F4"/>
+</svg>
