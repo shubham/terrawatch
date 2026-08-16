@@ -160,6 +160,22 @@ SELECT origin FROM quake WHERE id = ?;
 newSince:
 SELECT * FROM quake WHERE fetchedAtMillis > :sinceMillis AND origin IN ('feed', 'live') ORDER BY timeMillis DESC;
 
+-- Commit "since-last-visit summary" (feed-visit-ux): the feed sheet's own "N quakes M4.0+ since
+-- your last visit" banner count. Same eligible-origin set as newSince above (feed/live only --
+-- archive/debug rows never count toward this banner either, matching that query's own F5-guard
+-- convention and this task's explicit instruction to "match newSince's real-data convention:
+-- exclude debug"), narrowed further by `mag >= :minMag` -- the banner's own explicit "M4.0+ only"
+-- scope (user instruction: "show only 4 and above count in summary part"). A row with mag IS NULL
+-- never satisfies `mag >= :minMag` in SQLite's three-valued comparison logic (NULL compared to
+-- anything is NULL, never TRUE) -- an unknown-magnitude quake correctly never counts toward an
+-- "M4.0+" claim, without an explicit `mag IS NOT NULL` guard needed alongside it.
+-- A dedicated COUNT query rather than reusing newSince + filtering/counting in Kotlin: this is a
+-- fixed scalar the UI needs on every visit-summary computation, not a list any caller needs to
+-- inspect row-by-row (same "COUNT(*) is its own query, not derived from a row-fetching one"
+-- convention countAll already establishes above).
+newSinceCount:
+SELECT COUNT(*) FROM quake WHERE fetchedAtMillis > :sinceMillis AND origin IN ('feed', 'live') AND mag >= :minMag;
+
 -- Task 6 (Plan 3): Insights' three aggregates. All three share the same `WHERE timeMillis >=
 -- :sinceMillis` window-clip — the caller (QuakeDao) always passes the period's own start-of-day
 -- millis, never a raw "now minus N millis" cutoff, so results align exactly on calendar-day

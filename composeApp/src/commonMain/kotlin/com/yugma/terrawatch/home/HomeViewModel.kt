@@ -7,6 +7,7 @@ import com.yugma.terrawatch.data.FavoritePlaceStore
 import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.data.QuakeRepository
 import com.yugma.terrawatch.data.RefreshStatus
+import com.yugma.terrawatch.data.VisitStore
 import com.yugma.terrawatch.database.InMemoryQuakeStore
 import com.yugma.terrawatch.location.LocationAskUiState
 import com.yugma.terrawatch.location.LocationProvider
@@ -48,6 +49,13 @@ private const val POLL_INTERVAL_MILLIS = 60_000L
 // Task 2 (Plan 4), F1 retention ruling (plan-3-exit-conditions.md carried item): pruneOldRows's
 // cutoff window — see HomeViewModel.init's own comment for the call site.
 private const val RETENTION_WINDOW_MILLIS = 30L * 24 * 60 * 60 * 1000 // 30 days = 2_592_000_000
+
+// feat/feed-visit-ux, "since-last-visit summary": the banner's own explicit magnitude floor — user
+// instruction ("show only 4 and above count in summary part"), not a store-configurable threshold
+// (unlike nearbyRadiusKm/minMag above, which ARE user-settable Settings values) — this is a fixed
+// product decision about what the summary itself claims, independent of whatever alert threshold
+// the user has separately configured for notifications.
+private const val VISIT_SUMMARY_MIN_MAG = 4.0
 
 sealed interface HomeUiState {
     data object Loading : HomeUiState
@@ -140,6 +148,15 @@ class HomeViewModel(
     // signal that crossing isn't implicated in this specific race; see the 30x proof after this pin
     // for the direct confirmation on this class.
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    // feat/feed-visit-ux, "since-last-visit summary": appended as a 10th, DEFAULTED param — same
+    // "doesn't disturb any existing positional construction" reasoning every prior addition above
+    // already established (clock/locationRequester/favoritePlaceStore/ioDispatcher). Defaults to a
+    // real, working, empty VisitStore backed by InMemoryQuakeStore() — same "a genuinely functioning
+    // throwaway default, not a mock" precedent [favoritePlaceStore]'s own default already sets —
+    // rather than null, so [visitSummary]'s init-block read below never needs a null-store branch
+    // of its own. AppModule.kt's real Koin wiring is the one call site that supplies the real,
+    // persisted one.
+    private val visitStore: VisitStore = VisitStore(InMemoryQuakeStore()),
 ) : ViewModel() {
     private val _state = MutableStateFlow<HomeUiState>(HomeUiState.Loading)
     val state: StateFlow<HomeUiState> = _state
@@ -226,6 +243,20 @@ class HomeViewModel(
     private val _newSinceExpand = MutableStateFlow(0)
     val newSinceExpand: StateFlow<Int> = _newSinceExpand
 
+    // feat/feed-visit-ux, "since-last-visit summary": the feed sheet's "N quakes M4.0+ since your
+    // last visit" banner text (null = nothing to show — see home.visitSummary's own kdoc for the
+    // gating). Computed exactly ONCE per process start, in init{} below, BEFORE this session's own
+    // MainActivity.onStop() has any chance to overwrite [visitStore]'s stored value — reading
+    // [VisitStore.get] here is what makes "fresh visit" fall out of this app's existing
+    // ViewModel-lifetime architecture for free: this class's own [_startupCameraTarget] kdoc
+    // already documents that `init{}` runs exactly once per real process start (Koin's
+    // `viewModel {}` scoping survives a mere background/foreground cycle or config change), so this
+    // StateFlow can never spontaneously recompute mid-session the way [_newSinceExpand] does on
+    // every arrival — it is written once and then left alone for the rest of this process's life,
+    // by construction, not by a separate "already computed" guard.
+    private val _visitSummary = MutableStateFlow<String?>(null)
+    val visitSummary: StateFlow<String?> = _visitSummary
+
     // Fix Round 2 (review finding): this used to be a `val status = repository.refreshFeed()`
     // local, captured ONCE inside the same coroutine that then went on to collect
     // recentQuakes() forever, re-reading that same frozen `status` on every emission — so a
@@ -300,6 +331,26 @@ class HomeViewModel(
         viewModelScope.launch {
             repository.purgeDebugQuakes()
             repository.pruneOldRows(clock() - RETENTION_WINDOW_MILLIS)
+        }
+
+        // feat/feed-visit-ux, "since-last-visit summary": reads whatever the PREVIOUS session's
+        // MainActivity.onStop() last wrote (or null on this device's very first-ever visit — see
+        // VisitStore.get's own kdoc), then counts real, qualifying arrivals since that moment. Off
+        // Main (ioDispatcher) because VisitStore.get() is a synchronous DAO read and
+        // QuakeRepository.newSinceCount is itself an ioDispatcher-wrapped suspend call — neither
+        // belongs on Main, same reasoning every other DAO-touching init{} block in this class
+        // already follows. Independent top-level launch, same "nothing else waits on it, must not
+        // delay the cache-driven/refresh loops" shape [purgeDebugQuakes]/[pruneOldRows] above
+        // already establish — this banner is allowed to pop in a moment after the rest of Home has
+        // already painted.
+        viewModelScope.launch(ioDispatcher) {
+            val lastVisit = visitStore.get()
+            val qualifyingCount = if (lastVisit != null) {
+                repository.newSinceCount(lastVisit, minMag = VISIT_SUMMARY_MIN_MAG)
+            } else {
+                0L
+            }
+            _visitSummary.value = visitSummary(lastVisit, qualifyingCount.toInt())
         }
 
         // The refresh loop. Fix Round 2 (review finding, still true here): this runs in a

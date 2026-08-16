@@ -1,11 +1,19 @@
 package com.yugma.terrawatch.home
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -98,6 +106,20 @@ import kotlinx.coroutines.launch
  * this — [FeedSheetHeader]'s original, unchanged "N NEW" badge is still the only signal there; see
  * that composable's own kdoc for why a scroll-position-driven affordance has nothing meaningful to
  * react to on a sheet nobody has dragged open yet.
+ *
+ * feat/feed-visit-ux, "latest-first on expand": a second user report on the exact same
+ * viewport-anchoring symptom above. Root cause this time: [listState] persists across a
+ * peek/expanded toggle (the sheet resizes the SAME composition, it doesn't recreate it), so
+ * re-expanding after arrivals landed while peeking evaluates the reveal decision against whatever
+ * scroll position an earlier expanded session left behind, not a fresh one. [feedExpandRevealAction]
+ * closes this: a peek-to-expanded transition with unseen arrivals ([newCount] > 0) always reveals
+ * them at the top, regardless of prior scroll position, superseding [feedRevealAction]'s own
+ * atTop-conditional choice for that one moment. Mid-expanded arrivals are unaffected — see that
+ * function's own kdoc for the full reconciliation.
+ *
+ * feat/feed-visit-ux, "since-last-visit summary": [visitSummaryText] (see [visitSummary]'s own
+ * kdoc for the gating) renders as a dismissible banner above the list, independent of
+ * peek/expanded state — a visit-scoped signal, not a scroll-scoped one like the chip/badge above.
  */
 @Composable
 fun FeedSheet(
@@ -117,6 +139,10 @@ fun FeedSheet(
     // Task 3b: HomeScreen's `selectedQuake != null` — see this file's own kdoc above for the "no
     // chip animation churn while DetailSheet is layered on top" rule this gates.
     isDetailOpen: Boolean = false,
+    // feat/feed-visit-ux: HomeViewModel.visitSummary's current value (null = nothing to show — see
+    // that function's own kdoc for the gating). Defaulted so every pre-existing call site
+    // (HomeScreen's TwoPaneLayout, ComponentsTest) keeps compiling unchanged.
+    visitSummaryText: String? = null,
 ) {
     val listState = rememberLazyListState()
     val reducedMotion = LocalReducedMotion.current
@@ -133,17 +159,35 @@ fun FeedSheet(
     // documented defensive about out-of-range targets) — no crash path either way.
     var previousTopId by rememberSaveable { mutableStateOf<String?>(null) }
     var chipVisible by rememberSaveable { mutableStateOf(false) }
+    // feat/feed-visit-ux, "latest-first on expand": tracks feedVisible's OWN previous value (same
+    // rememberSaveable-across-rotation reasoning as previousTopId above) so the effect below can
+    // tell "just transitioned from peek to expanded" apart from "topId changed while already
+    // expanded" — see feedExpandRevealAction's own kdoc for why that distinction matters.
+    var previousFeedVisible by rememberSaveable { mutableStateOf(false) }
+    // feat/feed-visit-ux, "since-last-visit summary": the banner's own dismiss state — local UI
+    // state, not ViewModel-owned, same shape as chipVisible above (both are "has THIS composition
+    // already acknowledged this" flags, not persisted facts). visitBannerScrolledAway is the guard
+    // against instantly self-dismissing a banner that appears with the list already sitting at the
+    // top (the common case right after the AUTO_SCROLL branch below runs) — see the dismiss effect
+    // further down for the full reasoning.
+    var visitBannerDismissed by rememberSaveable { mutableStateOf(false) }
+    var visitBannerScrolledAway by rememberSaveable { mutableStateOf(false) }
     val topId = quakes.firstOrNull()?.id
     val feedVisible = isSheetExpanded && !isDetailOpen
 
     // The arrival-triggered half: fires once per genuine new-item-at-the-front event (topId
     // changing IS that event, given the sort/prepend contract this kdoc documents above), never on
-    // a mere recomposition that leaves the front id unchanged.
+    // a mere recomposition that leaves the front id unchanged. feat/feed-visit-ux extends the entry
+    // condition with `justExpanded` (a peek->expanded transition, independent of whether topId
+    // itself changed) and routes the actual decision through feedExpandRevealAction instead of
+    // feedRevealAction directly — see that function's own kdoc for the reconciliation this adds.
     LaunchedEffect(topId, feedVisible) {
         val previous = previousTopId
-        if (feedVisible && previous != null && topId != previous) {
+        val justExpanded = feedVisible && !previousFeedVisible
+        val topChanged = previous != null && topId != previous
+        if (feedVisible && (justExpanded || topChanged)) {
             val atTop = isAtTopOfFeed(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
-            when (feedRevealAction(atTop, newCount)) {
+            when (feedExpandRevealAction(justExpanded, atTop, newCount)) {
                 // Guard (task brief): a user actively dragging/flinging must never be fought by a
                 // programmatic scroll — defer to the chip instead of racing the gesture.
                 FeedRevealAction.AUTO_SCROLL -> if (listState.isScrollInProgress) {
@@ -158,13 +202,31 @@ fun FeedSheet(
             }
         }
         if (feedVisible) previousTopId = topId
+        previousFeedVisible = feedVisible
     }
     // The dismiss half: independent of the effect above — this only ever CLEARS chipVisible, never
     // sets it, so it can't race/flicker against the SHOW_CHIP branch above. Covers BOTH "user
     // scrolled to top manually" and "our own auto/tap-triggered scroll just landed at the top."
+    //
+    // feat/feed-visit-ux extends this same collector to also auto-dismiss the visit-summary banner
+    // — but NOT on the very first "atTop" observation. A naive "atTop -> dismiss" would instantly
+    // hide a banner that appears with the list already sitting at index 0 (the common case: the
+    // effect above just moved it there via feedExpandRevealAction, or the sheet's first-ever expand
+    // never left index 0 to begin with) before the user has had any chance to read it. Requiring a
+    // genuine scroll-AWAY first (visitBannerScrolledAway latches true the moment atTop goes false)
+    // means "scroll to top" only counts as dismissal once the user has actually scrolled through
+    // the list and returned — the same "returning to a place you left" gesture the pre-existing
+    // chip's own dismiss already reads naturally, since a chip is only ever shown while NOT at top.
     LaunchedEffect(listState) {
         snapshotFlow { isAtTopOfFeed(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset) }
-            .collect { atTop -> if (atTop) chipVisible = false }
+            .collect { atTop ->
+                if (atTop) {
+                    chipVisible = false
+                    if (visitBannerScrolledAway) visitBannerDismissed = true
+                } else {
+                    visitBannerScrolledAway = true
+                }
+            }
     }
 
     // Fix Round 2 (Review 3, N-3): memoized, not a fresh lambda every recomposition — keyed on every
@@ -192,6 +254,21 @@ fun FeedSheet(
             onRevealChipClick = onRevealChipClick,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         )
+        // feat/feed-visit-ux, "since-last-visit summary": above the list, below the header - see
+        // this file's own top-level kdoc for why this shows regardless of peek/expanded state.
+        AnimatedVisibility(
+            visible = visitSummaryText != null && !visitBannerDismissed,
+            enter = if (reducedMotion) EnterTransition.None else fadeIn(tween(220)) + slideInVertically(tween(220)) { -it / 3 },
+            exit = if (reducedMotion) ExitTransition.None else fadeOut(tween(160)) + shrinkVertically(tween(160)),
+        ) {
+            if (visitSummaryText != null) {
+                VisitSummaryBanner(
+                    text = visitSummaryText,
+                    onDismiss = { visitBannerDismissed = true },
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                )
+            }
+        }
         // Task 10 (items b/c): this sheet previously had no Loading concept of its own at all -
         // HomeScreen fed it an empty `quakes` list both while genuinely loading AND while the feed
         // was genuinely, honestly empty, rendering as a blank LazyColumn either way. [isLoading]
@@ -346,6 +423,55 @@ internal fun feedRevealAction(atTop: Boolean, newCount: Int): FeedRevealAction =
     newCount <= 0 -> FeedRevealAction.NONE
     atTop -> FeedRevealAction.AUTO_SCROLL
     else -> FeedRevealAction.SHOW_CHIP
+}
+
+/**
+ * feat/feed-visit-ux, "latest-first on expand": what [FeedSheet] should do about scroll position
+ * when [justExpanded] (this decision is being made because the sheet just transitioned from peek
+ * to expanded, not because [newCount] changed while already expanded) is considered alongside
+ * [feedRevealAction]'s own atTop-conditional T3b decision.
+ *
+ * User-reported gap this closes: "sheet header says LIVE - 3 NEW but viewport anchored at the
+ * previously-seen first item, new rows hidden above." Root cause: [FeedSheet]'s hoisted
+ * [androidx.compose.foundation.lazy.LazyListState] persists across a peek/expand toggle (the sheet
+ * just resizes the same composition, it doesn't recreate it) - if an earlier expanded session left
+ * the list scrolled away from the top, then the sheet collapsed to peek, then quakes arrived while
+ * peeking, re-expanding would evaluate [feedRevealAction]'s own `atTop` against that STALE,
+ * pre-collapse scroll position, routing to [FeedRevealAction.SHOW_CHIP] instead of
+ * [FeedRevealAction.AUTO_SCROLL] - exactly the "hidden above, needs a manual scroll" bug reported.
+ *
+ * Fix: a peek-to-expanded transition with unseen arrivals ([newCount] > 0) always reveals them at
+ * the top, regardless of [atTop] - superseding [feedRevealAction]'s own choice for that ONE
+ * moment. Every other case ([justExpanded] false, i.e. a mid-expanded arrival) delegates straight
+ * to [feedRevealAction], byte-for-byte the existing T3b behavior - including its own
+ * `isScrollInProgress` guard against fighting an active user gesture, since both paths ultimately
+ * resolve to the same [FeedRevealAction.AUTO_SCROLL] value and [FeedSheet]'s execution `when`
+ * handles that value exactly once, not per-caller.
+ */
+internal fun feedExpandRevealAction(justExpanded: Boolean, atTop: Boolean, newCount: Int): FeedRevealAction =
+    if (justExpanded && newCount > 0) FeedRevealAction.AUTO_SCROLL else feedRevealAction(atTop, newCount)
+
+/**
+ * feat/feed-visit-ux, "since-last-visit summary": the feed sheet's "N quakes M4.0+ since your last
+ * visit" banner copy/gating decision - pure, colocated with this file's other reveal decision
+ * logic, tested independent of Compose in FeedSheetTest.kt.
+ *
+ * [lastVisitMillis] null means "no prior visit ever recorded" (first-ever app open, or a
+ * never-written meta row - see [com.yugma.terrawatch.data.VisitStore.get]'s own kdoc): there is no
+ * meaningful "since your last visit" to report, so this returns null regardless of [nowCount] -
+ * nothing to compare against, not merely "zero". [nowCount] <= 0 also returns null: nothing to
+ * report even against a real prior visit.
+ *
+ * Singular/plural handled explicitly, never a bare "1 quakes" - [nowCount] is a real, reachable
+ * positive count by the time this runs (see [com.yugma.terrawatch.home.HomeViewModel]'s own
+ * `visitSummary` StateFlow kdoc for where it's computed), so "exactly 1" is not just a defensive
+ * branch. Magnitude threshold (M4.0+) is baked into the copy, not a parameter - matches the user's
+ * own explicit scoping ("show only 4 and above count in summary part"), same fixed-threshold shape
+ * [QuakeStore.newSinceCount]'s own caller already hardcodes.
+ */
+internal fun visitSummary(lastVisitMillis: Long?, nowCount: Int): String? {
+    if (lastVisitMillis == null || nowCount <= 0) return null
+    return if (nowCount == 1) "1 quake M4.0+ since your last visit" else "$nowCount quakes M4.0+ since your last visit"
 }
 
 /** The reveal chip's short, glanceable visible label — deliberately different register from
@@ -522,5 +648,63 @@ private fun LiveDot(isLive: Boolean, modifier: Modifier = Modifier) {
                 .size(8.dp)
                 .background(color = baseColor, shape = CircleShape),
         )
+    }
+}
+
+/**
+ * feat/feed-visit-ux, "since-last-visit summary": the "N quakes M4.0+ since your last visit" row —
+ * [text] is already-formatted copy (see [visitSummary]'s own kdoc), this composable owns only
+ * layout/dismiss affordance, not wording.
+ *
+ * Visual treatment: the same translucent "glass" recipe (`colorScheme.surface` at 0.78 alpha +
+ * 4dp/2dp tonal/shadow elevation) `StalenessBanner`/`StatusShield` already use for this app's other
+ * banner-class surfaces (spec Global Constraints' glass allow-list explicitly names "banner" as one
+ * of its four covered shapes) — reused rather than inventing a fifth ad-hoc treatment, just with
+ * [TerraRadii.card] instead of a pill: this banner is a full-width block inside the sheet's own
+ * content column, not a compact floating pill over the map.
+ *
+ * The dismiss control is a plain [Text] "×" glyph, not an icon: this project has no icon-library
+ * dependency anywhere (`StatusShield.kt`/`nav/NavIcons.kt`'s own kdoc both document this
+ * deliberately — every glyph in this codebase is either hand-drawn `Canvas` paths or, as here,
+ * plain text) — a single Unicode multiplication-sign character is the simplest option that doesn't
+ * introduce either a new dependency or a new hand-drawn-path component for a minor, one-off
+ * affordance. `clickable` carries its own `role`-less semantics merge here deliberately: the
+ * `contentDescription` names the ACTION ("Dismiss the since-last-visit summary"), not the glyph.
+ */
+@Composable
+private fun VisitSummaryBanner(text: String, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(TerraRadii.card),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
+        tonalElevation = 4.dp,
+        shadowElevation = 2.dp,
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 16.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f),
+            )
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clickable(onClick = onDismiss)
+                    .semantics { contentDescription = "Dismiss the since-last-visit summary" },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "×",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.clearAndSetSemantics {},
+                )
+            }
+        }
     }
 }

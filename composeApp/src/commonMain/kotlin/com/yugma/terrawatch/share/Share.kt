@@ -1,5 +1,7 @@
 package com.yugma.terrawatch.share
 
+import androidx.compose.ui.graphics.ImageBitmap
+
 /**
  * Task 11: "Share" from the quake detail sheet. [text] is already fully composed by the caller
  * (DetailSheet builds it from the quake + the same formatters used elsewhere on screen) - this
@@ -37,6 +39,25 @@ expect fun shareQuakeText(text: String)
  * reasoning [shareQuakeText]'s own kdoc documents per-target).
  */
 expect fun isPackageInstalled(packageName: String): Boolean
+
+/**
+ * feat/feed-visit-ux, "real share app icons": [packageName]'s actual launcher icon, or `null` when
+ * it can't be loaded - a caller-visible signal to fall back to something else (`DetailSheet.kt`'s
+ * `QuickShareRow` falls back to its existing letter monogram), never a placeholder bitmap of this
+ * function's own choosing. Only ever called for a target [isPackageInstalled] already confirmed
+ * present (`DetailSheet.kt`'s `visibleShareTargets` filters first), so a `null` result here means
+ * "installed, but the icon itself couldn't be read/decoded" (a genuinely-installed-but-broken
+ * package, a very low-memory device failing the bitmap allocation, ...), not "not installed" -
+ * that's a categorically different, already-handled case one layer up.
+ *
+ * android: `PackageManager.getApplicationIcon` + a hand-rolled `Drawable`->[ImageBitmap] conversion
+ * (`Bitmap.createBitmap` + `Canvas.draw`, no new dependency - see `Share.android.kt`'s own kdoc for
+ * why this codebase draws its own glyphs/converts its own bitmaps rather than reaching for a
+ * library). jvm/wasmJs: always `null` - same "no installed-mobile-app concept, every quick-share
+ * button never even renders here" reasoning [isPackageInstalled]'s own per-target kdoc already
+ * gives; this function is unreachable on those two targets in practice.
+ */
+expect fun appIcon(packageName: String): ImageBitmap?
 
 /**
  * Plan 4 Task 4b: package-targeted `ACTION_SEND` - the quick-share row's tap action, distinct from

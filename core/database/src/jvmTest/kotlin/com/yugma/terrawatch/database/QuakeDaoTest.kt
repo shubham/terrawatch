@@ -513,6 +513,53 @@ class QuakeDaoTest {
         assertEquals(6.2, result.single().mag)
     }
 
+    // --- Commit "since-last-visit summary": newSinceCount -- the feed sheet's "N quakes M4.0+
+    // since your last visit" banner count. Same origin-eligibility/cutoff-boundary shape as
+    // newSince above (deliberately re-verified independently here, not assumed to carry over just
+    // because the SQL shares its WHERE clause -- the added `mag >= :minMag` predicate is the part
+    // actually new). ---------------------------------------------------------------------------
+
+    @Test fun `newSinceCount counts feed and live rows at or above minMag, strictly after the cutoff`() {
+        val clockedDao = QuakeDao(db, clock = { 2000L })
+        clockedDao.replace(quake(id = "feed-m5", mag = 5.0), origin = "feed")
+        clockedDao.replace(quake(id = "live-m4", mag = 4.0), origin = "live")
+        assertEquals(2, dao.newSinceCount(sinceMillis = 1000, minMag = 4.0))
+    }
+
+    @Test fun `newSinceCount excludes quakes below minMag`() {
+        val clockedDao = QuakeDao(db, clock = { 2000L })
+        clockedDao.replace(quake(id = "below", mag = 3.9), origin = "feed")
+        assertEquals(0, dao.newSinceCount(sinceMillis = 1000, minMag = 4.0))
+    }
+
+    @Test fun `newSinceCount excludes quakes with a null magnitude, even with a low minMag`() {
+        val clockedDao = QuakeDao(db, clock = { 2000L })
+        clockedDao.replace(quake(id = "unknown-mag", mag = null), origin = "feed")
+        assertEquals(0, dao.newSinceCount(sinceMillis = 1000, minMag = 0.0))
+    }
+
+    @Test fun `newSinceCount excludes archive rows even when they qualify on magnitude`() {
+        val clockedDao = QuakeDao(db, clock = { 2000L })
+        clockedDao.replace(quake(id = "archive-m6", mag = 6.0), origin = "archive")
+        assertEquals(0, dao.newSinceCount(sinceMillis = 1000, minMag = 4.0))
+    }
+
+    @Test fun `newSinceCount excludes debug rows even when they qualify on magnitude`() {
+        val clockedDao = QuakeDao(db, clock = { 2000L })
+        clockedDao.replace(quake(id = "debug-m6", mag = 6.0), origin = "debug")
+        assertEquals(0, dao.newSinceCount(sinceMillis = 1000, minMag = 4.0))
+    }
+
+    @Test fun `newSinceCount cutoff comparison is strict greater-than`() {
+        val clockedDao = QuakeDao(db, clock = { 1000L })
+        clockedDao.replace(quake(id = "at-cutoff", mag = 5.0), origin = "feed")
+        assertEquals(0, dao.newSinceCount(sinceMillis = 1000, minMag = 4.0))
+    }
+
+    @Test fun `newSinceCount on an empty table returns zero`() {
+        assertEquals(0, dao.newSinceCount(sinceMillis = 1000, minMag = 4.0))
+    }
+
     // --- Task 2 (Plan 5): favorite_place CRUD -------------------------------------------------------
 
     @Test fun `favoritePlaces on an empty table emits an empty list`() = runTest {

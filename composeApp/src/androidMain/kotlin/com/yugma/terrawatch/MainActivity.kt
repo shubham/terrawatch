@@ -9,6 +9,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -18,6 +19,7 @@ import com.yugma.terrawatch.alerts.AlertDigestWorker
 import com.yugma.terrawatch.alerts.enqueueAlertDigestWorker
 import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.data.OnboardingStore
+import com.yugma.terrawatch.data.VisitStore
 import com.yugma.terrawatch.di.ensureKoinStarted
 import com.yugma.terrawatch.location.LocationProvider
 import com.yugma.terrawatch.location.bindLocationPermissionController
@@ -33,6 +35,8 @@ import com.yugma.terrawatch.notifications.openNotificationSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.koin.core.context.GlobalContext
+import kotlin.time.Clock
+import kotlin.time.ExperimentalTime
 
 class MainActivity : ComponentActivity() {
     // Built once per Activity instance (not per onCreate/Koin-guard branch — applicationContext is
@@ -56,6 +60,14 @@ class MainActivity : ComponentActivity() {
     // resolution as homeLocationStore above, for the identical reason (ensureKoinStarted runs
     // mid-onCreate, and enqueueDigestWorkerIfPermitted is called well after that point).
     private val onboardingStore: OnboardingStore by lazy { GlobalContext.get().get() }
+
+    // feat/feed-visit-ux, "since-last-visit summary": same Koin-lazy resolution as
+    // homeLocationStore/onboardingStore above, for the identical reason — onStop() below can fire
+    // well after onCreate has returned (this Activity might have been resumed/paused any number of
+    // times first), so deferring the lookup to first read is safe regardless, but matching the
+    // established pattern here (rather than reading eagerly in onCreate) keeps this class's own
+    // "how do I get a store" convention uniform across all three.
+    private val visitStore: VisitStore by lazy { GlobalContext.get().get() }
 
     // Plan 4 Task 3: the notification tap-through deep link — a non-null id means MainActivity was
     // opened (cold `onCreate`, or a `singleTask` re-front via `onNewIntent`) from a digest
@@ -120,6 +132,26 @@ class MainActivity : ComponentActivity() {
 
     @OptIn(kotlin.time.ExperimentalTime::class)
     override fun onCreate(savedInstanceState: Bundle?) {
+        // feat/feed-visit-ux, "Splash app name": must run before super.onCreate() — Google's own
+        // splash-screen migration guide (developer.android.com/develop/ui/views/launch/
+        // splash-screen#kotlin) shows this as the first line of onCreate(), same "configure the
+        // Window before decor-view creation" family of constraint enableEdgeToEdge() below is
+        // already under (the two are otherwise unrelated — one sets up the SplashScreen
+        // exit/postSplashScreenTheme handoff, the other configures edge-to-edge insets). Backs
+        // Theme.App.Starting's windowSplashScreenBrandingImage (values/themes.xml) — this app had
+        // no installSplashScreen() call and no custom splash theme at all before this commit, so
+        // Android 12+'s own default splash showed only the launcher icon, never the app name.
+        //
+        // installSplashScreen() is a Kotlin extension function on Activity, but declared as a
+        // member of SplashScreen's companion object (@JvmStatic, so Java callers see a plain
+        // static SplashScreen.installSplashScreen(activity)) — verified against the real
+        // decompiled androidx.core:core-splashscreen:1.2.0 classes.jar via javap (the
+        // `$this$installSplashScreen` receiver-parameter naming in its Kotlin metadata is the
+        // tell) after two other call-site guesses (a plain ComponentActivity extension import,
+        // then an explicit SplashScreen.installSplashScreen(this) static-style call) both failed
+        // to resolve at compile time. The import above pulls the companion member in directly, so
+        // the call below reads as a normal extension-function call on this Activity.
+        installSplashScreen()
         // Plan 4 Task 4 (a): must run before super.onCreate() (Google's own documented ordering —
         // see developer.android.com/develop/ui/compose/system/edge-to-edge) so the very first frame
         // this Activity ever draws is already edge-to-edge, not a legacy-inset frame that then jumps
@@ -195,6 +227,27 @@ class MainActivity : ComponentActivity() {
         // every app start (not just first-ever-install) is what picks up a permission grant that
         // happened via system Settings while the app was closed.
         enqueueDigestWorkerIfPermitted()
+    }
+
+    /**
+     * feat/feed-visit-ux, "since-last-visit summary": persists "now" as the end-of-session
+     * reference point [com.yugma.terrawatch.home.HomeViewModel]'s own `visitSummary` StateFlow
+     * reads back on the NEXT process start — see [VisitStore]'s own kdoc for the full read/write
+     * split and why the write specifically belongs here (fires on EVERY tab/screen this
+     * single-Activity app might be showing when backgrounded, not only while Home happens to be
+     * composed — a commonMain composable-scoped `DisposableEffect` the way
+     * `NotificationPermissionCompose.kt`'s `ON_RESUME` hook works would only fire for whichever
+     * screen is CURRENTLY composed, silently missing a backgrounding that happens from History/
+     * Insights/Settings).
+     *
+     * Deliberately NOT written in [onCreate] / on `get()` — see [VisitStore]'s own kdoc for why
+     * that would make "since your last visit" always compare against "just now," defeating the
+     * whole point of the banner.
+     */
+    @OptIn(ExperimentalTime::class)
+    override fun onStop() {
+        super.onStop()
+        visitStore.set(Clock.System.now().toEpochMilliseconds())
     }
 
     private fun enqueueDigestWorkerIfPermitted() {

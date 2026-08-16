@@ -1,5 +1,6 @@
 package com.yugma.terrawatch.share
 
+import androidx.compose.ui.graphics.ImageBitmap
 import java.awt.Desktop
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
@@ -38,3 +39,7 @@ actual fun openUrl(url: String) {
         // No fallback needed - see this function's own kdoc for why jvm is not a real target here.
     }
 }
+
+// Unreachable in practice (isPackageInstalled always false above means DetailSheet's quick-share
+// row never renders a button here to load an icon for) - see Share.kt's own common kdoc.
+actual fun appIcon(packageName: String): ImageBitmap? = null

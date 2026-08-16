@@ -8,6 +8,7 @@ import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.data.OnboardingStore
 import com.yugma.terrawatch.data.QuakeRepository
 import com.yugma.terrawatch.data.ThemeStore
+import com.yugma.terrawatch.data.VisitStore
 import com.yugma.terrawatch.database.QuakeStore
 import com.yugma.terrawatch.detail.DetailNewsViewModel
 import com.yugma.terrawatch.history.HistoryViewModel
@@ -76,6 +77,11 @@ fun appModule(
     // + worker-side favorites read) and SettingsViewModel (the Places section) via constructor
     // injection, and directly by AlertDigestWorker (androidMain) via `koin.get()`.
     single { FavoritePlaceStore(get()) }
+    // feat/feed-visit-ux: same "plain single over the shared QuakeStore" shape as
+    // AlertRuleStore/HomeLocationStore/FavoritePlaceStore above. Consumed by HomeViewModel (the
+    // since-last-visit summary's read side) and MainActivity.android.kt (the write side, on
+    // Activity onStop — see that class's own kdoc for why the write lives there rather than here).
+    single { VisitStore(get()) }
     // Task 4 (Plan 3): resolved via koinInject<OnboardingStore>() at AppNav's composition root
     // (same non-ViewModel "plain single, plain koinInject()" shape LocationAskDialog.kt already
     // uses for HomeLocationStore/LocationRequester) rather than through any ViewModel constructor
@@ -118,7 +124,12 @@ fun appModule(
     // override) so the REAL, persisted FavoritePlaceStore single reaches HomeViewModel — its own
     // default (a throwaway InMemoryQuakeStore-backed instance) exists purely so jvmTest/HomeFlowTest/
     // OnboardingGateTest's pre-existing 4-arg construction keeps compiling, not for production use.
-    viewModel { HomeViewModel(get(), get(), get(), get(), favoritePlaceStore = get()) }
+    // feat/feed-visit-ux: visitStore is a NAMED arg (skipping clock/locationRequester's own
+    // defaults, same reasoning favoritePlaceStore's own comment above already gives) so the REAL,
+    // persisted VisitStore single reaches HomeViewModel — its own default (a throwaway
+    // InMemoryQuakeStore-backed instance) exists purely so jvmTest/HomeFlowTest/OnboardingGateTest's
+    // pre-existing construction keeps compiling, not for production use.
+    viewModel { HomeViewModel(get(), get(), get(), get(), favoritePlaceStore = get(), visitStore = get()) }
     // Task 3 (Plan 3): QuakeSelectionViewModel's second constructor param is
     // androidx.lifecycle.SavedStateHandle, which has no `single {}`/`factory {}` registration
     // anywhere in this module — and needs none. Koin's own ViewModel factory

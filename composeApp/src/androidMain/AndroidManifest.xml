@@ -32,11 +32,18 @@
          than relying on the API-36 default alone: minSdk is 26, and this flag is what makes the
          predictive-back gesture (not just the plain back-stack pop) available on every API level
          that supports it (33+), not only once running ON API 36+. -->
+    <!-- Splash app name commit (feat/feed-visit-ux): was
+         @android:style/Theme.Material.Light.NoActionBar directly - this app had no custom theme at
+         all before this change, so Android 12+'s default splash screen showed only the launcher
+         icon, no app name. Theme.App.Starting (values/themes.xml) wraps that same built-in theme as
+         its own postSplashScreenTheme, so the app's real running appearance is byte-for-byte
+         unchanged - this only affects the brief pre-content splash window, via
+         MainActivity's installSplashScreen() call. -->
     <application
         android:label="TerraWatch"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar"
+        android:theme="@style/Theme.App.Starting"
         android:enableOnBackInvokedCallback="true">
         <!-- Plan 4 Task 6: OS/SDK-mandated — MobileAds throws at initialize time without this
              exact meta-data name present. Value comes from composeApp/build.gradle.kts's

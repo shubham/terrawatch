@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Commit "Splash app name" (feat/feed-visit-ux). This app previously declared NO custom theme at
+  all - AndroidManifest.xml's <application> pointed straight at the built-in
+  @android:style/Theme.Material.Light.NoActionBar, so on API 31+ (Android 12) the OS's own default
+  splash screen showed only the launcher icon, auto-extracted, with no app name anywhere on it (the
+  androidx.core.splashscreen library wasn't a dependency, and no Theme.SplashScreen customization
+  existed to add one) - confirmed by reading this repo's own build.gradle.kts/AndroidManifest.xml
+  before writing this file, not assumed from the task brief's own "likely already set up" guess.
+
+  Theme.App.Starting below is the ONLY custom theme this app defines. It exists purely to carry the
+  splash-screen `window*` attributes; the app's real runtime appearance is unchanged (see
+  postSplashScreenTheme, which points straight back at the same built-in theme the manifest used to
+  reference directly).
+-->
+<resources>
+    <style name="Theme.App.Starting" parent="Theme.SplashScreen">
+        <!-- Water (#D9E9F4) - core/ui's Tokens.kt TerraColors.Water. This plain-XML theme resource
+             cannot reference that Kotlin object directly (same "hex values copied here
+             deliberately" precedent AndroidManifest-adjacent brand assets already use - see
+             ic_launcher_foreground.xml / icon-source.svg's own header comments), so the literal hex
+             is copied here instead. Set BOTH the compat attr (pre-31, read by the library's own
+             SplashScreenViewProvider code in installSplashScreen()) and the raw platform attr
+             (belt-and-suspenders — device verification on OxygenOS/Android 14 showed the compat
+             attr alone rendering as a plain light-gray starting window instead of Water, so this
+             makes sure the real platform theme resolution has an unambiguous value too rather than
+             relying solely on the library's own 31+ bridging). -->
+        <item name="windowSplashScreenBackground">#FFD9E9F4</item>
+        <item name="android:windowSplashScreenBackground">#FFD9E9F4</item>
+        <!-- The existing adaptive icon (ic_launcher_background.xml + ic_launcher_foreground.xml) -
+             androidx.core.splashscreen extracts just the foreground layer and centers it, same as
+             the platform SplashScreen API does on a real API 31+ device. No separate
+             splash-specific icon asset needed; this is the same mark every launcher already shows. -->
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <!-- HONEST GAP, found by actually trying the compat (non-`android:`-prefixed) attribute
+             first and reading the real aapt2 failure, not assumed from the task brief's own naming:
+             androidx.core.splashscreen's Theme.SplashScreen does NOT back-port
+             windowSplashScreenBrandingImage at all (confirmed: the plain `windowSplashScreenBrandingImage`
+             item below failed resource linking outright — "attr ... not found" — where the other
+             three compat attrs above/below link fine). Branding image is a RAW PLATFORM attr,
+             API 31+ only, no AndroidX compat shim exists for it. Used here with the explicit
+             `android:` prefix instead, which the real OS SplashScreen system reads directly on 31+
+             (both this branch's real verification devices - OnePlus 9R/Android 14, Moto edge 50
+             fusion/Android 16 - are 31+). CONSEQUENCE, disclosed rather than silently accepted:
+             this app's minSdk is 26, so on a real API 26-30 device the wordmark will not render at
+             all - that device falls back to the same icon-only splash this app already shipped
+             before this commit (not a crash, not a regression, just the enhancement not reaching
+             that OS range). The "TerraWatch" wordmark (drawable-*dpi/splash_branding.png,
+             generated via Pillow - see that file's own sibling generation script for the method)
+             is the actual point of this commit: Android 12+'s own default splash shows only the
+             icon, this adds the app name via the OS's bottom-center branding slot wherever the
+             platform attr is honored. -->
+        <item name="android:windowSplashScreenBrandingImage">@drawable/splash_branding</item>
+        <!-- Swap back to the app's one real theme the instant the splash screen dismisses -
+             unchanged from what AndroidManifest.xml pointed at directly before this commit. -->
+        <item name="postSplashScreenTheme">@android:style/Theme.Material.Light.NoActionBar</item>
+    </style>
+</resources>

@@ -44,6 +44,16 @@ kotlin {
             implementation(compose.foundation)
             implementation(compose.material3)
             implementation(compose.ui)
+            // feat/feed-visit-ux, "since-last-visit summary": FeedSheet's new visit-summary banner
+            // is this codebase's first AnimatedVisibility/fadeIn/slideInVertically usage (grepped
+            // first - EVIDENCE INTEGRITY - zero existing call sites) - compose.animation-core alone
+            // (already implied transitively by the compose.animation.core imports FeedSheet.kt's
+            // pulsing LIVE dot already uses) does not contain AnimatedVisibility/EnterTransition/
+            // ExitTransition, which live in the separate compose.animation artifact. Declared
+            // explicitly here rather than relying on an undocumented transitive edge through
+            // compose.material3's own internal dependency graph, matching this file's established
+            // "declare what you actually use" convention for every other per-target dependency.
+            implementation(compose.animation)
             implementation(projects.core.model)
             implementation(projects.core.network)
             implementation(projects.core.database)
@@ -90,6 +100,13 @@ kotlin {
         }
         androidMain.dependencies {
             implementation(libs.androidx.activity.compose)
+            // feat/feed-visit-ux, "Splash app name": SplashScreen.installSplashScreen(this) in
+            // MainActivity, backing Theme.App.Starting (values/themes.xml)'s
+            // windowSplashScreenBrandingImage - the actual wordmark. AndroidX compat back to
+            // minSdk 26 (the platform SplashScreen API itself only exists on API 31+); androidMain-
+            // only, no jvm/wasmJs equivalent, same per-target-explicit-dependency convention this
+            // file already follows for its other Android-only libraries below.
+            implementation(libs.androidx.core.splashscreen)
             implementation(libs.ktor.client.okhttp)
             implementation(libs.ktor.client.websockets)
             // HOTFIX (Task 6 follow-up): moved here from commonMain. maplibre-compose has no

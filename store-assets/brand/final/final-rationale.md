@@ -1,5 +1,51 @@
 # TerraWatch logo — FINAL mark rationale (Plan 5 Task 4 phase 2 / Task 6 phase 2)
 
+## 2026-08-16 evening — user override: brighter dot wins over token-sync
+
+**This section supersedes the dot-color decision below it. Read this first.** The original
+decision (next section down) was to use the *current* `WarnInk` token (`#7A5B19`) instead of
+G4's own stale `#B08A2E`, specifically to stay consistent with `Tokens.kt`'s "these hex values
+are LAW" convention. The user has now reviewed both side by side and explicitly chosen the
+**brighter `#B08A2E`** instead — direct instruction: the mark's contact dot becomes G4's
+original color "everywhere the AMBER dot appears."
+
+This is a deliberate reversal of the token-sync argument below, not a discovery that the
+original reasoning was wrong. Both tensions are true at once and both stay documented:
+
+- The token-sync argument (below) is still technically sound: `#7A5B19` is what `WarnInk`
+  actually is today, and `#B08A2E` is a value the app's real design-token source of truth has
+  moved away from for a real accessibility reason (WCAG AA on `RevisionBadge`).
+- The user's aesthetic call overrides it anyway: `#B08A2E` reads as a stronger, more legible
+  "pop" for the mark's one warm accent, which is exactly the quality `final-preview.png`'s own
+  48px crop flagged as diminished under `#7A5B19` ("does not 'pop' quite as much as the
+  brighter hex the user actually viewed when making the pick").
+- **Consequence, flagged rather than hidden:** the brand mark's contact dot (`terrawatch-mark.svg`,
+  `ic_launcher_foreground.xml`, and every raster derived from them) now uses a hardcoded
+  `#B08A2E` that is *not* sourced from `core/ui`'s `Tokens.kt` and does not track `WarnInk` if
+  that token ever moves again. This is the opposite of the "one consistent token" principle
+  the section below argues for — accepted here as an explicit, user-directed exception scoped
+  to this one asset, not a silent regression. `RevisionBadge` and every other `WarnInk` consumer
+  in the running app are unaffected; only the brand mark's dot diverges.
+- Monochrome (`terrawatch-mark-monochrome.svg`, `ic_launcher_monochrome.xml`) and the
+  notification glyph (`ic_stat_terrawatch.xml`) are untouched by this override — both are
+  single-color/alpha-only by spec (see their own sections below), so there is no hex in either
+  for this change to touch.
+
+Regenerated this pass: `terrawatch-mark.svg`, `ic_launcher_foreground.xml`, all 10
+legacy `mipmap-*dpi/ic_launcher*.png` rasters, `store-assets/icon-1024.png`,
+`store-assets/feature-graphic.png`, and 6 of the 9 `store-assets/social/art/` files (the 3
+`ig-post-*` files are screenshots pillarboxed onto a canvas and were confirmed — not assumed —
+to contain zero dot-colored pixels; the notification glyph they show is the unaffected
+monochrome glyph, not the mark). Method: colorimetric in-place recolor (locate the dot's
+existing anti-aliased region, re-project its already-baked blend weights against the new hex)
+rather than a from-scratch re-render — chosen because this machine still has no SVG rasterizer
+(rsvg-convert/cairosvg/inkscape/resvg all re-checked absent) and, for the composited assets
+(feature graphic's wordmark/tagline/decorative dots, the avatar crops, channel-art centering),
+the original compositing script/exact metrics aren't in this repo to re-derive faithfully. This
+approach reproduces the exact original anti-aliasing profile and is scoped, provably, to only
+the dot's own pixels — verified per file by diffing the touched bounding box against the
+geometrically-expected dot location before writing anything.
+
 User verdict: **G2's geometry** (`store-assets/brand/round3/direction-g2.svg` — "dial + cardinal
 ticks") **with G4's color treatment** (`store-assets/brand/round3/direction-g4.svg` — "epicenter
 accent dot") applied to the contact dot only. This document records exactly how the two were
@@ -28,7 +74,14 @@ G2 and G4 are both one-change variations of the same round-2 winner (`round2/dir
 Because G2 and G4 never touch the same element (G2 touches ticks only, G4 touches the dot only),
 this merge has no real conflict to arbitrate — every element's source direction is unambiguous.
 
-## Correction: the dot's exact hex (read before assuming this is a typo)
+## Superseded: 2026-08-15 token-sync decision (kept for the record — see top of file for what shipped)
+
+**The color conclusion in this section is no longer what ships.** It's kept verbatim below
+because the reasoning is still accurate as *of the day it was written*, and the "2026-08-16
+evening" section at the top of this file is a deliberate, disclosed override of it, not a
+correction of an error — both are worth a reader's attention, not just the newest one.
+
+### Correction: the dot's exact hex (read before assuming this is a typo)
 
 `direction-g4.svg`'s own comments and `round3-rationale.md` both cite the dot's color as
 **`#B08A2E`**, sourced (their own words) from "`core/ui/.../Tokens.kt` (TerraColors), grepped fresh
@@ -66,10 +119,12 @@ Surfaced explicitly in this task's own report back to the user for exactly that 
 ## Hex budget
 
 Final mark uses **4 distinct hexes**: Water (background, ticks-at-0.6), Ink (disc), Safe (needle),
-WarnInk (dot). This matches G4's own already-disclosed departure from the 3-hex budget (Ink/Water/
-Safe) every other direction across all three rounds held to — inheriting G4's dot inherits G4's
-own already-accepted trade-off, not a new one. (G2 alone, before this merge, stayed inside the
-3-hex budget — the 4th hex enters specifically because G4's dot was picked on top of it.)
+and `#B08A2E` for the dot (**as of the 2026-08-16 override, above** — this was `WarnInk`/`#7A5B19`
+from 2026-08-15 through that override; see that section for why the dot no longer tracks the
+token). This matches G4's own already-disclosed departure from the 3-hex budget (Ink/Water/Safe)
+every other direction across all three rounds held to — inheriting G4's dot inherits G4's own
+already-accepted trade-off, not a new one. (G2 alone, before this merge, stayed inside the 3-hex
+budget — the 4th hex enters specifically because G4's dot was picked on top of it.)
 
 ## Monochrome variant
 
