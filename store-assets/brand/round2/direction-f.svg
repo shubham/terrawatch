@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TerraWatch logo direction F - "Bold T, one stepped crossbar" (Plan 5 Task 4, round 2).
+
+  The one direction of the four that drops the "shield" container entirely rather than evolving it -
+  a deliberate brand-first bet: a bold geometric letterform reads as TerraWatch's own mark first and
+  an earthquake-app icon second, which makes it the most reusable of the four outside the Android
+  launcher specifically (a social profile picture, a favicon, a watermark - "app-agnostic" per the
+  brief). The earthquake tie is folded directly into the letterform rather than added beside it: the
+  crossbar is not a single straight bar - the right ~30% of it steps down by 6 units, a single clean
+  right-angle displacement, while the rest of the glyph (the stem, the left/majority of the crossbar)
+  stays perfectly regular. Same "one honest geometric discontinuity, otherwise pure minimalism"
+  principle as D and (in round 1) direction C's fault-step - the letter is confident and regular, the
+  step is the one place it admits the ground moved.
+
+  A single "T" rather than a "TW" monogram (the brief offered either): a two-counter monogram loses
+  legibility fast at 48dp (more strokes, more small gaps to hold open), and research.md's own 48px
+  comparison sheet already found that the single-highest-contrast-device direction (C) was round 1's
+  strongest small-size performer for exactly that reason - a single bold glyph carries the same
+  advantage here, confirmed by this round's own render (round2-rationale.md).
+
+  Not derivative of any researched mark: none of the 6 marks actually inspected use a single bold
+  geometric letterform at all - LastQuake's "CSEM/EMSC" is a stacked multi-line wordmark (institution
+  initials, not a monogram glyph) and USGS's mark is a wordmark beside a ribbon, neither is a single
+  custom glyph designed as an icon in its own right.
+
+  Geometry: 108x108 viewBox, safe zone = r33 circle centered (54,54). Single rectilinear closed path
+  (no curves) tracing the outer perimeter of crossbar + stem as one shape: crossbar spans x 34-74
+  (flat, y 31-44, thickness 13) for its left/majority run (34-63), stepping down 6 units for its
+  final stretch (63-74, y 37-50, same 13-unit thickness); stem spans x 47-61, y 44-79, centered
+  entirely under the crossbar's undisplaced (flat) portion so nothing needs to double back through
+  the step. Farthest points from center: the two top-left/top-right crossbar corners at r~30.5/30.5
+  (margin ~2.5) and the stem's bottom corners at r~26 (margin ~7) - all inside the r33 safe zone.
+
+  Monochrome-able trivially: one shape, one fill, already exactly what a monochrome pass needs.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <title>TerraWatch logo direction F - bold geometric T with a stepped crossbar</title>
+  <desc>A single bold Ink "T" on a Water-blue field, whose crossbar steps down once on its right end.</desc>
+
+  <!-- Background: Water-blue, full 108x108 bleed. -->
+  <rect x="0" y="0" width="108" height="108" fill="#D9E9F4"/>
+
+  <!-- T glyph: Ink, one closed rectilinear path (crossbar-with-step + stem). -->
+  <path
+      d="M34,31 L63,31 L63,37 L74,37 L74,50 L63,50 L63,44 L61,44 L61,79 L47,79 L47,44 L34,44 Z"
+      fill="#17222E"/>
+</svg>

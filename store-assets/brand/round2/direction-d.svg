@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TerraWatch logo direction D - "Shield outline, one clean displacement" (Plan 5 Task 4, round 2).
+
+  User picked direction A (shield in a gapped ring) over B/C and asked for round 2 to explore that
+  liked territory WITHOUT cloning A - varying both the container and the earthquake tie. A's
+  container is a FILLED shield sitting inside a separate stroked ring (2 elements, ring recolored
+  Ink); D drops the ring entirely and the fill entirely: one continuous stroked path traces the
+  shield's own outline, and the outline itself carries the single earthquake reference - one
+  asymmetric stair-step displacement in the line, on the right side only, about 60% of the way
+  down. Nothing is added (no dot, no ring, no second color for the "event") - same "negative-
+  space/geometry-not-a-new-shape" discipline A used for its ring gap, applied to a different
+  container and a different device. An earthquake displacement is inherently one-sided (the ground
+  moves on one side of a fault, not both symmetrically), so keeping the step on the right side only
+  while the left side stays a plain curve is a deliberate reading, not an oversight.
+
+  Shoulder/apex coordinates (54,32 apex; 37/71 shoulders) are the SAME numbers the shipped mark and
+  direction A use for their own shield, so the family resemblance is real, not just described - this
+  is "shield evolved further," reusing known-good proportions rather than drawing an unrelated
+  shield from scratch.
+
+  Not derivative of any researched mark (research.md): none of the 6 marks actually inspected use an
+  outline-only (unfilled) shield, and none use a stair-step line discontinuity as their sole device -
+  the closest research finding (the seismograph/ECG waveform spike used by 4 of 6 marks) is a
+  repeating jagged zigzag, which this deliberately is not: ONE right-angle step, not a spike train,
+  same "clean step, not chaotic cracking" distinction direction C drew in round 1.
+
+  Geometry: 108x108 viewBox, safe zone = r33 circle centered (54,54). Path traced clockwise from the
+  top apex (54,32): cubic curve to the right shoulder (71,39.4), straight down to (71,48), the step -
+  out to (75,48), down to (75,54), back in to (71,54) (4-unit-wide, 6-unit-tall displacement) -
+  straight down to (71,65), cubic curve to the bottom point (54,81) [a true point, not A's flatter
+  base - another deliberate difference from A's silhouette], mirrored cubic back to the left
+  shoulder (37,65), straight up to (37,39.4), cubic curve closing back to the apex. Farthest point
+  from center is the step's outer corners at r~21.8 and the bottom point at r=27 - both comfortably
+  inside the r33 safe zone (margin 6 at the bottom point, matching A's own margin conventions).
+
+  Monochrome-able: a single stroked silhouette, no gradient, no fill - collapses to one flat color
+  exactly like A/the shipped mark. Stroke-linejoin round (matches A's round ring-gap caps and the
+  round-2 set's shared "soft geometric" language) - confirmed by rendering (round2-rationale.md) that
+  the round joins still leave the step legible as a step at 48px, not smoothed away entirely.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <title>TerraWatch logo direction D - shield outline with one stroke displacement</title>
+  <desc>A single Safe-green stroked shield outline on a Water-blue field, with one asymmetric stair-step displacement in the line on the right side.</desc>
+
+  <!-- Background: Water-blue, full 108x108 bleed (same field every direction in this repo uses). -->
+  <rect x="0" y="0" width="108" height="108" fill="#D9E9F4"/>
+
+  <!-- Shield outline: Safe green, stroke only (fill none), one continuous closed path. -->
+  <path
+      d="M54,32
+         C61.5,32 68,35.3 71,39.4
+         L71,48
+         L75,48
+         L75,54
+         L71,54
+         L71,65
+         C71,72.5 64,77.5 54,81
+         C44,77.5 37,72.5 37,65
+         L37,39.4
+         C40,35.3 46.5,32 54,32
+         Z"
+      fill="none" stroke="#2FA36B" stroke-width="5" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>
