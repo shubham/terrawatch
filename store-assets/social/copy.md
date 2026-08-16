@@ -32,13 +32,13 @@ paraphrased from the plan brief:
   (spec §6.5)"), `SettingsScreen.kt`'s real off-state copy ("earthquake digests can't be delivered"),
   and spec §6.5 itself.
 - Data sources: `SettingsScreen.kt:723-724` ("Data sources: USGS · EMSC", "© OpenStreetMap contributors"),
-  `QuakeMap.android.kt:67` (OpenFreeMap/OpenMapTiles), GDELT for news (`GdeltClient.kt`, fixed this
-  branch's Task 2b). README confirms "Free APIs, no keys" — no backend server exists.
-  Every source named below is one of these four; nothing else is claimed.
-- Favorites + per-place alert types (Task 2), my-location FAB + cold-start centering (Task 1), and the
-  "In the news" fix (Task 2b) are real, CODE COMPLETE on this branch today (device verification still
-  pending per progress.md — copy below describes what the app *does*, not a QA sign-off, so this is
-  still honest to reference).
+  `QuakeMap.android.kt:67` (OpenFreeMap/OpenMapTiles). README confirms "Free APIs, no keys" — no
+  backend server exists. Every source named below is one of these three; nothing else is claimed.
+  (GDELT news EXISTS in code but is disabled via `NewsFeature.ENABLED = false` since 2026-08-16 —
+  never mention news in public copy while the flag is off.)
+- Favorites + per-place alert types (Task 2) and my-location FAB + cold-start centering (Task 1)
+  are real, CODE COMPLETE on this branch (device-verified in the round-2 pass — copy below
+  describes what the app *does*).
 - **Plus/monetization**: `PaywallScreen.kt`'s real `PLUS_BENEFITS` = "Remove ads", "Unlimited favorite
   places", "Custom alert rules (coming soon)" — but the buy button is still a disabled stub (no
   RevenueCat key yet; `store-assets/listing.md`'s own content-rating table: "No purchases are live
@@ -140,7 +140,7 @@ and EMSC, the same public seismic feeds agencies and researchers use.
 
 This walkthrough:
 0:00 Cold open — live global map, magnitude-colored pins
-0:XX Tap a quake — full detail sheet + related news
+0:XX Tap a quake — full detail sheet (magnitude, depth, distance, revisions)
 0:XX Set your radius — the ring that defines "nearby"
 0:XX A digest alert arriving (honest framing: not early-warning)
 0:XX History archive — filter by magnitude and year
@@ -248,9 +248,9 @@ on Android. Building in public for #Shipaton2026.
 
 > **2/5**
 > Everything TerraWatch shows comes from free, public feeds — USGS realtime + FDSN archive, EMSC's
-> live WebSocket, OpenFreeMap/OSM for the map, GDELT for related news. No API keys, no backend
-> server, no bill. The same data seismologists already use.
-> *(247 chars)*
+> live WebSocket, OpenFreeMap/OSM for the map. No API keys, no backend server, no bill. The same
+> data seismologists already use.
+> *(222 chars)*
 
 > **3/5**
 > Under the hood: Kotlin Multiplatform + Compose Multiplatform. One codebase, shared logic
