@@ -12,8 +12,10 @@
     - disc: Ink (#17222E), r27, the dial/scope face.
     - four cardinal ticks: Water (#D9E9F4) at 0.6 alpha, r23->r26, stroke 1.5dp, round cap.
     - sweep needle: Safe green (#2FA36B), center to (74.85,44.28), stroke 5.5dp, round cap.
-    - epicenter dot: WarnInk (#7A5B19 - the CURRENT core/ui Tokens.kt value, not the stale
-      #B08A2E direction-g4.svg cites - see final-rationale.md), center (38.4,63), r5.25.
+    - epicenter dot: #B08A2E - G4's own original hex, per the user's 2026-08-16 override
+      ("brighter dot wins over token-sync"). NOT the current core/ui Tokens.kt WarnInk value
+      (#7A5B19) - this dot is now a disclosed, intentional exception to that token; see
+      final-rationale.md for the full tension write-up. Center (38.4,63), r5.25.
 
   Disc and dot are each drawn as a single closed path via the standard "two arcs" circle
   construction (M <cx+r>,<cy> A r,r 0 1,1 <cx-r>,<cy> A r,r 0 1,1 <cx+r>,<cy> Z), same convention
@@ -61,8 +63,9 @@
       android:strokeColor="#FF2FA36B"
       android:strokeWidth="5.5"
       android:strokeLineCap="round" />
-  <!-- Epicenter dot: WarnInk (current Tokens.kt value), center (38.4,63), r5.25. -->
+  <!-- Epicenter dot: #B08A2E (G4's original hex - user override 2026-08-16, NOT the current
+       WarnInk token). Center (38.4,63), r5.25. -->
   <path
       android:pathData="M43.65,63 A5.25,5.25 0 1,1 33.15,63 A5.25,5.25 0 1,1 43.65,63 Z"
-      android:fillColor="#FF7A5B19" />
+      android:fillColor="#FFB08A2E" />
 </vector>

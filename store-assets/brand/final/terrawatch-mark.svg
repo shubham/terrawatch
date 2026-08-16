@@ -12,16 +12,18 @@
   hairline ticks (r23->r26), Safe sweep needle (unchanged angle/length/color from direction-g.svg
   through every round).
 
-  ONE deliberate change from a literal copy-paste of G4: the contact dot fill is
-  #7A5B19, NOT the #B08A2E direction-g4.svg's own comments cite. Both G4's file and
-  round3-rationale.md were written against the WarnInk token's value AT THE TIME (#B08A2E).
-  Same-day (docs/superpowers/plans/2026-08-16-ui-polish-findings.md), core/ui's Tokens.kt
-  darkened WarnInk to #7A5B19 for a real WCAG AA fix (RevisionBadge's WarnInk-on-WarnBg pair,
-  2.91:1 -> 5.69:1) - and Tokens.kt's own header comment calls these hex values "LAW". G4's
-  entire rationale for using WarnInk here is "reuse the app's own real token, not an invented
-  hex" - honoring that reasoning means following the token where it now actually points, not
-  the stale value quoted before it moved. Using the old #B08A2E would silently reintroduce
-  the exact shade the app just moved away from elsewhere for a real accessibility reason.
+  DOT COLOR - SUPERSEDED, read this before the fill attribute below: this mark originally
+  shipped the dot as #7A5B19 (the CURRENT WarnInk token, chosen over G4 file's own stale
+  #B08A2E specifically to stay token-synced after WarnInk was darkened for a WCAG AA fix -
+  see git history / final-rationale.md's "Superseded: 2026-08-15 token-sync decision" section
+  for that original reasoning, kept for the record rather than deleted).
+
+  USER OVERRIDE (2026-08-16 evening): the user reviewed both and explicitly chose the
+  brighter #B08A2E over the token-synced #7A5B19 - "brighter dot wins over token-sync." The
+  dot fill below is now the literal #B08A2E, deliberately NOT the current WarnInk token value
+  (WarnInk remains #7A5B19 everywhere else in the app - RevisionBadge's WCAG fix is untouched).
+  This mark's dot is now an intentional, disclosed exception to "every color sources from
+  Tokens.kt" - see final-rationale.md for the full tension write-up.
   Radius (5.25, G4's bump from G's/G2's 4.5) is unchanged - only the fill hex differs from a
   literal G4 copy.
 -->
@@ -49,7 +51,8 @@
   <!-- Sweep needle: Safe green, center to (74.85,44.28) - unchanged from direction-g.svg. -->
   <line x1="54" y1="54" x2="74.85" y2="44.28" stroke="#2FA36B" stroke-width="5.5" stroke-linecap="round"/>
 
-  <!-- Contact dot: G4's treatment (recolor + resize) applied to G2's dot - fill is the CURRENT
-       core/ui Tokens.kt WarnInk (#7A5B19), not G4 file's own stale #B08A2E - see header comment. -->
-  <circle cx="38.4" cy="63" r="5.25" fill="#7A5B19"/>
+  <!-- Contact dot: G4's treatment (recolor + resize) applied to G2's dot - fill is #B08A2E,
+       G4's own original hex, per the user's 2026-08-16 override choosing brighter-over-token-sync.
+       NOT the current WarnInk token (#7A5B19) - see header comment. -->
+  <circle cx="38.4" cy="63" r="5.25" fill="#B08A2E"/>
 </svg>
