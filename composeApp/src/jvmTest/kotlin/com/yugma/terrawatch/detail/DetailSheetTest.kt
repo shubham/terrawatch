@@ -82,3 +82,23 @@ class ShareTargetTest {
         assertEquals(listOf(ShareTarget.X), visibleShareTargets { it == ShareTarget.X.packageName })
     }
 }
+
+/**
+ * UI polish findings (docs/superpowers/plans/2026-08-16-ui-polish-findings.md, Part 2): the two
+ * pure pieces behind [QuickShareRow]'s icon-only demotion - the TalkBack sentence and the visible
+ * monogram glyph - pinned the same "TDD what's pure, even if trivial" way [ShareTargetTest] already
+ * pins [visibleShareTargets] above.
+ */
+class ShareTargetGlyphTest {
+    @Test fun `content description names the target by its real label`() {
+        assertEquals("Share via WhatsApp", shareTargetContentDescription(ShareTarget.WHATSAPP))
+        assertEquals("Share via X", shareTargetContentDescription(ShareTarget.X))
+        assertEquals("Share via Threads", shareTargetContentDescription(ShareTarget.THREADS))
+    }
+
+    @Test fun `monogram is a single non-colliding letter per target`() {
+        val monograms = ShareTarget.entries.map { shareTargetMonogram(it) }
+        assertEquals(listOf("W", "X", "T"), monograms)
+        assertEquals(monograms.toSet().size, monograms.size) // no two targets collide
+    }
+}

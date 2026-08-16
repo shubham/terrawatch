@@ -8,23 +8,29 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -47,10 +53,8 @@ import com.yugma.terrawatch.ui.format.formatDistanceKm
 import com.yugma.terrawatch.ui.format.formatMagnitude
 import com.yugma.terrawatch.ui.format.formatRelativeTime
 import com.yugma.terrawatch.ui.format.revisionNote
-import com.yugma.terrawatch.ui.theme.TerraColors
 import com.yugma.terrawatch.ui.theme.TerraRadii
 import com.yugma.terrawatch.ui.theme.tabularFigures
-import kotlinx.coroutines.launch
 
 /**
  * Task 11: the quake detail sheet - opened over the map (per the design spec's §3.3, "dimmed map,
@@ -79,8 +83,9 @@ import kotlinx.coroutines.launch
  * intensity (MMI)" row - there is no such field anywhere in the [Quake] model (USGS/EMSC shake-map
  * intensity was never ingested), so that row is replaced with a conditional "Felt" row instead
  * (shown only when [Quake.felt] is non-null), and the mockup's "Save"/"Directions" buttons are
- * dropped (no saved-places/maps-deeplink feature exists yet) - Share + Dismiss only, per this
- * task's own brief.
+ * dropped (no saved-places/maps-deeplink feature exists yet) - Share only, per this task's own
+ * brief (see [ShareButton]'s own kdoc for why the sheet no longer also ships a custom Dismiss
+ * button here).
  *
  * Plan 4 Task 4b (share targets): [onSharePackaged] and the quick-share row it backs are additive,
  * defaulted params - every pre-existing call site (3 production screens + `ComponentsTest`'s own
@@ -120,21 +125,23 @@ fun DetailSheet(
     onNewsRetry: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    // Fix Round 1 (review finding): a bare `onClick = onDismiss` on the Dismiss button used to
-    // invoke onDismissRequest directly, skipping M3's own hide animation entirely - the sheet
-    // snapped shut instantly instead of sliding down. Swipe-to-dismiss and scrim-tap never had
-    // this problem: ModalBottomSheet's internal handling for those two gestures already runs
-    // `sheetState.hide()` itself and only calls onDismissRequest once that animation completes.
-    // Driving the same sheetState explicitly from the button - hide() first, onDismiss() chained
-    // via invokeOnCompletion - gives the button-tap path the identical animated close instead of
-    // a third, unanimated one.
-    //
-    // Fix Round 2: guard the onDismiss callback with !sheetState.isVisible to catch edge case
-    // where hide() is cancelled by a racing interaction (user swipes or taps the scrim *while* the
-    // Dismiss button click is queued), preventing a spurious second dismiss callback. M3's own
-    // scrim and swipe internal paths use the same guard pattern.
+    // UI polish findings (docs/superpowers/plans/2026-08-16-ui-polish-findings.md, Part 2): this
+    // sheet used to also ship a custom "Dismiss" OutlinedButton here, driven by a manual
+    // `sheetState.hide()` + `invokeOnCompletion` dance (Fix Round 1/2) so a button-tap got the same
+    // animated close scrim-tap/swipe-to-dismiss already got for free. That whole custom path is
+    // gone now, not just visually - reading the real M3 1.8.2 `ModalBottomSheet.kt` source (this
+    // project's actual resolved dependency, not the marketing docs) confirms TWO independent,
+    // already-wired, TalkBack-actionable dismiss affordances exist with zero app code: the drag
+    // handle's wrapper carries a real, named `dismiss()` accessibility action
+    // (`Modifier.semantics(mergeDescendants = true) { dismiss(dismissActionLabel) { ... } }`), and
+    // the scrim independently carries its own `contentDescription` + `onClick`. A fourth,
+    // app-owned dismiss button was pure accessibility redundancy, not an added capability - and it
+    // was visually a dead ringer for the WhatsApp quick-share button next to it (identical
+    // `OutlinedButton` styling, one row apart), which the findings doc identifies as the likely
+    // real source of the "extra dismiss button... feels weird" dogfooding complaint. Scrim-tap,
+    // swipe-down, and the drag handle's own TalkBack action remain fully intact - all
+    // library-guaranteed, none of them app code this change gives up.
     val sheetState = rememberModalBottomSheetState()
-    val scope = rememberCoroutineScope()
     val shareText = buildShareText(quake, nowMillis)
     // `remember` (no key): isPackageInstalled's PackageManager query only needs to run once per
     // sheet-open, not once per recomposition - this composable is added/removed from composition
@@ -143,9 +150,25 @@ fun DetailSheet(
     // this exactly once, and installed-app state cannot plausibly change while one stays open.
     val visibleTargets = remember { visibleShareTargets(::isPackageInstalled) }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, modifier = modifier) {
+        // UI polish findings, Part 2 (reachability bug, found in passing): this root Column had no
+        // scroll modifier at all - a real device screenshot
+        // (docs/qa/plan-5-device-matrix/store/detail-sheet-clean-news-error-state.png) shows content
+        // already reaching the literal bottom edge of a 2400px screen while the sheet is fully
+        // expanded, meaning Share/the quick-share row could become physically unreachable (by touch
+        // or by TalkBack linear navigation) on a shorter device or any quake with a few more
+        // populated fields. `verticalScroll` cooperates with `ModalBottomSheet`'s own drag-to-dismiss
+        // nested-scroll handling - the standard M3 pattern (scrolled-to-top + continued downward drag
+        // hands off to the sheet's own swipe-to-dismiss, same as any M3 bottom sheet with scrollable
+        // content) - so the handle still drags the whole sheet while this content scrolls
+        // independently once it's taller than the sheet's available height. Tradeoff, noted
+        // honestly: this cooperation is the well-established M3 contract, not something re-verified
+        // against this project's own real `ModalBottomSheet.kt` source this pass, and the actual
+        // drag-vs-scroll feel (not just the code-level wiring) is device-verification-pending, same
+        // as every other UI change in this pass.
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp)
                 .padding(bottom = 24.dp),
         ) {
@@ -171,10 +194,7 @@ fun DetailSheet(
                 QuickShareRow(targets = visibleTargets, onClick = { target -> onSharePackaged(target.packageName, shareText) })
             }
             Spacer(Modifier.height(16.dp))
-            ActionRow(
-                onShare = { onShare(shareText) },
-                onDismiss = { scope.launch { sheetState.hide() }.invokeOnCompletion { if (!sheetState.isVisible) onDismiss() } },
-            )
+            ShareButton(onShare = { onShare(shareText) })
         }
     }
 }
@@ -283,22 +303,35 @@ private fun DetailStatList(quake: Quake) {
     }
 }
 
+/**
+ * The sheet's one primary action row. Used to be "Share" (filled, fixed Ink/Canvas) + a redundant
+ * "Dismiss" `OutlinedButton` side by side (see [DetailSheet]'s own kdoc for why the latter is gone).
+ * With Dismiss removed, Share is the sheet's only primary-row button - full width, not
+ * `Modifier.weight(1f)` in a two-item Row it no longer shares.
+ *
+ * UI polish findings, Part 1 row 7: the fixed `TerraColors.Ink`/`TerraColors.Canvas` pair this
+ * button used to hardcode measured **1.00:1** non-text contrast against the dark-theme sheet
+ * background (`Ink` fill on `DuskCard` - functionally invisible as a shape in dark mode; confirmed
+ * both by WCAG math and by direct visual read of a real device screenshot). The original reasoning
+ * for hardcoding the pair rather than using `colorScheme.primary` was to keep Share reading as "a
+ * constant brand action regardless of theme" - reasonable in isolation, but it produced a real,
+ * measured contrast failure that a per-theme role does not: `MaterialTheme.colorScheme.primary`/
+ * `onPrimary` already resolve to the *exact same* Ink-fill/Canvas-text pair in LIGHT theme (byte
+ * identical - zero visual change there) and correctly flip to Canvas-fill/Ink-text in DARK theme
+ * (see `TerraTheme.kt`), which measures **~15:1** against `DuskCard` instead of 1.00:1. Token choice
+ * over a manual border/elevation treatment, per the findings doc's own recommendation.
+ */
 @Composable
-private fun ActionRow(onShare: () -> Unit, onDismiss: () -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-        Button(
-            onClick = onShare,
-            modifier = Modifier.weight(1f),
-            // Fixed Ink/Canvas per the brief ("filled, Ink"), not MaterialTheme.colorScheme.primary -
-            // primary flips to Canvas-on-Ink in dark mode (see TerraTheme.kt), but this button is
-            // meant to read as a constant brand action regardless of theme, same as magnitude colors.
-            colors = ButtonDefaults.buttonColors(containerColor = TerraColors.Ink, contentColor = TerraColors.Canvas),
-        ) {
-            Text("Share")
-        }
-        OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) {
-            Text("Dismiss")
-        }
+private fun ShareButton(onShare: () -> Unit, modifier: Modifier = Modifier) {
+    Button(
+        onClick = onShare,
+        modifier = modifier.fillMaxWidth(),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.primary,
+            contentColor = MaterialTheme.colorScheme.onPrimary,
+        ),
+    ) {
+        Text("Share")
     }
 }
 
@@ -357,15 +390,62 @@ enum class ShareTarget(val label: String, val packageName: String) {
 internal fun visibleShareTargets(isInstalled: (String) -> Boolean): List<ShareTarget> =
     ShareTarget.entries.filter { isInstalled(it.packageName) }
 
-/** Equal-width buttons, one per [targets] entry - a Row of 1-3 [OutlinedButton]s rather than a
- * fixed 3-slot layout, since [targets] is already pre-filtered to only the installed apps (see
- * [visibleShareTargets]) and this composable itself has no notion of "the other 2 are absent." */
+/**
+ * UI polish findings, Part 2: [QuickShareRow]'s per-target TalkBack label, e.g. "Share via
+ * WhatsApp" - needed once the row is demoted to icon-only chips with no visible text label of
+ * their own to fall back on. `internal`, not `private`, so a jvmTest can pin this exact string
+ * shape without spinning up Compose - same "TDD what's pure, even if trivial" convention this
+ * codebase already applies to [com.yugma.terrawatch.onboarding.defaultRuleSummary] and
+ * [com.yugma.terrawatch.ui.components.magnitudeContentDescription].
+ */
+internal fun shareTargetContentDescription(target: ShareTarget): String = "Share via ${target.label}"
+
+/**
+ * UI polish findings, Part 2: [QuickShareRow]'s per-target visible glyph. This app has an
+ * established "no icon-font/icon-library dependency" posture ([com.yugma.terrawatch.ui.components.
+ * StatusShield]'s hand-drawn `CheckGlyph`/`LocationPinGlyph`, `nav/NavIcons.kt`'s tab icons) - a
+ * bold single-letter monogram is the simplest, dependency-free way to give WhatsApp/X/Threads a
+ * distinct-per-target glyph without drawing 3 trademarked brand marks by hand or adding an icon
+ * library for 3 icons. `target.label.take(1)` already gives a correct, non-colliding letter for
+ * all 3 current entries ('W'/'X'/'T') with no separate per-target glyph table to keep in sync.
+ */
+internal fun shareTargetMonogram(target: ShareTarget): String = target.label.take(1)
+
+/**
+ * UI polish findings, Part 2 (doc's own recommendation, element-by-element): demoted from 3
+ * full-width `OutlinedButton`s (identical visual weight to the sheet's old "Dismiss" button - the
+ * finding's own likely cause of "feels weird") to compact, icon-only 48dp `FilledTonalIconButton`s,
+ * so the sheet's grammar reads as "one primary Share action + small shortcut icons," never "a row
+ * of look-alike buttons." `Modifier.size(48.dp)` is spec's own literal touch-target floor, matching
+ * [com.yugma.terrawatch.ui.components.StatusShield]'s identical `MIN_TOUCH_TARGET` convention.
+ * [visibleShareTargets]'s existing installed-app-check/omit-not-grey logic is untouched - this is a
+ * visual-treatment change only, not a logic change (Plan 4 Task 4b's pure fns are reused as-is).
+ *
+ * `Modifier.semantics(mergeDescendants = true) { contentDescription = ... }` on the button +
+ * `Modifier.clearAndSetSemantics {}` on the inner monogram `Text` is the exact double-read fix this
+ * codebase already establishes for a clickable container with a custom sentence and a decorative
+ * child (`StatusShield.AlertContent`'s `MagnitudeBadge` clear, `FeedSheet.kt`'s reveal-chip `Text`
+ * clear) - without it, TalkBack would announce the bare monogram letter ("W") in addition to (or
+ * instead of) the real "Share via WhatsApp" sentence.
+ */
 @Composable
 private fun QuickShareRow(targets: List<ShareTarget>, onClick: (ShareTarget) -> Unit, modifier: Modifier = Modifier) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = modifier.fillMaxWidth()) {
         targets.forEach { target ->
-            OutlinedButton(onClick = { onClick(target) }, modifier = Modifier.weight(1f)) {
-                Text(target.label)
+            FilledTonalIconButton(
+                onClick = { onClick(target) },
+                modifier = Modifier
+                    .size(48.dp)
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = shareTargetContentDescription(target)
+                    },
+            ) {
+                Text(
+                    text = shareTargetMonogram(target),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.clearAndSetSemantics {},
+                )
             }
         }
     }
