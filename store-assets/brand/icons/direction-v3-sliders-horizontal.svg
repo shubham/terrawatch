@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TerraWatch settings-icon exploration, v3 - "sliders/faders, refined" (2026-08-16).
+
+This is the SAME FAMILY as the glyph already shipping today (HomeScreen.kt's SettingsGlyph: 3
+horizontal tracks + offset knobs) - flagged honestly as a refinement, not a fresh idea, matching
+this project's own "say so when a direction carries over unchanged/refined rather than presenting
+it as new" convention (see store-assets/brand/round2/round2-rationale.md's "Direction A - carried
+over" section for the precedent). Worth keeping in the comparison: SettingsScreen.kt's own real
+content is two literal `Slider` controls (search radius + min magnitude) - this glyph is a
+deliberate, accurate preview of what's actually on the other side of the tap, a real content-
+consistency argument the pure-gear variations (v1/v2) do not have.
+
+WHAT WAS ACTUALLY WRONG WITH THE SHIPPED VERSION (measured against the real Kotlin math, not
+guessed): knob diameter (7.2 units, `w*0.15` radius x2 at w=24) is LARGER than the gap between
+adjacent rows (~6.24-6.48 units, from the row y-fractions 0.24/0.50/0.76 of 24) - knobs from
+adjacent rows pass within about 1 unit of touching at true 24dp, before anti-aliasing. The knob
+stagger (left/right/center - knobX fractions 0.32/0.65/0.44) is also non-monotonic, reading as a
+slightly random zigzag rather than an intentional rhythm. And the knob itself is a fussier
+"hole-punch" construction (a flat opaque circle in the surface color, `knobFill`, then a stroked
+ring on top) that depends on matching whatever surface color it sits on, rather than a single
+tint color like every other hand-drawn glyph in this app (StatusShield's CheckGlyph/LocationPin,
+NavIcons' three tab icons, MyLocationGlyph all draw in one tint only).
+
+FIX: row gap widened (5.8 units, comfortably more than the knob's own diameter of 4.8 - a full
+1.0-unit clearance, not a razor-thin one), knob stagger changed to a clean monotonic left-to-right
+ascending ramp (reads as an intentional rhythm, not a zigzag), and the knob switched to a single
+solid filled dot in `tint` - simpler to reason about and implement than a hole-punch, and,
+unlike the shipped knob, does not need a second `knobFill` color to match whatever it is drawn
+over.
+
+Geometry (24x24 viewBox): 3 tracks, stroke 2.0, round caps, x from 3.4 to 20.6, at y = 6.2/12/17.8.
+Knob radius 2.4, filled, at x = 7.5/12.5/17.0 (row1/2/3) - a clean ascending ramp.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <title>TerraWatch settings icon — v3 sliders refined (horizontal)</title>
+  <desc>Three horizontal slider tracks with solid filled knobs in a clean ascending stagger — a refined version of the shipped glyph.</desc>
+
+  <g stroke="#17222E" stroke-width="2.00" stroke-linecap="round">
+    <line x1="3.40" y1="6.20" x2="20.60" y2="6.20"/>
+    <line x1="3.40" y1="12.00" x2="20.60" y2="12.00"/>
+    <line x1="3.40" y1="17.80" x2="20.60" y2="17.80"/>
+  </g>
+  <g fill="#17222E">
+    <circle cx="7.50" cy="6.20" r="2.40"/>
+    <circle cx="12.50" cy="12.00" r="2.40"/>
+    <circle cx="17.00" cy="17.80" r="2.40"/>
+  </g>
+</svg>

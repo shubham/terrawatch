@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TerraWatch settings-icon exploration, v4 - "sliders/faders, vertical variant"
+(2026-08-16). Same refinements as v3 (see direction-v3-sliders-horizontal.svg's own header for the
+full "what was wrong, what fixed it" story - not repeated here), rotated to a vertical layout: 3
+vertical tracks with horizontally-arranged knobs at different heights, rather than 3 horizontal
+tracks with vertically-arranged knobs. A genuinely different silhouette from both the shipped
+glyph and v3 (not just v3 rotated 90 degrees - the knob rhythm here is its own clean diagonal ramp,
+chosen fresh rather than copied), while keeping the same "why sliders, not a gear" content-
+consistency argument v3 makes (SettingsScreen.kt's own two literal `Slider` controls).
+
+Geometry (24x24 viewBox): 3 tracks, stroke 2.0, round caps, y from 3.2 to 20.8, at x = 6.2/12/17.8.
+Knob radius 2.4, filled, at y = 17.3/11.5/5.7 (col1/2/3) - a clean top-right-rising diagonal ramp.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <title>TerraWatch settings icon — v4 sliders refined (vertical)</title>
+  <desc>Three vertical slider tracks with solid filled knobs in a clean diagonal stagger.</desc>
+
+  <g stroke="#17222E" stroke-width="2.00" stroke-linecap="round">
+    <line x1="6.20" y1="3.20" x2="6.20" y2="20.80"/>
+    <line x1="12.00" y1="3.20" x2="12.00" y2="20.80"/>
+    <line x1="17.80" y1="3.20" x2="17.80" y2="20.80"/>
+  </g>
+  <g fill="#17222E">
+    <circle cx="6.20" cy="17.30" r="2.40"/>
+    <circle cx="12.00" cy="11.50" r="2.40"/>
+    <circle cx="17.80" cy="5.70" r="2.40"/>
+  </g>
+</svg>

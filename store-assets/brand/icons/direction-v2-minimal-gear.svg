@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TerraWatch settings-icon exploration, v2 - "minimal 6-tooth gear, large center hole"
+(2026-08-16). Same rotate+rounded-rect construction as v1 (see direction-v1-m3-gear.svg's own
+header for the full gear-vs-sliders context and convention citations - not repeated here), with
+3 deliberate parameter changes to hit "minimal" + "large hole": fewer teeth (6, not 8 - fewer,
+individually bigger shapes reads as calmer/less busy at 24dp), a thinner root ring (stroke 1.7 vs
+v1's 2.0) pulled so its own open interior is a full ~21% bigger radius than v1's (r<=7.75 here vs
+v1's r<=6.4 - roughly 47% more open area, computed not eyeballed), and shorter teeth (radial length
+2.6 vs v1's 3.4) so the "wheel" reads more like a spoked hub than a dense gear.
+
+HONEST CONSTRUCTION NOTE: the same tooth/ring "waist" v1 discloses is more visible here - fewer,
+fatter teeth (width 4.4) against a thinner ring makes the tangent pinch more prominent than v1's
+(see options-rationale.md's zoomed crop). Tried thickening the ring from 1.4 to 1.7 specifically to
+soften this (visible improvement, kept) without giving up the "large hole" the brief asked for -
+the hole is still ~21% bigger in radius than v1's even after that thickening.
+
+Geometry (24x24 viewBox, center 12,12): root ring r=8.6, stroke 1.7. 6 teeth, each a rounded rect
+from r8.2 to r10.8 (radial length 2.6), width 4.4, corner radius 1.8, at 60deg spacing. Ink
+(#17222E) stands in for `tint`/`onSurface`, same convention as v1.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <title>TerraWatch settings icon — v2 minimal 6-tooth gear</title>
+  <desc>A minimal 6-tooth gear with a large open center hole and a thin rim.</desc>
+
+  <!-- Root ring — stroked only; its own open interior IS the center hole, no separate element. -->
+  <circle cx="12.0" cy="12.0" r="8.60" fill="none" stroke="#17222E" stroke-width="1.70"/>
+
+  <!-- 6 teeth, each a rounded rect authored pointing up, rotated 60deg apart around the icon center. -->
+  <g fill="#17222E">
+    <rect x="9.80" y="1.20" width="4.40" height="2.60" rx="1.80" transform="rotate(0 12.0 12.0)"/>
+    <rect x="9.80" y="1.20" width="4.40" height="2.60" rx="1.80" transform="rotate(60 12.0 12.0)"/>
+    <rect x="9.80" y="1.20" width="4.40" height="2.60" rx="1.80" transform="rotate(120 12.0 12.0)"/>
+    <rect x="9.80" y="1.20" width="4.40" height="2.60" rx="1.80" transform="rotate(180 12.0 12.0)"/>
+    <rect x="9.80" y="1.20" width="4.40" height="2.60" rx="1.80" transform="rotate(240 12.0 12.0)"/>
+    <rect x="9.80" y="1.20" width="4.40" height="2.60" rx="1.80" transform="rotate(300 12.0 12.0)"/>
+  </g>
+</svg>

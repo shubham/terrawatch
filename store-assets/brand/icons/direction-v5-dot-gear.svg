@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TerraWatch settings-icon exploration, v5 - "dot-gear hybrid" (2026-08-16). The
+softest of the three gear-family variations (v1/v2/v5): every element is a circle, no straight
+edges or rounded rects anywhere. One stroked ring (the gear "body") plus 8 small filled dots
+evenly placed just outside it at the same 8 angular positions v1's teeth use - reads as "a gear,
+reduced to its simplest possible circular vocabulary" rather than a literal tooothed silhouette.
+Simplest of all 5 to hand-code (two `drawCircle` calls: one stroked, one filled in a loop of 8
+computed cos/sin offsets - no rotate-transform, no rounded-rect, no Path).
+
+Geometry (24x24 viewBox, center 12,12): ring r=6.6, stroke 2.0. 8 dots, each r=1.6, placed at
+radius 9.6 from center, at 45deg spacing (same 8 angles v1's teeth occupy). Ink (#17222E) stands
+in for `tint`/`onSurface`, same convention as v1-v4.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <title>TerraWatch settings icon — v5 dot-gear hybrid</title>
+  <desc>An open ring surrounded by 8 small dots standing in for teeth — the softest, most circular of the five variations.</desc>
+
+  <circle cx="12.0" cy="12.0" r="6.60" fill="none" stroke="#17222E" stroke-width="2.00"/>
+  <g fill="#17222E">
+    <circle cx="12.00" cy="2.40" r="1.60"/>
+    <circle cx="18.79" cy="5.21" r="1.60"/>
+    <circle cx="21.60" cy="12.00" r="1.60"/>
+    <circle cx="18.79" cy="18.79" r="1.60"/>
+    <circle cx="12.00" cy="21.60" r="1.60"/>
+    <circle cx="5.21" cy="18.79" r="1.60"/>
+    <circle cx="2.40" cy="12.00" r="1.60"/>
+    <circle cx="5.21" cy="5.21" r="1.60"/>
+  </g>
+</svg>

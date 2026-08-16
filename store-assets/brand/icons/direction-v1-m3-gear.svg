@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TerraWatch settings-icon exploration, v1 - "M3 rounded-tooth gear" (2026-08-16).
+
+CONTEXT: the shipped settings glyph (HomeScreen.kt's SettingsGlyph, the glass chip floating
+top-right of Home) is a hand-drawn "sliders/equalizer" glyph (3 horizontal tracks + offset knobs)
+- NOT a gear (a correction to this exploration's own starting assumption: checked the real Kotlin
+plus a real device screenshot before designing anything, and it is sliders, not a gear).
+SettingsGlyph's own kdoc already explains the original call: "a recognizable gear needs teeth
+around its rim, which is a much fussier path to hand-draw reliably at 24dp than three lines +
+three circles." This variation is a direct answer to that specific objection, not a dismissal of
+it: 8 teeth, each a plain rotated rounded-rect (root-to-tip, corner radius close to half its own
+width - "generous rounding," the current M3/"Material Expressive" rounded-symbol look), placed
+with one rotate-transform per tooth around the icon center. Trivially hand-codable in Compose as
+`rotate(degrees) { drawRoundRect(...) }` in a loop of 8 - no bespoke multi-point gear Path needed,
+so the original fussiness objection genuinely does not apply to this construction. The center
+"hole" is simply whatever the root ring's own stroke doesn't paint - no separate element drawn.
+
+CONVENTION CHECK (2 WebSearches this session, full citations in options-rationale.md): Apple's own
+Settings app icon has used a gear continuously through every redesign, including the 2025/2026 iOS
+26 "Liquid Glass" system-icon overhaul - the newest system-level redesign changed the RENDERING
+(glass material, cross-platform unification), not the gear concept itself. Google's current
+Material Symbols set ships a rounded variant of its own "settings" gear alongside "tune" (sliders)
+as two distinct, equally first-class, current glyphs - this variation follows the rounded-gear
+half of that pair.
+
+HONEST CONSTRUCTION NOTE: at this tooth-width-to-ring-thickness ratio, each tooth meets the ring
+with a slight concave "waist" where the straight tooth sides tangent the ring's own curve (visible
+in options-rationale.md's zoomed crops) - a real characteristic of this rotate+rounded-rect
+construction, not a rendering bug. Softenable by deepening the tooth/ring overlap or thickening the
+ring further if this direction gets picked.
+
+Geometry (24x24 viewBox, center 12,12): root ring r=7.4, stroke 2.0 (open interior r<=6.4 IS the
+hole). 8 teeth, each a rounded rect from r7.6 to r11.0 (radial length 3.4), width 3.6, corner
+radius 1.6, at 45deg spacing. Ink (#17222E) here stands in for whatever `tint`/`onSurface` color
+the real call site would pass - this standalone file has no theme awareness of its own.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <title>TerraWatch settings icon — v1 M3 rounded-tooth gear</title>
+  <desc>An 8-tooth gear with generously rounded teeth around an open ring, in the current Material rounded-symbol style.</desc>
+
+  <!-- Root ring — stroked only; its own open interior IS the center hole, no separate element. -->
+  <circle cx="12.0" cy="12.0" r="7.40" fill="none" stroke="#17222E" stroke-width="2.00"/>
+
+  <!-- 8 teeth, each a rounded rect authored pointing up, rotated 45deg apart around the icon center. -->
+  <g fill="#17222E">
+    <rect x="10.20" y="1.00" width="3.60" height="3.40" rx="1.60" transform="rotate(0 12.0 12.0)"/>
+    <rect x="10.20" y="1.00" width="3.60" height="3.40" rx="1.60" transform="rotate(45 12.0 12.0)"/>
+    <rect x="10.20" y="1.00" width="3.60" height="3.40" rx="1.60" transform="rotate(90 12.0 12.0)"/>
+    <rect x="10.20" y="1.00" width="3.60" height="3.40" rx="1.60" transform="rotate(135 12.0 12.0)"/>
+    <rect x="10.20" y="1.00" width="3.60" height="3.40" rx="1.60" transform="rotate(180 12.0 12.0)"/>
+    <rect x="10.20" y="1.00" width="3.60" height="3.40" rx="1.60" transform="rotate(225 12.0 12.0)"/>
+    <rect x="10.20" y="1.00" width="3.60" height="3.40" rx="1.60" transform="rotate(270 12.0 12.0)"/>
+    <rect x="10.20" y="1.00" width="3.60" height="3.40" rx="1.60" transform="rotate(315 12.0 12.0)"/>
+  </g>
+</svg>
