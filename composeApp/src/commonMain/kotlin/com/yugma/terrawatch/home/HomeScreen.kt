@@ -24,6 +24,7 @@ import androidx.compose.material3.BottomSheetScaffold
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SheetValue
 import androidx.compose.material3.SnackbarHost
@@ -1062,6 +1063,27 @@ private fun MyLocationGlyph(tint: Color, modifier: Modifier = Modifier) {
  * together in that edge case — accepted, since [FavoritePlace.point] (not a numeric id) is the only
  * signal [HomeViewModel.focusTarget] itself carries, by deliberate design (see that field's kdoc for
  * why: the pill only ever needs a point to compare against, not which favorite row produced it).
+ *
+ * Dark-mode bug fix (post-p5-tail, device-reproduced): unlike every OTHER floating control on this
+ * screen ([StatusShield][com.yugma.terrawatch.ui.components.StatusShield], [StalenessBanner],
+ * [SettingsGearChip], [MyLocationFab] — all `MaterialTheme.colorScheme.surface.copy(alpha = 0.78f)`
+ * "glass"), this row had no `containerColor` override at all, so an *unselected* [FilterChip]'s M3
+ * default (`Color.Transparent`) let [QuakeMap][com.yugma.terrawatch.map.QuakeMap]'s basemap show
+ * straight through. That basemap (OpenFreeMap's "liberty" style — see `QuakeMap.android.kt`'s own
+ * kdoc: "there is no style-wide/vector desaturation hook in this library's public API") is a fixed
+ * LIGHT map in both app themes, never a dark one — so dark theme's Water-toned unselected label/
+ * border (`onSurfaceVariant`/`outline`, tuned for contrast against opaque dusk surfaces elsewhere in
+ * this app) rendered pale-on-pale against it: a device screenshot
+ * (`docs/qa/post-p5-tail/darkmode-favorites-before-home.png`) measured the real on-device map-ocean
+ * tile at `#9EBDFF`, against which the label text (`Water` `#D9E9F4`) is only 1.51:1 — nowhere close
+ * to the 4.5:1 text floor, and the reason a second favorite ("Tokyo") was reported as not visible.
+ * [glassContainerColor] below is the SAME token/alpha this screen's other floating controls already
+ * use, applied unconditionally rather than gated on dark theme — `MaterialTheme.colorScheme.surface`
+ * already resolves to the right per-theme tone (light theme's dark Ink-on-map pairing was never
+ * broken, only made more visually consistent with its glass siblings by this same change). Measures
+ * >= 6.3:1 even over a worst-case pure-white map tile (see `ContrastTest`'s
+ * "unselected quick-switch chip" case), comfortably clearing the floor against this map style's
+ * actual (always less extreme) tones.
  */
 @Composable
 private fun PlaceQuickSwitchChips(
@@ -1072,16 +1094,23 @@ private fun PlaceQuickSwitchChips(
     modifier: Modifier = Modifier,
 ) {
     if (favorites.isEmpty()) return
+    val glassContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f)
     Row(
         modifier = modifier.horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        FilterChip(selected = focusTarget == null, onClick = onSelectHome, label = { Text("Home") })
+        FilterChip(
+            selected = focusTarget == null,
+            onClick = onSelectHome,
+            label = { Text("Home") },
+            colors = FilterChipDefaults.filterChipColors(containerColor = glassContainerColor),
+        )
         favorites.forEach { favorite ->
             FilterChip(
                 selected = focusTarget == favorite.point,
                 onClick = { onSelectFavorite(favorite.point) },
                 label = { Text(favorite.label) },
+                colors = FilterChipDefaults.filterChipColors(containerColor = glassContainerColor),
             )
         }
     }

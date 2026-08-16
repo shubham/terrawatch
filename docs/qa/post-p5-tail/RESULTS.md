@@ -13,6 +13,7 @@ every Moto row below is **PENDING**, not fabricated.
 | 2 | Settings ALERTS row live-refreshes on resume (revoke direction) | **PASS** | PENDING |
 | 3 | Map scale-bar/compass no longer collide with the status bar | **PASS** | PENDING |
 | 4 | Map bottom ornaments (logo/attribution) vs. nav bar / ad slot | **PASS** (code-level; not independently visible — see note) | PENDING |
+| 5 | Dark mode: favorite places visible/legible (Home quick-switch chips + Settings Places rows) | **PASS** | PENDING |
 
 ## Fix 1 — Settings alerts row not refreshing on resume
 
@@ -106,14 +107,100 @@ screenshots.
 
 Moto: **PENDING** (disconnected all session).
 
+## Fix 3 — Dark mode: favorite places not visible correctly
+
+**Reproduced on device first (98bc1cd8, dark mode confirmed active — `cmd uimode night` → "Night
+mode: yes" — before touching any code).** No favorite existed yet on this device, so a "Tokyo"
+favorite was added via Settings → Places → Add place to make both surfaces reproducible.
+
+**What was exactly illegible (from the before-screenshots):**
+- `darkmode-favorites-before-home.png` (Home quick-switch chip row, `PlaceQuickSwitchChips`,
+  floating over the map): the **"Home" chip (selected) was fine** — a solid dark fill with clearly
+  readable light text. The **"Tokyo" chip (unselected) was the failure**: no visible container at
+  all (the map showed straight through it), leaving only a faint, barely-there border and a label
+  whose text color nearly matched the map tile behind it — see the zoomed crop, `Tokyo` reads as a
+  near-invisible ghost outline. This is literally the reported bug: a favorite place's own
+  quick-switch chip was not visible.
+- `darkmode-favorites-before-settings.png` (Settings → Places → `FavoriteRow`'s All/Major
+  only/Off alert-type chips): device-checked and **found NOT broken** — both the selected "All"
+  chip and the unselected "Major only"/"Off" chips were clearly legible against the flat, opaque
+  `SettingsCard` background. Zoomed crop confirms crisp borders and bright, readable labels in both
+  states. No fix needed on this surface; called out explicitly rather than silently assumed fine.
+
+**Root cause (device-measured, not assumed) — and a correction to the task brief's own premise:**
+the brief suspected "dark map tiles behind" the Home chips. On-device, the map is **never dark** —
+`QuakeMap.android.kt` hardcodes `OPENFREEMAP_LIBERTY_STYLE_URL`, a single fixed light basemap used
+in *both* app themes (that file's own kdoc: "there is no style-wide/vector desaturation hook in
+this library's public API" — already investigated, not a live option). The real defect:
+`PlaceQuickSwitchChips` is the one floating control on this screen with no `containerColor`
+override, so an *unselected* `FilterChip`'s M3 default (`Color.Transparent`) let the always-light
+map show straight through. Dark theme's `onSurfaceVariant`/`outline` tokens (`Water`-based) are
+tuned for contrast against *opaque dusk surfaces* elsewhere in the app, not against an arbitrary
+light map tile. Pixel-sampled directly off the real screenshot (`python3`/Pillow, exact device
+pixels, not guessed): map ocean tile `#9EBDFF`; unselected label text rendered at `#D9E9F4`
+(`TerraColors.Water`, confirmed exact match). WCAG ratio (same relative-luminance formula
+`ContrastTest.kt` uses):
+
+| Pair | Ratio | Floor | Verdict |
+|---|---|---|---|
+| Water label text on sampled map-ocean tile (`#9EBDFF`) | **1.51:1** | 4.5:1 (text) | FAIL |
+| Water@40% border blend on the same map tile | **1.19:1** | 3.0:1 (non-text) | FAIL |
+
+Every OTHER floating control on this exact screen (`StatusShield`, `StalenessBanner`,
+`SettingsGearChip`, `MyLocationFab`) already uses a `MaterialTheme.colorScheme.surface.copy(alpha =
+0.78f)` "glass" backing for precisely this reason (floating over unpredictable map imagery) —
+`PlaceQuickSwitchChips` was the one component on the screen that never got it, most likely an
+oversight from Plan 5 Task 2's original cut.
+
+**Fix (token/component-level, matching the app's existing glass idiom):**
+`HomeScreen.kt`'s `PlaceQuickSwitchChips` now passes `colors =
+FilterChipDefaults.filterChipColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha =
+0.78f))` to both `FilterChip` call sites (the "Home" chip and each favorite chip) — the exact same
+token/alpha this screen's other glass controls already use, verified against the real resolved
+`androidx.compose.material3:material3-android:1.3.2` source (`filterChipColors()`'s
+`containerColor` param, extracted from the real `-sources.jar`, not guessed/remembered) so only the
+container is overridden — `labelColor`/`selectedContainerColor`/`selectedLabelColor` all fall
+through to their existing (already-correct) defaults via `Color.Unspecified`/`takeOrElse`. Applied
+unconditionally (no `if (darkTheme)` branch) — `MaterialTheme.colorScheme.surface` already resolves
+per-theme, and light theme's dark-Ink-on-map pairing was never broken, only made more visually
+consistent with its glass siblings by the same change. Settings' `FavoriteRow` chips are untouched —
+confirmed not broken, so not touched.
+
+**New locked regression tests (`core/ui/src/jvmTest/.../ContrastTest.kt`, +2, computed in Python
+first per this task's ask, then re-verified as committed Kotlin using the file's own existing WCAG
+formula):**
+- `white-on-map was the proven failure this fix closes` — pins the real sampled map tile
+  (`#9EBDFF`) vs. `Water` text at < 2.0:1, so the pre-fix failure stays documented.
+- `dark theme unselected quick-switch chip clears 4_5 to 1 even over a worst-case white map tile` —
+  composites `TerraColors.DuskCard` at `alpha = 0.78f` over `Color.White` (the lightest a map tile
+  could ever be — deliberately more adverse than this map style's real cream/pale-blue tones) as a
+  floor, then asserts `Water` text against that composited background clears 4.5:1. Measured
+  **6.30:1** worst-case (**7.90:1** against the real sampled map-ocean color) — comfortably clears
+  in both the adversarial bound and reality.
+
+**Device verify (98bc1cd8, dark mode, real "Tokyo" favorite, same map region before/after):**
+- Before: `darkmode-favorites-before-home.png` / `darkmode-favorites-before-settings.png`.
+- After: `darkmode-favorites-after-home.png` — "Tokyo" now renders as a clear, distinct dark glass
+  pill with fully legible text, matching "Home"'s treatment; `darkmode-favorites-after-settings.png`
+  — unchanged, still fine.
+- Light theme regression spot-check (Settings → Theme → Light, no code gates this — same code path
+  runs in both themes): `darkmode-favorites-lightmode-home-spotcheck.png` /
+  `darkmode-favorites-lightmode-settings-spotcheck.png` — both chip surfaces still clearly legible,
+  no regression. Theme restored to **System** (→ dark, device night mode confirmed still active)
+  before finishing, matching the device's original state.
+
+Moto: **PENDING** (disconnected all session, same as Fixes 1/2).
+
 ## Tests / compiles
 
-- `./gradlew :composeApp:jvmTest --max-workers=4` — **245 tests, 0 failures, 0 errors** (24 of them
-  new/touched in `SettingsViewModelTest.kt` for Fix 1).
+- `./gradlew jvmTest --max-workers=4` (all modules) — **BUILD SUCCESSFUL**, 0 failures anywhere:
+  `:composeApp:jvmTest` **245 tests** (unchanged — this fix is a token/color choice with no new
+  branching logic, nothing new to unit-test at that layer, same reasoning Fix 2 above documents);
+  `:core:ui:jvmTest` **61 tests** including `ContrastTest` now at **12 tests** (+2 for this fix).
 - `./gradlew :composeApp:compileDebugKotlinAndroid :composeApp:compileKotlinJvm
   :composeApp:compileKotlinWasmJs --max-workers=4` — all 3 targets green.
-- `./gradlew :composeApp:assembleDebug --max-workers=4` — green, APK installed and used for both
-  device-verify passes above.
+- `./gradlew :composeApp:assembleDebug --max-workers=4` — green, APK installed (`adb install -r`,
+  preserving the "Tokyo" favorite) and used for the device-verify pass above.
 
 ## Concerns
 
@@ -121,11 +208,22 @@ Moto: **PENDING** (disconnected all session).
   device-proven on Home — permanently occluded by the feed sheet in every reachable state on that
   screen (see above). Not a regression risk (same shared-field fix as the proven top half), but
   flagging the gap honestly rather than claiming a screenshot that doesn't exist.
-- Moto (Android 16) verification is 100% PENDING for both fixes — device was disconnected this
-  entire session. Whoever next has it connected should repeat the same two device-verify sequences
-  above (grant+revoke via system Settings + recents for Fix 1; scale-bar/status-bar overlap check
-  for Fix 2 — Moto's own notchless-but-cutout display was the original site concern #6 was raised
-  against).
+- Fix 3's task brief assumed "dark map tiles behind" the Home chips; on-device this was factually
+  wrong (see Fix 3 above — the basemap is a fixed light style in every theme) — noting the
+  correction explicitly rather than silently building the fix around a premise that didn't hold up
+  to reproduction.
+- Fix 3's border contrast is a known, accepted residual gap: the unselected chip's default hairline
+  border (`Water`@40% alpha, unchanged) only reaches ~2.4:1 against the new glass background in the
+  same worst-case-white-map bound (floor is 3:1 for non-text UI) — raising the glass alpha enough
+  to clear that floor in that exact adversarial case would cost most of the "glass" transparency
+  for a realistically-unreachable edge case (this map style never renders pure white). The label
+  text (the actual reported defect, and the primary legibility signal) clears 4.5:1 with real
+  margin in the same bound; the container's own now-opaque-enough shape is the primary visual
+  delineator, the border a secondary refinement. Flagged rather than silently left unmeasured.
+- Moto (Android 16) verification is 100% PENDING for all three fixes — device was disconnected this
+  entire session. Whoever next has it connected should repeat the device-verify sequences above
+  (grant+revoke via system Settings + recents for Fix 1; scale-bar/status-bar overlap check for Fix
+  2; Home + Settings Places dark-mode legibility check for Fix 3).
 - `pm revoke`/`pm clear` are both blocked by a `SecurityException` on this OxygenOS build (same
   restriction the task brief already flagged) — every permission-state change in this pass went
   through either a full uninstall/reinstall or the real system Settings UI, never a raw adb
