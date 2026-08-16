@@ -9,6 +9,7 @@ import com.yugma.terrawatch.data.AlertRuleStore
 import com.yugma.terrawatch.data.FavoritePlaceStore
 import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.data.QuakeRepository
+import com.yugma.terrawatch.data.VisitStore
 import com.yugma.terrawatch.database.QuakeDao
 import com.yugma.terrawatch.database.TerraWatchDb
 import com.yugma.terrawatch.location.LocationProvider
@@ -195,10 +196,13 @@ class HomeViewModelTest {
         // passes its own UnconfinedTestDispatcher explicitly, the SAME instance backing
         // Dispatchers.Main, matching InsightsViewModelTest's own `ioDispatcher` pin style exactly.
         ioDispatcher: CoroutineDispatcher = Dispatchers.Default,
+        // feat/feed-visit-ux: same "add a new store, default it" shape favoritePlaceStore's own
+        // comment above already establishes for this helper.
+        visitStore: VisitStore = emptyVisitStore(),
     ): HomeViewModel =
         HomeViewModel(
             repository, homeLocationStore, locationProvider, alertRuleStore, clock,
-            favoritePlaceStore = favoritePlaceStore, ioDispatcher = ioDispatcher,
+            favoritePlaceStore = favoritePlaceStore, ioDispatcher = ioDispatcher, visitStore = visitStore,
         ).also { createdViewModels += it }
 
     @AfterTest fun tearDown() {
@@ -827,6 +831,64 @@ class HomeViewModelTest {
         }
     }
 
+    // feat/feed-visit-ux: visitSummary — HomeViewModel.init{}'s own read of VisitStore.get() +
+    // QuakeRepository.newSinceCount(), reduced through the pure visitSummary() fn (FeedSheetTest.kt
+    // pins that pure fn's own truth table directly; these two tests instead prove the ViewModel
+    // ACTUALLY wires a real store + a real repository query into it end to end).
+
+    @Test fun `visitSummary reports qualifying M4-0+ quakes fetched after a recorded prior visit`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        TerraWatchDb.Schema.create(driver)
+        val db = TerraWatchDb(driver)
+        var writeClock = 500L
+        val dao = QuakeDao(db, clock = { writeClock }, dispatcher = testDispatcher)
+        // The recorded visit itself is a plain meta write — independent of the dao's own
+        // fetchedAtMillis clock (VisitStore.set never touches a quake row).
+        val visitStore = VisitStore(dao).apply { set(1_000L) }
+        writeClock = 2_000L // both rows below are fetched strictly AFTER the recorded visit
+        dao.replace(freshQuake(id = "qualifies", mag = 5.0), origin = "feed")
+        dao.replace(freshQuake(id = "too-small", mag = 2.0), origin = "feed") // below the M4.0 floor
+        val engine = MockEngine { respond("", HttpStatusCode.InternalServerError) }
+        val repository = QuakeRepository(
+            UsgsApi(HttpClient(engine)), EmscLiveSource(HttpClient(engine)), dao,
+            clock = { 3_000_000L }, ioDispatcher = testDispatcher,
+        )
+        val vm = createVm(repository, ioDispatcher = testDispatcher, visitStore = visitStore)
+        vm.visitSummary.test(timeout = 30.seconds) {
+            var v = awaitItem()
+            while (v == null) v = awaitItem()
+            assertEquals("1 quake M4.0+ since your last visit", v)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `visitSummary is null when a recorded prior visit has nothing qualifying since`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        TerraWatchDb.Schema.create(driver)
+        val db = TerraWatchDb(driver)
+        val dao = QuakeDao(db, clock = { 500L }, dispatcher = testDispatcher) // fetched BEFORE the visit
+        val visitStore = VisitStore(dao).apply { set(1_000L) }
+        dao.replace(freshQuake(id = "too-old", mag = 6.0), origin = "feed")
+        val engine = MockEngine { respond("", HttpStatusCode.InternalServerError) }
+        val repository = QuakeRepository(
+            UsgsApi(HttpClient(engine)), EmscLiveSource(HttpClient(engine)), dao,
+            clock = { 3_000_000L }, ioDispatcher = testDispatcher,
+        )
+        val vm = createVm(repository, ioDispatcher = testDispatcher, visitStore = visitStore)
+        // Unlike the positive test above, null is both the initial default AND the correctly-
+        // settled value here, so there is no transient-to-skip the way a Turbine await-loop would
+        // need — this instead independently re-proves the query itself returned zero (the same
+        // fact QuakeDaoTest's own "newSinceCount cutoff comparison is strict greater-than" case
+        // pins at the DAO layer) before trusting the ViewModel-level value, so a passing assertion
+        // here can't be mistaken for "the computation simply never ran".
+        assertEquals(0L, dao.newSinceCount(sinceMillis = 1_000L, minMag = 4.0))
+        assertEquals(null, vm.visitSummary.value)
+    }
+
     // Task 9: homeLocation. Seeds the store via HomeLocationStore.set() (the same dao-backed path
     // HomeViewModel itself reads through), then asserts the ViewModel's own flow eventually
     // reflects it — proving the init{} load actually reads from the injected store rather than,
@@ -1259,13 +1321,26 @@ private fun fakeRepositorySeededWithOneQuake(
 // first: its window is 90s / 100km (DedupeEngine.kt), so [timeMillis] is now a parameter — every
 // pre-existing call site keeps the original hardcoded 1_950_000 via the default, only the new test
 // passes a value far outside that window.
-private fun freshQuake(id: String, timeMillis: Long = 1_950_000) = Quake(
+// feat/feed-visit-ux: [mag] is now a THIRD, defaulted parameter (default unchanged at 4.0, so
+// every pre-existing call site above keeps compiling and behaving identically) — same "add a
+// defaulted param for one new test" precedent [timeMillis] itself already established, needed by
+// the visitSummary tests below to construct quakes both above and below the M4.0+ banner floor.
+private fun freshQuake(id: String, timeMillis: Long = 1_950_000, mag: Double? = 4.0) = Quake(
     id = id, timeMillis = timeMillis, lat = 1.0, lon = 2.0, depthKm = 5.0,
-    mag = 4.0, magType = "mw", place = "Fresh", tsunami = false, felt = null,
+    mag = mag, magType = "mw", place = "Fresh", tsunami = false, felt = null,
     status = QuakeStatus.AUTOMATIC, sources = mapOf(Source.USGS to id),
-    revisions = listOf(MagRevision(4.0, "mw", timeMillis, Source.USGS)),
+    revisions = listOf(MagRevision(mag ?: 0.0, "mw", timeMillis, Source.USGS)),
     updatedAtMillis = timeMillis,
 )
+
+// feat/feed-visit-ux: same "fresh, empty, don't-care-what-it-resolves-to" role as
+// emptyHomeLocationStore()/emptyAlertRuleStore()/emptyFavoritePlaceStore() above, for
+// HomeViewModel's new VisitStore constructor param.
+private fun emptyVisitStore(): VisitStore {
+    val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+    TerraWatchDb.Schema.create(driver)
+    return VisitStore(QuakeDao(TerraWatchDb(driver), dispatcher = UnconfinedTestDispatcher()))
+}
 
 private val ONE_FEATURE_GEOJSON = """
     {

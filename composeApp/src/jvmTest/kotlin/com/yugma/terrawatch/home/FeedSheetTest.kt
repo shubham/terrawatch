@@ -47,6 +47,57 @@ class FeedSheetTest {
         assertEquals(FeedRevealAction.SHOW_CHIP, feedRevealAction(atTop = false, newCount = 5))
     }
 
+    // feedExpandRevealAction: the T3c peek-to-expanded reconciliation on top of feedRevealAction. ---
+
+    @Test
+    fun `feedExpandRevealAction is AUTO_SCROLL on a peek-to-expanded transition with unseen arrivals, even when scrolled away`() {
+        assertEquals(FeedRevealAction.AUTO_SCROLL, feedExpandRevealAction(justExpanded = true, atTop = false, newCount = 3))
+    }
+
+    @Test
+    fun `feedExpandRevealAction is AUTO_SCROLL on a peek-to-expanded transition with unseen arrivals, when already at top`() {
+        assertEquals(FeedRevealAction.AUTO_SCROLL, feedExpandRevealAction(justExpanded = true, atTop = true, newCount = 3))
+    }
+
+    @Test
+    fun `feedExpandRevealAction defers to feedRevealAction when nothing arrived, even on a fresh expand`() {
+        assertEquals(FeedRevealAction.NONE, feedExpandRevealAction(justExpanded = true, atTop = false, newCount = 0))
+        assertEquals(FeedRevealAction.NONE, feedExpandRevealAction(justExpanded = true, atTop = true, newCount = 0))
+    }
+
+    @Test
+    fun `feedExpandRevealAction defers to feedRevealAction's own atTop-conditional choice for mid-expanded arrivals`() {
+        // justExpanded = false is the "topId changed while already expanded" case T3b already
+        // owned before this feature — byte-for-byte the same truth table as feedRevealAction alone.
+        assertEquals(FeedRevealAction.AUTO_SCROLL, feedExpandRevealAction(justExpanded = false, atTop = true, newCount = 2))
+        assertEquals(FeedRevealAction.SHOW_CHIP, feedExpandRevealAction(justExpanded = false, atTop = false, newCount = 2))
+        assertEquals(FeedRevealAction.NONE, feedExpandRevealAction(justExpanded = false, atTop = false, newCount = 0))
+    }
+
+    // visitSummary: the since-last-visit banner's copy/gating decision. -----------------------------
+
+    @Test
+    fun `visitSummary is null when there is no recorded prior visit, regardless of count`() {
+        assertEquals(null, visitSummary(lastVisitMillis = null, nowCount = 5))
+        assertEquals(null, visitSummary(lastVisitMillis = null, nowCount = 0))
+    }
+
+    @Test
+    fun `visitSummary is null when the count is zero or negative, even with a real prior visit`() {
+        assertEquals(null, visitSummary(lastVisitMillis = 1_000L, nowCount = 0))
+        assertEquals(null, visitSummary(lastVisitMillis = 1_000L, nowCount = -1))
+    }
+
+    @Test
+    fun `visitSummary uses singular copy for exactly one qualifying quake`() {
+        assertEquals("1 quake M4.0+ since your last visit", visitSummary(lastVisitMillis = 1_000L, nowCount = 1))
+    }
+
+    @Test
+    fun `visitSummary uses plural copy for more than one qualifying quake`() {
+        assertEquals("3 quakes M4.0+ since your last visit", visitSummary(lastVisitMillis = 1_000L, nowCount = 3))
+    }
+
     // isAtTopOfFeed: the epsilon-tolerant "is the list genuinely at its top" check. ----------------
     // Epsilon decision (documented here, not just in the implementation): a small tolerance
     // (FEED_AT_TOP_EPSILON_PX) absorbs sub-pixel fling-deceleration residue that can leave

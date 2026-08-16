@@ -216,6 +216,21 @@ interface QuakeStore {
     fun newSince(sinceMillis: Long): List<DomainQuake>
 
     /**
+     * Commit "since-last-visit summary" (feed-visit-ux): the feed sheet's own "N quakes M4.0+
+     * since your last visit" banner count — same eligible-origin set as [newSince] (`ORIGIN_FEED`/
+     * `ORIGIN_LIVE` only, identical F5-guard reasoning: an archived or debug-injected row must
+     * never count toward this banner either), narrowed further to `mag >= [minMag]` — the banner's
+     * own explicit "M4.0+ only" scope (user instruction). A quake with a `null` magnitude never
+     * counts, matching [newSince]'s own "never surprise-alert on an unknown magnitude" posture.
+     *
+     * A dedicated scalar count, not `newSince(sinceMillis).count { ... }` computed by the caller:
+     * this is a fixed aggregate the UI needs on every visit-summary computation, not a row list any
+     * caller needs to inspect — same "COUNT is its own query" shape [QuakeDao.countAll] already
+     * establishes for the unfiltered case.
+     */
+    fun newSinceCount(sinceMillis: Long, minMag: Double): Long
+
+    /**
      * Task 2 (Plan 5): every saved favorite place, ascending by [FavoritePlace.id] (i.e. insertion
      * order) — [com.yugma.terrawatch.data.FavoritePlaceStore] (core:data) is the one real caller,
      * exposing this straight through as its own `favorites: Flow<List<FavoritePlace>>`. Reactive

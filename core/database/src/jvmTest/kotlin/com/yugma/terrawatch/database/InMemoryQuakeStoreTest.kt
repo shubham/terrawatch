@@ -381,6 +381,50 @@ class InMemoryQuakeStoreTest {
         assertEquals(6.2, result.single().mag)
     }
 
+    // --- Commit "since-last-visit summary": newSinceCount -- mirrors QuakeDaoTest's own
+    // newSinceCount section exactly (same contract, other QuakeStore implementation). -------------
+
+    @Test fun `newSinceCount counts feed and live rows at or above minMag, strictly after the cutoff`() {
+        val clockedStore = InMemoryQuakeStore(clock = { 2000L })
+        clockedStore.replace(quake(id = "feed-m5", mag = 5.0), origin = "feed")
+        clockedStore.replace(quake(id = "live-m4", mag = 4.0), origin = "live")
+        assertEquals(2, clockedStore.newSinceCount(sinceMillis = 1000, minMag = 4.0))
+    }
+
+    @Test fun `newSinceCount excludes quakes below minMag`() {
+        val clockedStore = InMemoryQuakeStore(clock = { 2000L })
+        clockedStore.replace(quake(id = "below", mag = 3.9), origin = "feed")
+        assertEquals(0, clockedStore.newSinceCount(sinceMillis = 1000, minMag = 4.0))
+    }
+
+    @Test fun `newSinceCount excludes quakes with a null magnitude, even with a low minMag`() {
+        val clockedStore = InMemoryQuakeStore(clock = { 2000L })
+        clockedStore.replace(quake(id = "unknown-mag", mag = null), origin = "feed")
+        assertEquals(0, clockedStore.newSinceCount(sinceMillis = 1000, minMag = 0.0))
+    }
+
+    @Test fun `newSinceCount excludes archive rows even when they qualify on magnitude`() {
+        val clockedStore = InMemoryQuakeStore(clock = { 2000L })
+        clockedStore.replace(quake(id = "archive-m6", mag = 6.0), origin = "archive")
+        assertEquals(0, clockedStore.newSinceCount(sinceMillis = 1000, minMag = 4.0))
+    }
+
+    @Test fun `newSinceCount excludes debug rows even when they qualify on magnitude`() {
+        val clockedStore = InMemoryQuakeStore(clock = { 2000L })
+        clockedStore.replace(quake(id = "debug-m6", mag = 6.0), origin = "debug")
+        assertEquals(0, clockedStore.newSinceCount(sinceMillis = 1000, minMag = 4.0))
+    }
+
+    @Test fun `newSinceCount cutoff comparison is strict greater-than`() {
+        val clockedStore = InMemoryQuakeStore(clock = { 1000L })
+        clockedStore.replace(quake(id = "at-cutoff", mag = 5.0), origin = "feed")
+        assertEquals(0, clockedStore.newSinceCount(sinceMillis = 1000, minMag = 4.0))
+    }
+
+    @Test fun `newSinceCount on an empty store returns zero`() {
+        assertEquals(0, InMemoryQuakeStore().newSinceCount(sinceMillis = 1000, minMag = 4.0))
+    }
+
     // --- Task 2 (Plan 5): favorite_place CRUD -- mirrors QuakeDaoTest's own favoritePlaces section ---
 
     @Test fun `favoritePlaces on an empty store emits an empty list`() = runTest {

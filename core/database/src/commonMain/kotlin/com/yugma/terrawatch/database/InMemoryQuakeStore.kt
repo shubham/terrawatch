@@ -203,6 +203,21 @@ class InMemoryQuakeStore(private val clock: () -> Long = { 0L }) : QuakeStore {
             (fetchedAt[it.id] ?: 0L) > sinceMillis && (originById[it.id] ?: QuakeStore.ORIGIN_FEED) in ALERT_ELIGIBLE_ORIGINS
         }
 
+    /**
+     * Commit "since-last-visit summary": mirrors [QuakeDao.newSinceCount] exactly (same eligible
+     * origins as [newSince] above, same "missing origin/fetchedAt defaults" reasoning that
+     * method's own kdoc already documents) — see [QuakeStore.newSinceCount]'s own interface kdoc
+     * for the full ruling. `mag == null` never satisfies `matchesMinMag` (that helper's own `mag !=
+     * null && mag >= minMag` check), matching the SQL query's three-valued-logic behavior on a NULL
+     * column exactly.
+     */
+    override fun newSinceCount(sinceMillis: Long, minMag: Double): Long =
+        quakes.value.values.count {
+            (fetchedAt[it.id] ?: 0L) > sinceMillis &&
+                (originById[it.id] ?: QuakeStore.ORIGIN_FEED) in ALERT_ELIGIBLE_ORIGINS &&
+                matchesMinMag(it, minMag)
+        }.toLong()
+
     // Task 2 (Plan 5): favorite_place's in-memory mirror -- a MutableStateFlow (not a plain
     // MutableList), same "Flow.map over a hot StateFlow re-emits to every collector on each
     // mutation, no polling required" reasoning `quakes` above already documents for the identical

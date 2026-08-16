@@ -310,6 +310,17 @@ class QuakeRepository(
         withContext(ioDispatcher) { dao.strongest(sinceMillis) }
 
     /**
+     * Commit "since-last-visit summary" (feed-visit-ux): the feed sheet's "N quakes M4.0+ since
+     * your last visit" banner count — thin suspend + [ioDispatcher] pass-through over
+     * [QuakeStore.newSinceCount], same shape as [pageBetween]/[quakesPerDay]/[strongest] above.
+     * `HomeViewModel` only depends on this repository, never [QuakeStore]/[QuakeDao] directly, same
+     * "the repository is the one seam a screen ViewModel needs" discipline this class's own
+     * [pageBetween] kdoc already states explicitly for History.
+     */
+    suspend fun newSinceCount(sinceMillis: Long, minMag: Double): Long =
+        withContext(ioDispatcher) { dao.newSinceCount(sinceMillis, minMag) }
+
+    /**
      * Task 5 (Plan 4): Insights' density-disclosure caption backfill — a single FDSN `/count` call
      * (never per-day-bucket, never rows) for the SAME window Insights already renders, used only to
      * caption "N cached · M total worldwide" when the local cache looks thin. Thin suspend +

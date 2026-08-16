@@ -233,6 +233,10 @@ class QuakeDao(
     override fun newSince(sinceMillis: Long): List<DomainQuake> =
         db.quakeQueries.newSince(sinceMillis).executeAsList().map { it.toDomain() }
 
+    /** Commit "since-last-visit summary": see [QuakeStore.newSinceCount]'s own kdoc. */
+    override fun newSinceCount(sinceMillis: Long, minMag: Double): Long =
+        db.quakeQueries.newSinceCount(sinceMillis, minMag).executeAsOne()
+
     /** Task 2 (Plan 5): see [QuakeStore.favoritePlaces]'s own kdoc. */
     override fun favoritePlaces(): Flow<List<DomainFavoritePlace>> =
         db.favoritePlaceQueries.selectAllFavoritePlaces().asFlow().mapToList(dispatcher)

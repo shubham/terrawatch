@@ -19,6 +19,7 @@ import com.yugma.terrawatch.alerts.AlertDigestWorker
 import com.yugma.terrawatch.alerts.enqueueAlertDigestWorker
 import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.data.OnboardingStore
+import com.yugma.terrawatch.data.VisitStore
 import com.yugma.terrawatch.di.ensureKoinStarted
 import com.yugma.terrawatch.location.LocationProvider
 import com.yugma.terrawatch.location.bindLocationPermissionController
@@ -34,6 +35,8 @@ import com.yugma.terrawatch.notifications.openNotificationSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.koin.core.context.GlobalContext
+import kotlin.time.Clock
+import kotlin.time.ExperimentalTime
 
 class MainActivity : ComponentActivity() {
     // Built once per Activity instance (not per onCreate/Koin-guard branch — applicationContext is
@@ -57,6 +60,14 @@ class MainActivity : ComponentActivity() {
     // resolution as homeLocationStore above, for the identical reason (ensureKoinStarted runs
     // mid-onCreate, and enqueueDigestWorkerIfPermitted is called well after that point).
     private val onboardingStore: OnboardingStore by lazy { GlobalContext.get().get() }
+
+    // feat/feed-visit-ux, "since-last-visit summary": same Koin-lazy resolution as
+    // homeLocationStore/onboardingStore above, for the identical reason — onStop() below can fire
+    // well after onCreate has returned (this Activity might have been resumed/paused any number of
+    // times first), so deferring the lookup to first read is safe regardless, but matching the
+    // established pattern here (rather than reading eagerly in onCreate) keeps this class's own
+    // "how do I get a store" convention uniform across all three.
+    private val visitStore: VisitStore by lazy { GlobalContext.get().get() }
 
     // Plan 4 Task 3: the notification tap-through deep link — a non-null id means MainActivity was
     // opened (cold `onCreate`, or a `singleTask` re-front via `onNewIntent`) from a digest
@@ -216,6 +227,27 @@ class MainActivity : ComponentActivity() {
         // every app start (not just first-ever-install) is what picks up a permission grant that
         // happened via system Settings while the app was closed.
         enqueueDigestWorkerIfPermitted()
+    }
+
+    /**
+     * feat/feed-visit-ux, "since-last-visit summary": persists "now" as the end-of-session
+     * reference point [com.yugma.terrawatch.home.HomeViewModel]'s own `visitSummary` StateFlow
+     * reads back on the NEXT process start — see [VisitStore]'s own kdoc for the full read/write
+     * split and why the write specifically belongs here (fires on EVERY tab/screen this
+     * single-Activity app might be showing when backgrounded, not only while Home happens to be
+     * composed — a commonMain composable-scoped `DisposableEffect` the way
+     * `NotificationPermissionCompose.kt`'s `ON_RESUME` hook works would only fire for whichever
+     * screen is CURRENTLY composed, silently missing a backgrounding that happens from History/
+     * Insights/Settings).
+     *
+     * Deliberately NOT written in [onCreate] / on `get()` — see [VisitStore]'s own kdoc for why
+     * that would make "since your last visit" always compare against "just now," defeating the
+     * whole point of the banner.
+     */
+    @OptIn(ExperimentalTime::class)
+    override fun onStop() {
+        super.onStop()
+        visitStore.set(Clock.System.now().toEpochMilliseconds())
     }
 
     private fun enqueueDigestWorkerIfPermitted() {

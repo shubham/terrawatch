@@ -220,6 +220,12 @@ fun HomeScreen(
     val state by viewModel.state.collectAsState()
     val homeLocation by viewModel.homeLocation.collectAsState()
     val newSinceExpand by viewModel.newSinceExpand.collectAsState()
+    // feat/feed-visit-ux, "since-last-visit summary": phone-only, same scoping as newSinceExpand's
+    // own "N NEW" chip above (Task 12's own kdoc: TwoPaneLayout's always-visible list has no
+    // peek/expanded state, and this banner is rendered INSIDE FeedSheet, which only PhoneLayout
+    // mounts) — collected here regardless so PhoneLayout below stays a plain data-in composable,
+    // matching every other ViewModel-fed value on this screen.
+    val visitSummaryText by viewModel.visitSummary.collectAsState()
     // Task 1 (Plan 5), USER REQUIREMENT: the cold-start camera-centering signal + the my-location
     // FAB's own recenter signal — both plain HomeViewModel StateFlows, collected once here (same
     // "collect once at this level, thread the resolved value down" convention every other
@@ -343,6 +349,7 @@ fun HomeScreen(
                 // pop-in while DetailSheet (below, same HomeScreen composition) sits layered on top
                 // of it — see FeedSheet.kt's own kdoc for the full "no animation churn" rule.
                 isDetailOpen = selectedQuake != null,
+                visitSummaryText = visitSummaryText,
             )
         }
         // Task 4 (Plan 3): the settings entry point — a glass chip floating top-right, above
@@ -441,6 +448,9 @@ private fun PhoneLayout(
     // reveal wiring needs to know this (DetailSheet layers on top of this SAME BottomSheetScaffold,
     // which stays mounted/composing underneath it).
     isDetailOpen: Boolean,
+    // feat/feed-visit-ux: HomeViewModel.visitSummary, threaded straight through to FeedSheet — see
+    // this function's own call site (HomeScreen) for why TwoPaneLayout has no equivalent param.
+    visitSummaryText: String?,
 ) {
     val content = state as? HomeUiState.Content
     // Task 10 (item e): the banner's freshness-only verdict — see shouldShowStalenessBanner's own
@@ -489,6 +499,7 @@ private fun PhoneLayout(
                 isLoading = state is HomeUiState.Loading,
                 isSheetExpanded = isSheetExpanded,
                 isDetailOpen = isDetailOpen,
+                visitSummaryText = visitSummaryText,
             )
         },
     ) {
