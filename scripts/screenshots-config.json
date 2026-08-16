@@ -7,21 +7,21 @@
       "headline": "Live quakes worldwide",
       "crop_top": 110,
       "crop_bottom": 104,
-      "note": "Map + live magnitude-colored pins + live feed list underneath - the core landing pitch. crop_top removes the OS status bar (measured: uniform gray 0-108px on this device); crop_bottom removes the OS 3-button nav row (measured: solid band starts ~2296px), NOT the app's own Home/History/Insights tab bar, which stays."
+      "note": "Map + live magnitude-colored pins + live feed list underneath - the core landing pitch. Refreshed on the Plan 5 device pass (98bc1cd8, 2026-08-16): now also shows the my-location FAB and the Home/Tokyo favorite-place quick-switch chips (Plan 5 Tasks 1/2), which the prior capture predated. crop_top removes the OS status bar (measured: uniform gray 0-108px on this device); crop_bottom removes the OS 3-button nav row (measured: solid band starts ~2296px), NOT the app's own Home/History/Insights tab bar, which stays."
     },
     {
       "input": "02-detail-sheet.png",
       "headline": "Every quake, the full picture",
       "crop_top": 110,
       "crop_bottom": 104,
-      "note": "Detail sheet depth: magnitude, time, depth/distance/felt-it stats, honest tsunami line, Share/Dismiss. STALE re: the in-app News section (shipped Plan 4 Task 5, fixed Plan 5 Task 2b) - this capture predates News and shows none of it; headline was written to match what's actually pictured, not the full feature set. No populated-news device capture exists anywhere in this repo yet (only loading/hidden-after-429 states) - pipeline re-runs this slot once one is captured."
+      "note": "Detail sheet depth: magnitude, time, depth/distance/felt-it stats, honest tsunami line, Share/Dismiss. Refreshed on the Plan 5 device pass (98bc1cd8, 2026-08-16): now shows the in-app News section (shipped Plan 4 Task 5, fixed Plan 5 Task 2b) in its honest 'Couldn't load news' + Retry state - the prior capture predated the whole News section and showed none of it. This device pass found GDELT reachability genuinely intermittent from this network (device-side `curl -v` showed the TLS handshake hang past Client Hello, consistent with SNI-level filtering, not an app defect) - a populated-headlines example WAS captured the same pass, just surfaced via Insights' strongest-quake card rather than this exact Home/History-opened detail sheet; see 03-insights.png for that real-headlines evidence. Headline still matches what's pictured."
     },
     {
       "input": "03-insights.png",
       "headline": "Trends at a glance",
       "crop_top": 110,
       "crop_bottom": 104,
-      "note": "Quakes-per-day chart, magnitude breakdown, strongest-quake card (30d window)."
+      "note": "Quakes-per-day chart, magnitude breakdown, strongest-quake card (30d window). Refreshed on the Plan 5 device pass (98bc1cd8, 2026-08-16): now also shows Insights' own 'IN THE NEWS' section POPULATED with real headlines for the pictured M7.7 Indonesia quake (abcnews.com, oneindia.com) - the first populated-news device capture in this repo (prior passes only ever caught loading/hidden-after-429 states)."
     },
     {
       "input": "04-settings-radius-ring.png",
@@ -35,7 +35,7 @@
       "headline": "The full quake archive",
       "crop_top": 110,
       "crop_bottom": 104,
-      "note": "History list with All/M4.5+/M6+ magnitude filters and year filters (2026/2025/All), a populated month section underneath."
+      "note": "History list with All/M4.5+/M6+ magnitude filters and year filters (2026/2025/All), a populated month section underneath. Refreshed on the Plan 5 device pass (98bc1cd8, 2026-08-16) with the M6+ filter selected instead of All - a stronger store shot (real 7.7/7.4/6.9 quakes) that still shows the identical filter chrome."
     },
     {
       "input": "06-notification.png",
