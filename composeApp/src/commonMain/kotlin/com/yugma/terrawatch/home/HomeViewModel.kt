@@ -20,6 +20,7 @@ import com.yugma.terrawatch.model.Quake
 import com.yugma.terrawatch.model.QuakeStatus
 import com.yugma.terrawatch.model.Source
 import com.yugma.terrawatch.model.magnitudeBand
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -112,6 +113,33 @@ class HomeViewModel(
     // of the real persisted store production Koin wiring always supplies explicitly (`AppModule.kt`'s
     // `favoritePlaceStore = get()`).
     private val favoritePlaceStore: FavoritePlaceStore = FavoritePlaceStore(InMemoryQuakeStore()),
+    // Flake-hardening pass (2026-08-16): this class's own three hard-coded `Dispatchers.Default`
+    // crossings (the init{} location/camera-target resolution below, the state collector's
+    // `.flowOn(Dispatchers.Default)`, and [recenterToCurrentLocation]'s own launch) had no seam a
+    // test could pin — see task-flake-hardening-report.md's "pre-existing finding" section for the
+    // ~10-15% `kotlinx.coroutines.test.internal.TestMainDispatcher` `IllegalStateException` this
+    // closes (root-caused via A/B + decompiled sources jar, not guessed: a still-unwinding
+    // real-thread-pool coroutine from one of these three launches racing the NEXT test's
+    // `Dispatchers.setMain()` in the narrow window `HomeViewModelTest`'s own `tearDown()` —
+    // `resetMain()`-before-`cancelAndJoin()`, see that class's kdoc's "Fix Round 1" — leaves open
+    // between the reset and the cancellation actually finishing). Appended as a 9th, DEFAULTED
+    // param — same "doesn't disturb any existing positional construction" reasoning [clock]/
+    // [locationRequester]/[favoritePlaceStore] above already established: `AppModule.kt`'s real Koin
+    // wiring and both androidInstrumentedTest call sites (HomeFlowTest/OnboardingGateTest) construct
+    // this class positionally only up through [alertRuleStore] (then named args), so none of them
+    // need to change to keep compiling. Named `ioDispatcher`, not e.g. `backgroundDispatcher` —
+    // matches [QuakeRepository]'s own established name for this identical "pin the background
+    // dispatcher a test can control" seam (its own `ioDispatcher` ctor param, already relied on by
+    // InsightsViewModelTest/HomeViewModelTest's poll-loop and retention tests), rather than inventing
+    // a second name for the same concept in this codebase. Does NOT reach `QuakeDao.recent()`'s own
+    // hard-coded `.mapToList(Dispatchers.Default)` (a separate, un-pinnable-by-construction hop in a
+    // different module) — deliberately: InsightsViewModelTest's outer suite crosses that identical
+    // DAO-level hop with only a VM/repository-level `ioDispatcher` pin (no DAO-level seam at all) and
+    // is 20/20, and — more directly — that suite has never exhibited this `TestMainDispatcher`
+    // exception at all despite sharing the identical DAO-level crossing, which is the empirical
+    // signal that crossing isn't implicated in this specific race; see the 30x proof after this pin
+    // for the direct confirmation on this class.
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) : ViewModel() {
     private val _state = MutableStateFlow<HomeUiState>(HomeUiState.Loading)
     val state: StateFlow<HomeUiState> = _state
@@ -300,13 +328,14 @@ class HomeViewModel(
             }
         }
 
-        // Task 9: home location, resolved once at startup. Dispatchers.Default because
-        // HomeLocationStore.get() is a synchronous DAO read (SQLDelight) and LocationProvider's
-        // android actual reads a system service — neither belongs on Main. A stored point always
-        // wins over asking the platform again; a freshly-resolved fix gets remembered as home so
-        // this only ever asks the platform once (matches the brief's `get() ?: current()?.also
-        // { set(it) }` — HomeLocationStore.set() is itself an ordinary synchronous DAO write, and
-        // running it here, still on Dispatchers.Default, keeps it off Main too).
+        // Task 9: home location, resolved once at startup. Off Main (ioDispatcher, defaults to
+        // Dispatchers.Default) because HomeLocationStore.get() is a synchronous DAO read
+        // (SQLDelight) and LocationProvider's android actual reads a system service — neither
+        // belongs on Main. A stored point always wins over asking the platform again; a
+        // freshly-resolved fix gets remembered as home so this only ever asks the platform once
+        // (matches the brief's `get() ?: current()?.also { set(it) }` — HomeLocationStore.set() is
+        // itself an ordinary synchronous DAO write, and running it here, still off Main, keeps it
+        // off Main too).
         //
         // Task 1 (Plan 5): this block now ALSO resolves [_startupCameraTarget] — folded into the
         // SAME launch rather than a separate one, since it needs the exact same [stored]/[fix]
@@ -333,7 +362,10 @@ class HomeViewModel(
         // `stored ?: fix?.also { homeLocationStore.set(it) }` write below still only ever fires
         // when [stored] is null, exactly as before — [fix] being eagerly resolved doesn't change
         // WHEN the store gets written, only when the platform gets asked.
-        viewModelScope.launch(Dispatchers.Default) {
+        // Flake-hardening pass (2026-08-16): was a hard-coded Dispatchers.Default — now the
+        // pinnable [ioDispatcher] (defaults to the identical Dispatchers.Default, zero prod
+        // behavior change). See [ioDispatcher]'s own kdoc above for the flake this closes.
+        viewModelScope.launch(ioDispatcher) {
             val stored = homeLocationStore.get()
             val permissionGranted =
                 reduceLocationPermissionState(locationRequester.currentCondition()) == LocationAskUiState.GRANTED
@@ -414,8 +446,8 @@ class HomeViewModel(
             // Fix Round 2 (review finding): pin mapping and the lastFetchedAtMillis() read used to
             // run directly inside collect{}'s lambda — i.e. on Dispatchers.Main, once per
             // recentQuakes() emission. Both now happen inside this upstream .map{}, pushed off
-            // Main via flowOn(Dispatchers.Default); collect{} below only assigns the already-built
-            // result to _state.value.
+            // Main via flowOn(ioDispatcher, defaults to Dispatchers.Default); collect{} below only
+            // assigns the already-built result to _state.value.
             //
             // Task 1 (Plan 3): recentQuakes() itself still returns a single frozen-cutoff Flow
             // (see its own kdoc) — the sliding window lives here, in re-subscribing via
@@ -431,7 +463,9 @@ class HomeViewModel(
                             lastUpdatedMillis = repository.lastFetchedAtMillis(),
                         )
                     }
-                    .flowOn(Dispatchers.Default),
+                    // Flake-hardening pass (2026-08-16): was a hard-coded Dispatchers.Default —
+                    // now the pinnable [ioDispatcher] (defaults identically). See its own kdoc.
+                    .flowOn(ioDispatcher),
                 refreshFailed,
                 // Task 10: the Task 8/Plan 1 TODO dies here — isLive now reflects whether the
                 // EMSC WebSocket is actually open (QuakeRepository.liveConnected ->
@@ -553,7 +587,9 @@ class HomeViewModel(
      * "brief snackbar" treatment applies identically.
      */
     fun recenterToCurrentLocation() {
-        viewModelScope.launch(Dispatchers.Default) {
+        // Flake-hardening pass (2026-08-16): was a hard-coded Dispatchers.Default — now the
+        // pinnable [ioDispatcher] (defaults identically). See its own kdoc above.
+        viewModelScope.launch(ioDispatcher) {
             val fix = locationProvider.current()
             if (fix != null) _recenterTarget.value = fix else _locationUnavailableEvents.emit(Unit)
         }
