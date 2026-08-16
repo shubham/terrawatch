@@ -90,6 +90,13 @@ kotlin {
         }
         androidMain.dependencies {
             implementation(libs.androidx.activity.compose)
+            // feat/feed-visit-ux, "Splash app name": SplashScreen.installSplashScreen(this) in
+            // MainActivity, backing Theme.App.Starting (values/themes.xml)'s
+            // windowSplashScreenBrandingImage - the actual wordmark. AndroidX compat back to
+            // minSdk 26 (the platform SplashScreen API itself only exists on API 31+); androidMain-
+            // only, no jvm/wasmJs equivalent, same per-target-explicit-dependency convention this
+            // file already follows for its other Android-only libraries below.
+            implementation(libs.androidx.core.splashscreen)
             implementation(libs.ktor.client.okhttp)
             implementation(libs.ktor.client.websockets)
             // HOTFIX (Task 6 follow-up): moved here from commonMain. maplibre-compose has no

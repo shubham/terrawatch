@@ -74,6 +74,14 @@ revenueCatPurchasesKmp = "3.5.0"
 # maven-metadata.xml directly (2026-08-15): 119 versions on file, 25.4.0 is the latest (both
 # <release>/<latest> tags agree), last published June 2026.
 playServicesAds = "25.4.0"
+# feat/feed-visit-ux, "Splash app name": androidx.core:core-splashscreen — the AndroidX compat
+# library for the Android 12+ SplashScreen API (needed back to minSdk 26, not just 31+, same
+# "compat back to this app's real floor" reasoning every other AndroidX pin here already follows).
+# Checked dl.google.com's own maven-metadata.xml directly (2026-08-16, same discipline as every
+# other version pin in this file): full list runs 1.0.0-alpha01/02, 1.0.0-beta01/02, 1.0.0-rc01,
+# 1.0.0, 1.0.1, 1.1.0-alpha01/02, 1.1.0-rc01, 1.2.0-alpha01/02, 1.2.0-beta01/02, 1.2.0-rc01, 1.2.0 —
+# i.e. 1.2.0 is the latest STABLE release (both <release>/<latest> tags agree).
+coreSplashscreen = "1.2.0"
 
 [libraries]
 # Task 4 (c): currentWindowAdaptiveInfo()/WindowSizeClass live in the CORE "adaptive" artifact (not
@@ -120,6 +128,7 @@ androidx-compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-mani
 navigation-compose = { module = "org.jetbrains.androidx.navigation:navigation-compose", version.ref = "navigationCompose" }
 revenuecat-purchases-kmp-core = { module = "com.revenuecat.purchases:purchases-kmp-core", version.ref = "revenueCatPurchasesKmp" }
 play-services-ads = { module = "com.google.android.gms:play-services-ads", version.ref = "playServicesAds" }
+androidx-core-splashscreen = { module = "androidx.core:core-splashscreen", version.ref = "coreSplashscreen" }
 
 [plugins]
 kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }

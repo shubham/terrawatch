@@ -9,6 +9,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -120,6 +121,26 @@ class MainActivity : ComponentActivity() {
 
     @OptIn(kotlin.time.ExperimentalTime::class)
     override fun onCreate(savedInstanceState: Bundle?) {
+        // feat/feed-visit-ux, "Splash app name": must run before super.onCreate() — Google's own
+        // splash-screen migration guide (developer.android.com/develop/ui/views/launch/
+        // splash-screen#kotlin) shows this as the first line of onCreate(), same "configure the
+        // Window before decor-view creation" family of constraint enableEdgeToEdge() below is
+        // already under (the two are otherwise unrelated — one sets up the SplashScreen
+        // exit/postSplashScreenTheme handoff, the other configures edge-to-edge insets). Backs
+        // Theme.App.Starting's windowSplashScreenBrandingImage (values/themes.xml) — this app had
+        // no installSplashScreen() call and no custom splash theme at all before this commit, so
+        // Android 12+'s own default splash showed only the launcher icon, never the app name.
+        //
+        // installSplashScreen() is a Kotlin extension function on Activity, but declared as a
+        // member of SplashScreen's companion object (@JvmStatic, so Java callers see a plain
+        // static SplashScreen.installSplashScreen(activity)) — verified against the real
+        // decompiled androidx.core:core-splashscreen:1.2.0 classes.jar via javap (the
+        // `$this$installSplashScreen` receiver-parameter naming in its Kotlin metadata is the
+        // tell) after two other call-site guesses (a plain ComponentActivity extension import,
+        // then an explicit SplashScreen.installSplashScreen(this) static-style call) both failed
+        // to resolve at compile time. The import above pulls the companion member in directly, so
+        // the call below reads as a normal extension-function call on this Activity.
+        installSplashScreen()
         // Plan 4 Task 4 (a): must run before super.onCreate() (Google's own documented ordering —
         // see developer.android.com/develop/ui/compose/system/edge-to-edge) so the very first frame
         // this Activity ever draws is already edge-to-edge, not a legacy-inset frame that then jumps
