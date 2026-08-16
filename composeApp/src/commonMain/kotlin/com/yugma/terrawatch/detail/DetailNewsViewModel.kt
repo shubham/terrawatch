@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yugma.terrawatch.model.Quake
 import com.yugma.terrawatch.network.GdeltClient
+import com.yugma.terrawatch.network.NewsFeature
 import com.yugma.terrawatch.network.NewsResult
 import com.yugma.terrawatch.news.NewsUiState
 import com.yugma.terrawatch.news.usgsEventUrl
@@ -44,8 +45,19 @@ private const val DETAIL_NEWS_MIN_MAG = 5.5
  * quake [NewsUiState.Error] is currently showing for — [pendingQuake] remembers it purely so a
  * Retry tap doesn't need the caller to re-supply the same [Quake] it already handed to
  * [onQuakeSelected].
+ *
+ * Plan 5 (news kill-switch): [newsEnabled] gates BOTH [onQuakeSelected] and [retry] ahead of
+ * everything else those two already check — see [NewsFeature]'s own kdoc for the full "why" and
+ * "how to re-enable." Defaulted to [NewsFeature.ENABLED] (the production wiring in `AppModule.kt`
+ * doesn't pass this parameter at all, so it always gets the real compile-time flag) rather than a
+ * required constructor parameter, so tests can override it to `true` and keep exercising the real
+ * magnitude-floor/fetch/retry logic below even while the flag is OFF in production — see
+ * `DetailNewsViewModelTest`'s own `createVm` helper.
  */
-class DetailNewsViewModel(private val gdeltClient: GdeltClient) : ViewModel() {
+class DetailNewsViewModel(
+    private val gdeltClient: GdeltClient,
+    private val newsEnabled: Boolean = NewsFeature.ENABLED,
+) : ViewModel() {
     private val _newsState = MutableStateFlow<NewsUiState>(NewsUiState.Hidden)
     val newsState: StateFlow<NewsUiState> = _newsState
 
@@ -63,8 +75,18 @@ class DetailNewsViewModel(private val gdeltClient: GdeltClient) : ViewModel() {
      * state change causing a re-render while the sheet stays open on the same selection) is a
      * no-op — it must not re-flash [NewsUiState.Loading] or re-fetch identical news. A DIFFERENT id
      * (including a transition to/from `null`) always cancels whatever fetch was in flight first.
+     *
+     * Plan 5: [newsEnabled] is checked FIRST, ahead of the idempotent-re-entry/magnitude-floor
+     * logic above — disabled means Hidden unconditionally, regardless of what's selected or
+     * re-selected, and (just as importantly) [fetch] is never reached, so [gdeltClient] never sees
+     * a call. No `job`/`lastQuakeId`/`pendingQuake` bookkeeping happens on this path either, since
+     * there is never anything in flight to cancel or remember.
      */
     fun onQuakeSelected(quake: Quake?) {
+        if (!newsEnabled) {
+            _newsState.value = NewsUiState.Hidden
+            return
+        }
         if (quake?.id == lastQuakeId) return
         lastQuakeId = quake?.id
         pendingQuake = quake
@@ -79,8 +101,14 @@ class DetailNewsViewModel(private val gdeltClient: GdeltClient) : ViewModel() {
     /** Task 2b: [NewsUiState.Error]'s Retry action — re-issues the exact same fetch [pendingQuake]
      * (the quake [onQuakeSelected] most recently resolved past the magnitude floor for) already
      * describes. A no-op if nothing is pending (defensive only — the Retry row only ever renders
-     * from [NewsUiState.Error], which is unreachable without a [pendingQuake] already set). */
+     * from [NewsUiState.Error], which is unreachable without a [pendingQuake] already set).
+     *
+     * Plan 5: also a no-op when [newsEnabled] is off — belt-and-suspenders alongside
+     * [onQuakeSelected]'s own guard, which already keeps [pendingQuake] permanently `null` on that
+     * path, but stated explicitly here too so this method's own "never calls GDELT while disabled"
+     * guarantee doesn't rely on a reader tracing [pendingQuake]'s initialization elsewhere. */
     fun retry() {
+        if (!newsEnabled) return
         pendingQuake?.let(::fetch)
     }
 

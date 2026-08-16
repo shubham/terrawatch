@@ -46,8 +46,14 @@ class DetailNewsViewModelTest {
         createdViewModels.clear()
     }
 
-    private fun createVm(engine: MockEngine): DetailNewsViewModel =
-        DetailNewsViewModel(GdeltClient(HttpClient(engine))).also { createdViewModels += it }
+    // Plan 5 (news kill-switch): `newsEnabled` defaults to `true` HERE (the test helper's own
+    // default), deliberately the opposite of the production default (`NewsFeature.ENABLED`, which
+    // is `false` — see that object's own kdoc) — every pre-existing test below calls
+    // `createVm(engine)` unchanged and keeps exercising the real fetch/floor/retry logic, since
+    // that's what all of them are actually testing. The flag-OFF behavior itself gets its own
+    // dedicated tests further down, which pass `newsEnabled = false` explicitly.
+    private fun createVm(engine: MockEngine, newsEnabled: Boolean = true): DetailNewsViewModel =
+        DetailNewsViewModel(GdeltClient(HttpClient(engine)), newsEnabled = newsEnabled).also { createdViewModels += it }
 
     private fun quake(id: String = "us1", mag: Double?, place: String = "Test Place") = Quake(
         id = id, timeMillis = 1_000_000L, lat = 1.0, lon = 2.0, depthKm = 5.0, mag = mag,
@@ -197,5 +203,72 @@ class DetailNewsViewModelTest {
             cancelAndIgnoreRemainingEvents()
         }
         assertEquals(1, callCount, "an identical re-selection must not trigger a second GDELT fetch")
+    }
+
+    // --- Plan 5, news kill-switch (USER DECISION, 2026-08-16): NewsFeature.ENABLED = false in
+    // production -- see that object's own kdoc (core:network's GdeltClient.kt) for the full
+    // rationale. These tests prove the ViewModel-level guard both when forced off explicitly and,
+    // separately, under the REAL shipped default (no override at all).
+
+    @Test fun `flag OFF -- a quake well above the magnitude floor still never calls GDELT, state stays Hidden`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        var called = false
+        val vm = createVm(MockEngine { called = true; respond(THREE_ARTICLES, HttpStatusCode.OK) }, newsEnabled = false)
+        vm.newsState.test {
+            assertEquals(NewsUiState.Hidden, awaitItem())
+            vm.onQuakeSelected(quake(mag = 7.5))
+            expectNoEvents()
+            cancelAndIgnoreRemainingEvents()
+        }
+        assertTrue(!called, "the flag being off must block every fetch, regardless of magnitude")
+    }
+
+    @Test fun `flag OFF -- selecting, then null, then selecting again all stay Hidden with no fetch`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        var called = false
+        val vm = createVm(MockEngine { called = true; respond(THREE_ARTICLES, HttpStatusCode.OK) }, newsEnabled = false)
+        vm.newsState.test {
+            assertEquals(NewsUiState.Hidden, awaitItem())
+            vm.onQuakeSelected(quake(id = "us1", mag = 6.5))
+            expectNoEvents()
+            vm.onQuakeSelected(null)
+            expectNoEvents()
+            vm.onQuakeSelected(quake(id = "us2", mag = 7.0))
+            expectNoEvents()
+            cancelAndIgnoreRemainingEvents()
+        }
+        assertTrue(!called, "no selection sequence may trigger a fetch while the flag is off")
+    }
+
+    @Test fun `flag OFF -- retry is also a no-op, never calls GDELT`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        var called = false
+        val vm = createVm(MockEngine { called = true; respond(THREE_ARTICLES, HttpStatusCode.OK) }, newsEnabled = false)
+        vm.newsState.test {
+            assertEquals(NewsUiState.Hidden, awaitItem())
+            vm.onQuakeSelected(quake(mag = 7.5))
+            vm.retry()
+            expectNoEvents()
+            cancelAndIgnoreRemainingEvents()
+        }
+        assertTrue(!called, "retry() must also never call GDELT while the flag is off")
+    }
+
+    // The one test in this suite that does NOT force `newsEnabled` either way -- it constructs
+    // DetailNewsViewModel exactly as `AppModule.kt`'s real Koin wiring does (gdeltClient only),
+    // so this is the single place actually proving today's real shipped default
+    // (NewsFeature.ENABLED) is `false`, not just that the ViewModel's guard works when told to.
+    @Test fun `production default -- with no override, the real NewsFeature flag blocks every fetch`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        var called = false
+        val vm = DetailNewsViewModel(GdeltClient(HttpClient(MockEngine { called = true; respond(THREE_ARTICLES, HttpStatusCode.OK) })))
+            .also { createdViewModels += it }
+        vm.newsState.test {
+            assertEquals(NewsUiState.Hidden, awaitItem())
+            vm.onQuakeSelected(quake(mag = 7.5))
+            expectNoEvents()
+            cancelAndIgnoreRemainingEvents()
+        }
+        assertTrue(!called, "NewsFeature.ENABLED must be false today -- flip it back only per a real user decision")
     }
 }

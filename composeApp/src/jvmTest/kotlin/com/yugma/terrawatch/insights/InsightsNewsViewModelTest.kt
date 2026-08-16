@@ -30,6 +30,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 private const val DAY = 86_400_000L
 
@@ -62,14 +63,22 @@ class InsightsNewsViewModelTest {
         return QuakeRepository(UsgsApi(HttpClient(engine)), EmscLiveSource(HttpClient(engine)), dao, clock = { 1L })
     }
 
+    // Plan 5 (news kill-switch): `newsEnabled` defaults to `true` HERE (the test helper's own
+    // default), deliberately the opposite of the production default (`NewsFeature.ENABLED`, which
+    // is `false` — see that object's own kdoc, core:network's GdeltClient.kt) — every pre-existing
+    // test below calls `createVm(dao, ...)` unchanged and keeps exercising the real window/floor/
+    // fetch/retry logic, since that's what all of them are actually testing. The flag-OFF behavior
+    // itself gets its own dedicated tests further down, which pass `newsEnabled = false` explicitly.
     private fun createVm(
         dao: QuakeDao,
         gdeltResponse: String = THREE_ARTICLES,
         gdeltStatus: HttpStatusCode = HttpStatusCode.OK,
         nowMillis: Long = 100 * DAY,
+        newsEnabled: Boolean = true,
     ): InsightsNewsViewModel {
         val gdeltClient = GdeltClient(HttpClient(MockEngine { respond(gdeltResponse, gdeltStatus) }))
-        return InsightsNewsViewModel(repository(dao), gdeltClient, clock = { nowMillis }).also { createdViewModels += it }
+        return InsightsNewsViewModel(repository(dao), gdeltClient, clock = { nowMillis }, newsEnabled = newsEnabled)
+            .also { createdViewModels += it }
     }
 
     private fun quake(id: String, timeMillis: Long, mag: Double?, place: String = "Test $id") = Quake(
@@ -184,7 +193,7 @@ class InsightsNewsViewModelTest {
                 },
             ),
         )
-        val vm = InsightsNewsViewModel(repository(dao), gdeltClient, clock = { now }).also { createdViewModels += it }
+        val vm = InsightsNewsViewModel(repository(dao), gdeltClient, clock = { now }, newsEnabled = true).also { createdViewModels += it }
         vm.newsState.test {
             assertEquals(NewsUiState.Error, awaitSettled())
 
@@ -226,5 +235,56 @@ class InsightsNewsViewModelTest {
             assertIs<NewsUiState.Content>(awaitSettled())
             cancelAndIgnoreRemainingEvents()
         }
+    }
+
+    // --- Plan 5, news kill-switch (USER DECISION, 2026-08-16): NewsFeature.ENABLED = false in
+    // production -- see that object's own kdoc (core:network's GdeltClient.kt) for the full
+    // rationale. These tests prove the ViewModel-level guard both when forced off explicitly and,
+    // separately, under the REAL shipped default (no override at all) -- same split
+    // DetailNewsViewModelTest's own identical section draws.
+
+    @Test fun `flag OFF -- a genuine M6+ candidate within the window still never calls GDELT, stays Hidden`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val dao = freshDao()
+        val now = 100 * DAY
+        dao.upsert(quake("big", timeMillis = now, mag = 7.5))
+        val vm = createVm(dao, nowMillis = now, newsEnabled = false)
+        vm.newsState.test {
+            assertEquals(NewsUiState.Hidden, awaitSettled())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `flag OFF -- retry is also a no-op, never calls GDELT`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val dao = freshDao()
+        val now = 100 * DAY
+        dao.upsert(quake("big", timeMillis = now, mag = 7.5))
+        val vm = createVm(dao, nowMillis = now, newsEnabled = false)
+        vm.newsState.test {
+            assertEquals(NewsUiState.Hidden, awaitSettled())
+            vm.retry()
+            expectNoEvents()
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    // The one test in this suite that does NOT force `newsEnabled` either way -- it constructs
+    // InsightsNewsViewModel exactly as `AppModule.kt`'s real Koin wiring does (no fourth argument),
+    // so this is the single place actually proving today's real shipped default
+    // (NewsFeature.ENABLED) is `false`, not just that the ViewModel's guard works when told to.
+    @Test fun `production default -- with no override, the real NewsFeature flag blocks every fetch for a genuine M6+ candidate`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val dao = freshDao()
+        val now = 100 * DAY
+        dao.upsert(quake("big", timeMillis = now, mag = 7.5))
+        var called = false
+        val gdeltClient = GdeltClient(HttpClient(MockEngine { called = true; respond(THREE_ARTICLES, HttpStatusCode.OK) }))
+        val vm = InsightsNewsViewModel(repository(dao), gdeltClient, clock = { now }).also { createdViewModels += it }
+        vm.newsState.test {
+            assertEquals(NewsUiState.Hidden, awaitSettled())
+            cancelAndIgnoreRemainingEvents()
+        }
+        assertTrue(!called, "NewsFeature.ENABLED must be false today -- flip it back only per a real user decision")
     }
 }

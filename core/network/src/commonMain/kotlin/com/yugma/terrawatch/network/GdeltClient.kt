@@ -17,6 +17,49 @@ import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 /**
+ * Plan 5 (news kill-switch), USER DECISION (2026-08-16, binding): compile-time OFF switch for the
+ * entire "In the news" feature — [GdeltClient]/[NewsArticle]/[NewsResult] here, plus
+ * [com.yugma.terrawatch.detail.DetailNewsViewModel] and [com.yugma.terrawatch.insights.
+ * InsightsNewsViewModel] (`composeApp`), both of which read [ENABLED] via their own defaulted
+ * `newsEnabled` constructor parameter.
+ *
+ * GDELT is unreliable from this app's real target networks — a corporate Zscaler proxy SNI-blocks
+ * the DOC API outright on some of them, and even where it isn't blocked outright GDELT 429s
+ * aggressively under shared egress IPs (live-reproduced repeatedly: the Task 5 spike's own third
+ * query, task-2b-news-fix-report.md's live A/B, and this plan's own device-pass reports all hit
+ * it) — badly enough that the user asked to stop even ATTEMPTING the call, not just to keep
+ * rendering an honest "Couldn't load news" row every time it fails. [ENABLED] = `false` is exactly
+ * that: OFF means neither ViewModel above ever calls [GdeltClient.searchEarthquakeNews] (no
+ * network attempt at all, successful or not), and both news surfaces
+ * ([com.yugma.terrawatch.detail.DetailSheet]'s section, [com.yugma.terrawatch.insights.
+ * InsightsScreen]'s card) render nothing — no header, no divider, no reserved gap. That last part
+ * needed no UI change of its own: both composables already guard their entire news block behind
+ * `newsState != NewsUiState.Hidden` (see either composable's own kdoc), and a disabled ViewModel
+ * simply never leaves [com.yugma.terrawatch.news.NewsUiState.Hidden] — the exact same case as "no
+ * quake selected yet" or "below the feature's own magnitude floor."
+ *
+ * Everything else about this feature is UNCHANGED: [GdeltClient] itself and its own TDD suite
+ * (`GdeltClientTest`, which calls [searchEarthquakeNews] directly and never goes through either
+ * ViewModel) don't reference this flag at all; both ViewModels' own test suites force it back ON
+ * via that same constructor parameter so their real fetch/floor/dedupe logic stays covered, not
+ * deleted alongside the switch.
+ *
+ * Deliberately a single `const val`, not a remote-config flag, a `BuildConfig` field (this module
+ * has none — see `SettingsScreen.kt`'s own `APP_VERSION` kdoc for why KMP commonMain can't reach
+ * Android's generated one anyway), or a runtime network-health probe: GDELT's unreliability here is
+ * a property of the USER'S OWN networks, not something worth auto-detecting, varying by build
+ * type, or re-checking live — a plain recompile is the honest, correct re-enable path if/when it
+ * stops being true.
+ *
+ * TO RE-ENABLE: flip this to `true` and rebuild. Nothing else needs to change — both ViewModels'
+ * pre-existing magnitude-floor gating (`DETAIL_NEWS_MIN_MAG`/`INSIGHTS_NEWS_MIN_MAG`) takes back
+ * over immediately, unchanged.
+ */
+object NewsFeature {
+    const val ENABLED = false
+}
+
+/**
  * Plan 4 Task 5: one GDELT DOC 2.0 API article — parsed down to exactly the four fields the
  * DetailSheet/Insights "In the news" surfaces show (title, domain, relative time via
  * [seenAtMillis]) plus [url] for the tap-through `ACTION_VIEW`. GDELT's own raw article record

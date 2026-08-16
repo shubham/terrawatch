@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.yugma.terrawatch.data.QuakeRepository
 import com.yugma.terrawatch.model.Quake
 import com.yugma.terrawatch.network.GdeltClient
+import com.yugma.terrawatch.network.NewsFeature
 import com.yugma.terrawatch.network.NewsResult
 import com.yugma.terrawatch.news.NewsUiState
 import com.yugma.terrawatch.news.usgsEventUrl
@@ -45,11 +46,20 @@ private const val INSIGHTS_NEWS_WINDOW_DAYS = 7L
  * strongest M6+ candidate hasn't actually changed — both a UX nicety (no flicker on unrelated
  * arrivals) and, per this spike's own finding (task-5-report.md), a real reduction in how often this
  * app calls GDELT's rate-limited endpoint for a result it already has.
+ *
+ * Plan 5 (news kill-switch): [newsEnabled] gates [recompute] and [retry] ahead of everything else
+ * either already checks — see [NewsFeature]'s own kdoc for the full "why" and "how to re-enable."
+ * Defaulted to [NewsFeature.ENABLED] (production's own `AppModule.kt` wiring doesn't pass this
+ * parameter, so it always gets the real compile-time flag) rather than a required constructor
+ * parameter, so tests can override it to `true` and keep exercising the real window/floor/fetch/
+ * retry logic below even while the flag is OFF in production — see
+ * `InsightsNewsViewModelTest`'s own `createVm` helper.
  */
 class InsightsNewsViewModel(
     private val repository: QuakeRepository,
     private val gdeltClient: GdeltClient,
     private val clock: () -> Long,
+    private val newsEnabled: Boolean = NewsFeature.ENABLED,
 ) : ViewModel() {
     // Starts at Loading, NOT Hidden — matching InsightsViewModel's own `_state` default (that
     // class's kdoc: initial value is InsightsUiState.Loading, never treated as a settled state).
@@ -73,7 +83,19 @@ class InsightsNewsViewModel(
         }
     }
 
+    /**
+     * Plan 5: [newsEnabled] is checked FIRST, ahead of the window/floor logic below — disabled
+     * means Hidden unconditionally, without ever calling [QuakeRepository.strongest] (no point
+     * running that query for an answer this method won't act on) and, just as importantly, without
+     * [fetch] ever being reached, so [gdeltClient] never sees a call.
+     */
     private suspend fun recompute() {
+        if (!newsEnabled) {
+            lastQuakeId = null
+            pendingCandidate = null
+            _newsState.value = NewsUiState.Hidden
+            return
+        }
         val sinceMillis = clock() - INSIGHTS_NEWS_WINDOW_DAYS * DAY_MILLIS
         val candidate = repository.strongest(sinceMillis)?.takeIf { (it.mag ?: 0.0) >= INSIGHTS_NEWS_MIN_MAG }
         if (candidate == null) {
@@ -91,8 +113,13 @@ class InsightsNewsViewModel(
      * same M6+/7d candidate [recompute] most recently resolved. A no-op if nothing is pending
      * (defensive only — see [DetailNewsViewModel.retry]'s identical reasoning). Launched explicitly
      * (unlike [recompute], which already runs inside [init]'s own collector coroutine) since a user
-     * tap arrives from outside that flow. */
+     * tap arrives from outside that flow.
+     *
+     * Plan 5: also a no-op when [newsEnabled] is off, same belt-and-suspenders reasoning as
+     * [DetailNewsViewModel.retry]'s identical guard — [recompute]'s own guard already keeps
+     * [pendingCandidate] permanently `null` on that path. */
     fun retry() {
+        if (!newsEnabled) return
         pendingCandidate?.let { candidate -> viewModelScope.launch { fetch(candidate) } }
     }
 
