@@ -31,7 +31,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,6 +48,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.yugma.terrawatch.alerts.AlertDigestScheduler
 import com.yugma.terrawatch.data.ThemeSetting
 import com.yugma.terrawatch.location.CityPickerDialog
@@ -61,8 +64,6 @@ import com.yugma.terrawatch.model.FavoritePlace
 import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.notifications.NotificationAlertsUiState
 import com.yugma.terrawatch.notifications.NotificationPermissionRequester
-import com.yugma.terrawatch.notifications.reduceNotificationPermissionState
-import com.yugma.terrawatch.notifications.rememberNotificationCondition
 import com.yugma.terrawatch.ui.format.formatCoordinates
 import com.yugma.terrawatch.ui.format.formatCount
 import com.yugma.terrawatch.ui.format.formatMagnitude
@@ -183,6 +184,24 @@ fun SettingsScreen(
     val isPlusActive by viewModel.isPlusActive.collectAsState()
     // Task 2 (Plan 5): the Places section's own favorites list.
     val favorites by viewModel.favorites.collectAsState()
+    // Fix (post-Plan-5 tail, RESULTS.md round2 concern #6): the ALERTS row's live-refresh pair —
+    // see SettingsViewModel.refreshAlertsState's own kdoc for why these two moved off
+    // AlertsPermissionRow's own former local remember/LaunchedEffect state and onto the ViewModel.
+    val alertsUiState by viewModel.alertsUiState.collectAsState()
+    val alertsEnqueued by viewModel.alertsEnqueued.collectAsState()
+    // Same ON_RESUME LifecycleEventObserver pattern `rememberNotificationCondition`/
+    // `rememberLocationCondition` (notifications/location packages) already establish — matched
+    // here rather than reusing either helper directly because THIS refresh needs to drive the
+    // ViewModel's own refreshAlertsState() (a real side effect, not just a local recomposition),
+    // and needs no return value of its own the way those two composables do.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, viewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshAlertsState()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     var showCityPicker by remember { mutableStateOf(false) }
     // Task 2 (Plan 5): a SEPARATE flag from showCityPicker above — this one opens CityPickerDialog
     // in its "add favorite" reuse mode (onCityPicked non-null), never home's own "Change" mode; the
@@ -208,7 +227,7 @@ fun SettingsScreen(
                     Spacer(Modifier.height(16.dp))
                     MinMagSlider(minMag = minMag, onMinMagChange = viewModel::setMinMag)
                     Spacer(Modifier.height(16.dp))
-                    AlertsPermissionRow()
+                    AlertsPermissionRow(uiState = alertsUiState, enqueued = alertsEnqueued)
                 }
                 SettingsCard {
                     // Task 2 (Plan 5): "PLACE" -> "PLACES" — this section now covers home AND every
@@ -395,11 +414,21 @@ private fun MinMagSlider(minMag: Double, onMinMagChange: (Double) -> Unit, modif
 /**
  * Task 3 (Plan 4): the ALERTS section's permission/worker-state row — "On"/"Off"
  * ([alertsRowStatusText]) plus, when off, an explainer and a Settings deep-link
- * ([alertsRowExplainer]). [rememberNotificationCondition] is what keeps this live across a visit
- * to system Settings and back (see that function's own kdoc); [AlertDigestScheduler.isEnqueued] is
- * re-queried every time [condition] itself changes (a permission flip is the one thing that could
- * plausibly change whether the worker is enqueued too, e.g. `MainActivity`'s own grant-callback
- * enqueue call landing right after this row last read `enqueued`).
+ * ([alertsRowExplainer]).
+ *
+ * Fix (post-Plan-5 tail, RESULTS.md round2 concern #6): [uiState]/[enqueued] are now passed in from
+ * `SettingsScreen`'s own [SettingsViewModel.alertsUiState]/[SettingsViewModel.alertsEnqueued]
+ * (`collectAsState()` at that composable's top level, same "SettingsScreen collects, children get
+ * plain params" shape every other section of this screen already uses — see
+ * [nearbyRadiusKm]/[minMag]/[homeLocation]/etc. at that call site) rather than read locally via
+ * `rememberNotificationCondition` + a bare `LaunchedEffect` the way this row used to. See
+ * [SettingsViewModel.refreshAlertsState]'s own kdoc for the device-verified bug that forced the
+ * move: a permission grant made through system Settings (this row's own "Open Settings" deep link)
+ * needs BOTH a re-read AND a one-time "ensure the worker's actually enqueued" side effect, which a
+ * bare composable-local read has no good place to own idempotently across recompositions.
+ * [requester]/[scheduler] stay local `koinInject()`s regardless — they're still the right shape for
+ * the two ACTIONS this row triggers directly (the Settings deep-link tap, the debug long-press),
+ * neither of which is the live-state-read concern that moved.
  *
  * Controller ruling: unlike onboarding step 3 (`OnboardingScreen.kt`'s own `NotificationsAskStep`),
  * this row NEVER re-triggers the in-app OS ask dialog — both [NotificationAlertsUiState.CAN_ASK]
@@ -425,13 +454,13 @@ private fun MinMagSlider(minMag: Double, onMinMagChange: (Double) -> Unit, modif
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun AlertsPermissionRow(modifier: Modifier = Modifier) {
+private fun AlertsPermissionRow(
+    uiState: NotificationAlertsUiState,
+    enqueued: Boolean,
+    modifier: Modifier = Modifier,
+) {
     val requester = koinInject<NotificationPermissionRequester>()
     val scheduler = koinInject<AlertDigestScheduler>()
-    val condition = rememberNotificationCondition(requester)
-    val uiState = reduceNotificationPermissionState(condition)
-    var enqueued by remember { mutableStateOf(false) }
-    LaunchedEffect(condition) { enqueued = scheduler.isEnqueued() }
 
     Column(
         modifier

@@ -16,6 +16,8 @@ import com.yugma.terrawatch.model.FavoriteAlertType
 import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.monetization.AlwaysFreeEntitlements
 import com.yugma.terrawatch.monetization.EntitlementsProvider
+import com.yugma.terrawatch.notifications.NotificationAlertsUiState
+import com.yugma.terrawatch.notifications.NotificationPermissionCondition
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -75,9 +77,24 @@ class SettingsViewModelTest {
         // defaulted to the real Dispatchers.Default (compile-safe), every test below passes its own
         // UnconfinedTestDispatcher explicitly instead.
         ioDispatcher: CoroutineDispatcher = Dispatchers.Default,
+        // Fix (post-Plan-5 tail): same "add a new param, default it" shape as ioDispatcher just
+        // above -- see SettingsViewModel's own kdoc for why these 3 are function types, not the
+        // concrete NotificationPermissionRequester/AlertDigestScheduler classes.
+        readNotificationCondition: () -> NotificationPermissionCondition = { NotificationPermissionCondition.PRE_33 },
+        isDigestEnqueued: suspend () -> Boolean = { false },
+        ensureDigestEnqueued: () -> Unit = {},
     ): SettingsViewModel =
-        SettingsViewModel(alertRuleStore, themeStore, homeLocationStore, entitlementsProvider, favoritePlaceStore, ioDispatcher)
-            .also { createdViewModels += it }
+        SettingsViewModel(
+            alertRuleStore,
+            themeStore,
+            homeLocationStore,
+            entitlementsProvider,
+            favoritePlaceStore,
+            ioDispatcher,
+            readNotificationCondition,
+            isDigestEnqueued,
+            ensureDigestEnqueued,
+        ).also { createdViewModels += it }
 
     private fun freshDao(): QuakeDao {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
@@ -335,5 +352,105 @@ class SettingsViewModelTest {
             cancelAndIgnoreRemainingEvents()
         }
         assertEquals(true, vm.canAddFavorite())
+    }
+
+    // --- Fix (post-Plan-5 tail, RESULTS.md round2 concern #6): ALERTS row live refresh -------------
+    //
+    // Device-verified root cause (98bc1cd8, Android 14, fresh install): granting POST_NOTIFICATIONS
+    // through the EXTERNAL system Settings page and returning via recents (no app restart) left
+    // Settings' "Alerts: Off" line stuck on "Off" even though the permission condition itself had
+    // genuinely become GRANTED -- confirmed via the explainer/"Open Settings" button correctly
+    // disappearing (proving reduceNotificationPermissionState's own condition->uiState half already
+    // worked) while the status text stayed wrong (proving `enqueued` was the actual stale half:
+    // nothing had ever called the one function that schedules the digest worker mid-session). These
+    // tests TDD the ViewModel-level fix: a fake, flippable-between-calls condition reader plus a
+    // spy `ensureDigestEnqueued` stand in for the two real platform calls neither jvm actual can
+    // fake directly (see SettingsViewModel's own kdoc on its 3 new constructor params).
+
+    @Test fun `alertsUiState reflects the condition read at construction`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val vm = createVm(
+            ioDispatcher = testDispatcher,
+            readNotificationCondition = { NotificationPermissionCondition.PERMANENTLY_DENIED },
+        )
+        vm.alertsUiState.test {
+            assertEquals(NotificationAlertsUiState.NEEDS_SETTINGS, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `refreshAlertsState re-reads a condition that changed since construction`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        var fakeCondition = NotificationPermissionCondition.PERMANENTLY_DENIED
+        val vm = createVm(ioDispatcher = testDispatcher, readNotificationCondition = { fakeCondition })
+        vm.alertsUiState.test {
+            assertEquals(NotificationAlertsUiState.NEEDS_SETTINGS, awaitItem())
+            // Simulates a grant made in system Settings while this screen was merely paused --
+            // the fake flips its answer here, same as the real requester would after the grant.
+            fakeCondition = NotificationPermissionCondition.GRANTED
+            vm.refreshAlertsState()
+            assertEquals(NotificationAlertsUiState.ENABLED, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `refreshAlertsState leaves alertsUiState untouched when the condition hasn't changed`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val vm = createVm(
+            ioDispatcher = testDispatcher,
+            readNotificationCondition = { NotificationPermissionCondition.DENIED },
+        )
+        vm.alertsUiState.test {
+            assertEquals(NotificationAlertsUiState.CAN_ASK, awaitItem())
+            vm.refreshAlertsState()
+            expectNoEvents()
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `refreshAlertsState ensures the digest worker is enqueued once the condition becomes ENABLED`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        var fakeCondition = NotificationPermissionCondition.DENIED
+        var fakeEnqueued = false
+        var ensureCallCount = 0
+        val vm = createVm(
+            ioDispatcher = testDispatcher,
+            readNotificationCondition = { fakeCondition },
+            isDigestEnqueued = { fakeEnqueued },
+            ensureDigestEnqueued = {
+                ensureCallCount++
+                fakeEnqueued = true
+            },
+        )
+        vm.alertsEnqueued.test {
+            assertEquals(false, awaitItem())
+            fakeCondition = NotificationPermissionCondition.GRANTED
+            vm.refreshAlertsState()
+            assertEquals(true, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+        assertEquals(1, ensureCallCount)
+    }
+
+    @Test fun `refreshAlertsState never calls ensureDigestEnqueued while the condition is still not enabled`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        var ensureCallCount = 0
+        val vm = createVm(
+            ioDispatcher = testDispatcher,
+            readNotificationCondition = { NotificationPermissionCondition.DENIED },
+            ensureDigestEnqueued = { ensureCallCount++ },
+        )
+        vm.alertsEnqueued.test {
+            awaitItem()
+            vm.refreshAlertsState()
+            expectNoEvents()
+            cancelAndIgnoreRemainingEvents()
+        }
+        assertEquals(0, ensureCallCount)
     }
 }

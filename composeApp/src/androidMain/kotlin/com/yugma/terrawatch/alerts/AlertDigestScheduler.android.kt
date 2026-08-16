@@ -122,4 +122,13 @@ actual class AlertDigestScheduler {
         if (!isDebugTriggerAvailable()) return
         WorkManager.getInstance(appContext).enqueue(OneTimeWorkRequestBuilder<AlertDigestWorker>().build())
     }
+
+    /** Fix (post-Plan-5 tail): reuses [enqueueAlertDigestWorker] verbatim — the exact call
+     * `MainActivity.onCreate`'s own cold-start `enqueueDigestWorkerIfPermitted` already makes, now
+     * ALSO reachable mid-session once [com.yugma.terrawatch.settings.SettingsViewModel.
+     * refreshAlertsState] finds the permission condition newly `ENABLED`. See this method's own
+     * expect-side kdoc (`AlertDigestScheduler.kt`) for the full device-verified root cause. */
+    actual fun ensureEnqueued() {
+        enqueueAlertDigestWorker(appContext)
+    }
 }

@@ -34,4 +34,26 @@ expect class AlertDigestScheduler() {
      * have to wait for the periodic 45-minute cadence to see a real notification. No-op unless
      * [isDebugTriggerAvailable]. */
     fun triggerNow()
+
+    /**
+     * Fix (post-Plan-5 tail, RESULTS.md round2 concern #6): ensures the REAL periodic digest
+     * schedule is enqueued — android's actual just calls the same `enqueueAlertDigestWorker`
+     * `MainActivity.onCreate` already calls at cold start, so this is safe to call any number of
+     * times (that function's own `ExistingPeriodicWorkPolicy.UPDATE` makes a repeat call a no-op
+     * wherever nothing about the request actually changed).
+     *
+     * Device-verified root cause this closes (98bc1cd8, Android 14, fresh install): granting
+     * POST_NOTIFICATIONS through the EXTERNAL system Settings page (this app's own "Open Settings"
+     * deep link from Settings' ALERTS row, or a manual visit) and returning via recents — WITHOUT
+     * an app restart — never runs `MainActivity.onCreate`'s cold-start
+     * `enqueueDigestWorkerIfPermitted` (onCreate doesn't re-run on a mere resume) and never fires
+     * `requestNotificationPermission`'s `ActivityResultCallback` either (that only fires for the
+     * IN-APP OS dialog flow, never for a grant made outside the app). [isEnqueued] was already
+     * correctly, honestly reporting `false` in that scenario — the worker really was never
+     * scheduled — but nothing ever called the one function that would fix that mid-session. See
+     * [com.yugma.terrawatch.settings.SettingsViewModel.refreshAlertsState]'s own kdoc for the
+     * caller-side half of this fix (the "condition just became ENABLED" check that decides WHEN to
+     * call this).
+     */
+    fun ensureEnqueued()
 }
