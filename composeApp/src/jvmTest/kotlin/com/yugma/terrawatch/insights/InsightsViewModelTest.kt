@@ -38,6 +38,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.time.Duration.Companion.seconds
 
 private const val DAY = 86_400_000L
 
@@ -45,6 +46,27 @@ class InsightsViewModelTest {
     // Same leaked-coroutine/flake precedent as HistoryViewModelTest/HomeViewModelTest's own
     // createVm/tearDown (see those files' kdoc) - InsightsViewModel's two init{} collectors are not
     // children of any one test's runTest{} coroutine.
+    //
+    // Flake-hardening pass (2026-08-16, CI run 31938226287 -- AssertionError on `period flip to 30
+    // days recomputes against the wider window`, always green locally): the gap this pass closes is
+    // NOT this teardown -- it was already correct -- but [repository]/[createVm] below never pinned
+    // QuakeRepository's `ioDispatcher`, unlike [InsightsDensityBackfillTest] just below in this same
+    // file, which already ports exactly this fix (see that class's own kdoc for the original
+    // reasoning: "a real Dispatchers.Default hop races this test's own assertions on an uncontrolled
+    // thread"). Left unpinned, every `computeContent()` call (on VM construction AND on every
+    // [InsightsViewModel.setPeriod]/`retry()`) sends `quakesPerDay`/`bandDistribution`/`strongest`
+    // each through their own real, independent `Dispatchers.Default` hop -- three uncoordinated
+    // cross-thread round trips per recompute, on a dispatcher this test cannot schedule. On a
+    // starved CI runner that is enough real-thread nondeterminism to let `period flip...`'s
+    // `assertIs<Loading>(awaitItem())` observe something other than the expected shape. Every test
+    // below now builds its OWN `UnconfinedTestDispatcher` and threads it through as `ioDispatcher`
+    // (same instance backing `Dispatchers.Main`), collapsing those hops back onto the one scheduler
+    // every assertion here already depends on -- a structural fix (removes the actual cross-thread
+    // race), not a timing one. `test(timeout = 30.seconds)` is added on top as a second, independent
+    // line of defense: [InsightsViewModel]'s SECOND init{} collector
+    // (`repository.recentQuakes().drop(1).conflate()...`) is backed by `QuakeDao.recent()`, which
+    // hard-codes `.mapToList(Dispatchers.Default)` regardless of `ioDispatcher` -- un-pinnable by
+    // construction, same trap HomeViewModelTest's own poll-loop test documents (commit 5e9e922).
     private val createdViewModels = mutableListOf<InsightsViewModel>()
 
     @AfterTest fun tearDown() {
@@ -62,15 +84,25 @@ class InsightsViewModelTest {
     // Plan 4 Task 5: engine is now an optional param (defaulted to the original fixed 404
     // responder) so the density-backfill tests below can supply a real FDSN /count responder
     // without disturbing any pre-existing call site.
-    private fun repository(dao: QuakeDao, engine: MockEngine = MockEngine { respond("", HttpStatusCode.NotFound) }): QuakeRepository =
-        QuakeRepository(UsgsApi(HttpClient(engine)), EmscLiveSource(HttpClient(engine)), dao, clock = { 1L })
+    //
+    // Flake hardening: [ioDispatcher] is a NEW param, defaulted to the real Dispatchers.Default this
+    // class always used implicitly before this fix (so it still compiles for any future caller that
+    // forgets to pin it) -- every test in this class now passes its own UnconfinedTestDispatcher
+    // explicitly instead. See this class's own kdoc above for the full "why".
+    private fun repository(
+        dao: QuakeDao,
+        engine: MockEngine = MockEngine { respond("", HttpStatusCode.NotFound) },
+        ioDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    ): QuakeRepository =
+        QuakeRepository(UsgsApi(HttpClient(engine)), EmscLiveSource(HttpClient(engine)), dao, clock = { 1L }, ioDispatcher = ioDispatcher)
 
     private fun createVm(
         dao: QuakeDao = freshDao(),
         nowMillis: Long = 100 * DAY,
         engine: MockEngine = MockEngine { respond("", HttpStatusCode.NotFound) },
+        ioDispatcher: CoroutineDispatcher = Dispatchers.Default,
     ): InsightsViewModel =
-        InsightsViewModel(repository(dao, engine), clock = { nowMillis }).also { createdViewModels += it }
+        InsightsViewModel(repository(dao, engine, ioDispatcher), clock = { nowMillis }).also { createdViewModels += it }
 
     private fun quake(id: String, timeMillis: Long, mag: Double?) = Quake(
         id = id, timeMillis = timeMillis, lat = 1.0, lon = 2.0, depthKm = 5.0, mag = mag,
@@ -87,12 +119,13 @@ class InsightsViewModelTest {
     }
 
     @Test fun `starts Loading then settles on Content for the default 7-day period`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
         val dao = freshDao()
         val now = 100 * DAY
         dao.upsert(quake("a", timeMillis = now, mag = 5.0))
-        val vm = createVm(dao, nowMillis = now)
-        vm.state.test {
+        val vm = createVm(dao, nowMillis = now, ioDispatcher = testDispatcher)
+        vm.state.test(timeout = 30.seconds) {
             val content = assertIs<InsightsUiState.Content>(awaitPastLoading())
             assertEquals(7, content.dayCounts.size)
             assertEquals(1L, content.dayCounts.last(), "the last bucket is always 'today', by construction")
@@ -107,22 +140,24 @@ class InsightsViewModelTest {
     }
 
     @Test fun `an empty database shows Empty, not Content`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
-        val vm = createVm()
-        vm.state.test {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val vm = createVm(ioDispatcher = testDispatcher)
+        vm.state.test(timeout = 30.seconds) {
             assertIs<InsightsUiState.Empty>(awaitPastLoading())
             cancelAndIgnoreRemainingEvents()
         }
     }
 
     @Test fun `period flip to 30 days recomputes against the wider window`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
         val dao = freshDao()
         val now = 100 * DAY
         dao.upsert(quake("recent", timeMillis = now, mag = 5.0))
         dao.upsert(quake("old", timeMillis = now - 20 * DAY, mag = 6.0)) // outside 7d window, inside 30d
-        val vm = createVm(dao, nowMillis = now)
-        vm.state.test {
+        val vm = createVm(dao, nowMillis = now, ioDispatcher = testDispatcher)
+        vm.state.test(timeout = 30.seconds) {
             val sevenDay = assertIs<InsightsUiState.Content>(awaitPastLoading())
             assertEquals(1L, sevenDay.dayCounts.sum())
             assertEquals("recent", sevenDay.strongest?.id)
@@ -143,11 +178,12 @@ class InsightsViewModelTest {
     }
 
     @Test fun `bands always include the four real bands even when some are zero`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
         val dao = freshDao()
         dao.upsert(quake("a", timeMillis = 100 * DAY, mag = 2.0)) // LOW only
-        val vm = createVm(dao, nowMillis = 100 * DAY)
-        vm.state.test {
+        val vm = createVm(dao, nowMillis = 100 * DAY, ioDispatcher = testDispatcher)
+        vm.state.test(timeout = 30.seconds) {
             val content = assertIs<InsightsUiState.Content>(awaitPastLoading())
             assertEquals(
                 listOf(MagnitudeBand.LOW, MagnitudeBand.MODERATE, MagnitudeBand.STRONG, MagnitudeBand.MAJOR),
@@ -159,12 +195,18 @@ class InsightsViewModelTest {
         }
     }
 
+    // Flake hardening: unlike the other tests in this class, this one still crosses a genuinely
+    // un-pinnable pool even with ioDispatcher fixed above -- the `dao.upsert` below feeds
+    // InsightsViewModel's SECOND init{} collector, which is backed by QuakeDao.recent()'s
+    // hard-coded Dispatchers.Default (see this class's own kdoc). timeout = 30.seconds is the
+    // operative fix for this specific test.
     @Test fun `a new quake arriving recomputes Content directly, with no interstitial Loading flash`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
         val dao = freshDao()
         val now = 100 * DAY
-        val vm = createVm(dao, nowMillis = now)
-        vm.state.test {
+        val vm = createVm(dao, nowMillis = now, ioDispatcher = testDispatcher)
+        vm.state.test(timeout = 30.seconds) {
             assertIs<InsightsUiState.Empty>(awaitPastLoading())
 
             dao.upsert(quake("late", timeMillis = now, mag = 4.0))
@@ -187,12 +229,13 @@ class InsightsViewModelTest {
     // itself exists so the plan's global four-states rule is satisfied structurally (see
     // InsightsUiState.Error's own kdoc), not because this suite can cheaply force it to occur.
     @Test fun `retry re-flashes Loading and recomputes the current period`() = runTest {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
         val dao = freshDao()
         val now = 100 * DAY
         dao.upsert(quake("a", timeMillis = now, mag = 5.0))
-        val vm = createVm(dao, nowMillis = now)
-        vm.state.test {
+        val vm = createVm(dao, nowMillis = now, ioDispatcher = testDispatcher)
+        vm.state.test(timeout = 30.seconds) {
             assertIs<InsightsUiState.Content>(awaitPastLoading())
 
             vm.retry()

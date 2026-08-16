@@ -99,6 +99,25 @@ class HomeViewModelTest {
     // it, has fully completed cancelling before the next test can start. Structural fix, not a
     // timing one: correctness no longer depends on cancellation happening to finish fast enough
     // between tests.
+    //
+    // Flake-hardening pass (2026-08-16, CI run 31936189058 — TurbineAssertionError, green on every
+    // local run): [createVm]/tearDown above already close the leaked-coroutine race; the newer gap
+    // this pass closes is Turbine's 3s wall-clock DEFAULT expiring on a starved CI runner even
+    // though virtual time is fully advanced — the same class of trap commit 5e9e922 first
+    // documented for the poll-loop test further down this file. Every `newSinceExpand`/
+    // `startupCameraTarget`/`locationUnavailableEvents`/`favorites`/`homeLocation` await this pass
+    // touched crosses a REAL, uncontrolled thread pool by construction, not by test mis-setup:
+    // `FavoritePlaceStore.favorites` is `QuakeDao.favoritePlaces()`, which hard-codes
+    // `.mapToList(Dispatchers.Default)` (same as `QuakeDao.recent()`); `startupCameraTarget`/
+    // `homeLocation`'s first value and `recenterToCurrentLocation()` are written from `init`'s own
+    // hard-coded `viewModelScope.launch(Dispatchers.Default) { ... }` blocks (see those fields' own
+    // kdoc) — neither is routed through any `ioDispatcher` a test could pin the way the poll-loop
+    // test pins `QuakeRepository`'s. `test(timeout = 30.seconds)` is therefore the correct lever
+    // (not a dispatcher pin — there is no seam to pin), applied only to the tests this branch
+    // actually added (grepped this branch's own diff against `main` first — EVIDENCE INTEGRITY —
+    // rather than touching every pre-existing, already-stable test that happens to share the same
+    // exposure); it only widens the failure window for a genuine hang (e.g. the leaked-coroutine
+    // 100%-CPU spin CI run 31939018579 shows), never slows a passing run.
     private val createdViewModels = mutableListOf<HomeViewModel>()
 
     private fun createVm(
@@ -710,10 +729,19 @@ class HomeViewModelTest {
     // like a live arrival would. Red (pre-existing behavior, not something this task changes):
     // asserting `0` here instead would time out, since the counter never actually settles on 0 once
     // the feed has anything to ingest at all.
+    //
+    // Flake hardening (CI runs 31936189058, red on a slow GitHub runner; always green locally):
+    // fakeRepositoryWithOneQuake() doesn't pin QuakeRepository's ioDispatcher, so ingest()'s
+    // _insertedQuakeIds.tryEmit(...) — the write newSinceExpand derives from — runs inside
+    // withContext(Dispatchers.Default), a real, uncontrolled thread pool this test does not
+    // schedule. Same "the emission chain crosses a pool this test doesn't control" trap the
+    // poll-loop test below documents (commit 5e9e922) — Turbine's 3s wall-clock default can expire
+    // here too on a starved runner despite virtual time never being the bottleneck. timeout = 30s
+    // only widens the failure window for a genuine hang; it never slows a passing run.
     @Test fun `newSinceExpand already reflects quakes ingested by the very first refresh, not just later arrivals`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val vm = createVm(fakeRepositoryWithOneQuake())
-        vm.newSinceExpand.test {
+        vm.newSinceExpand.test(timeout = 30.seconds) {
             var v = awaitItem()
             while (v == 0) v = awaitItem()
             assertEquals(1, v, "the cold-start ingest of us1234 must count, exactly like a live arrival would")
@@ -779,19 +807,27 @@ class HomeViewModelTest {
     // [startupCameraTarget]'s own full 5-case decision table is pinned exhaustively, independent of
     // any of this, by CameraTargetTest.kt.
 
+    // Flake hardening (same class as the newSinceExpand fix above): this value is written from
+    // init's own `viewModelScope.launch(Dispatchers.Default) { ... }` block (see HomeViewModel.init
+    // — the location/camera-target resolution is hard-coded off Main, not routed through any
+    // ioDispatcher a test could pin), so the very first emission always crosses a real, uncontrolled
+    // thread pool. timeout = 30.seconds guards the same starved-runner window commit 5e9e922
+    // documents for the poll-loop test further down this file.
     @Test fun `startupCameraTarget stays null when the platform has no location fix to offer`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val vm = createVm(fakeRepositoryAlwaysFailing())
-        vm.startupCameraTarget.test {
+        vm.startupCameraTarget.test(timeout = 30.seconds) {
             assertEquals(null, awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
     }
 
+    // Flake hardening: recenterToCurrentLocation() itself launches on Dispatchers.Default (see its
+    // own kdoc) — same hard-coded, un-pinnable cross-pool hop as startupCameraTarget above.
     @Test fun `recenterToCurrentLocation emits a locationUnavailableEvent when no fix is available`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val vm = createVm(fakeRepositoryAlwaysFailing())
-        vm.locationUnavailableEvents.test {
+        vm.locationUnavailableEvents.test(timeout = 30.seconds) {
             vm.recenterToCurrentLocation()
             awaitItem() // Unit - the event itself firing is the whole assertion
             cancelAndIgnoreRemainingEvents()
@@ -814,10 +850,15 @@ class HomeViewModelTest {
     // live to a store update" shape (see that field's two tests above), applied to
     // FavoritePlaceStore.favorites instead of HomeLocationStore.
 
+    // Flake hardening: FavoritePlaceStore.favorites is QuakeDao.favoritePlaces(), which hard-codes
+    // `.asFlow().mapToList(Dispatchers.Default)` (QuakeDao.kt) — a real thread-pool hop no
+    // ioDispatcher pin on the repository can reach, since it never goes through QuakeRepository at
+    // all. Same starved-runner exposure as newSinceExpand's own fix above; timeout = 30.seconds on
+    // all three favorites tests below.
     @Test fun `favorites starts empty when the store has none`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val vm = createVm(fakeRepositoryAlwaysFailing())
-        vm.favorites.test {
+        vm.favorites.test(timeout = 30.seconds) {
             assertEquals(emptyList(), awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
@@ -827,7 +868,7 @@ class HomeViewModelTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val favoritePlaceStore = emptyFavoritePlaceStore().apply { add("Tokyo", GeoPoint(35.6762, 139.6503)) }
         val vm = createVm(fakeRepositoryAlwaysFailing(), favoritePlaceStore = favoritePlaceStore)
-        vm.favorites.test {
+        vm.favorites.test(timeout = 30.seconds) {
             var v = awaitItem()
             while (v.isEmpty()) v = awaitItem()
             assertEquals("Tokyo", v.single().label)
@@ -839,7 +880,7 @@ class HomeViewModelTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val favoritePlaceStore = emptyFavoritePlaceStore()
         val vm = createVm(fakeRepositoryAlwaysFailing(), favoritePlaceStore = favoritePlaceStore)
-        vm.favorites.test {
+        vm.favorites.test(timeout = 30.seconds) {
             assertEquals(emptyList(), awaitItem())
             favoritePlaceStore.add("Delhi", GeoPoint(28.6139, 77.2090))
             assertEquals(listOf("Delhi"), awaitItem().map { it.label })
@@ -872,7 +913,10 @@ class HomeViewModelTest {
         val homeLocationStore = emptyHomeLocationStore().apply { set(GeoPoint(12.34, 56.78)) }
         val vm = createVm(fakeRepositoryAlwaysFailing(), homeLocationStore = homeLocationStore)
         // Let the init{} block's one-shot homeLocation load resolve before focusing a favorite.
-        vm.homeLocation.test {
+        // Flake hardening: that one-shot load runs on init's hard-coded Dispatchers.Default (see
+        // homeLocation's own kdoc) — same un-pinnable cross-pool hop as startupCameraTarget's fix
+        // above, so this await gets the same 30s margin.
+        vm.homeLocation.test(timeout = 30.seconds) {
             var v = awaitItem()
             while (v == null) v = awaitItem()
             cancelAndIgnoreRemainingEvents()

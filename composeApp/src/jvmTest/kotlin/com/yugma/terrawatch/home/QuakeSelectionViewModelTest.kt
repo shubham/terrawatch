@@ -34,10 +34,18 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.time.Duration.Companion.seconds
 
 class QuakeSelectionViewModelTest {
     // Same leak-prevention discipline as HomeViewModelTest's tearDown (Task 13 flake fix) --
     // select()'s viewModelScope.launch{} coroutine must not survive past its own test.
+    //
+    // Flake-hardening pass (2026-08-16, sweeping the terrawatch flaky-test playbook -- see
+    // HomeViewModelTest's own kdoc for the original Task-13/commit-5e9e922 precedent this ports):
+    // freshRepository() never pins QuakeRepository's `ioDispatcher`, so select()'s
+    // `repository.byId(id)` call (the value every test below awaits via `vm.selectedQuake`) hops
+    // through a real, uncontrolled `Dispatchers.Default` thread. All six tests below now carry
+    // `timeout = 30.seconds` for the same starved-CI-runner margin commit 5e9e922 first established.
     private val createdViewModels = mutableListOf<QuakeSelectionViewModel>()
 
     private fun createVm(
@@ -61,7 +69,7 @@ class QuakeSelectionViewModelTest {
         val repository = freshRepository()
         repository.ingest(freshQuake("us1234"))
         val vm = createVm(repository)
-        vm.selectedQuake.test {
+        vm.selectedQuake.test(timeout = 30.seconds) {
             assertEquals(null, awaitItem())
             vm.select("us1234")
             val selected = awaitItem()
@@ -78,7 +86,7 @@ class QuakeSelectionViewModelTest {
         val repository = freshRepository()
         repository.ingest(freshQuake("us1234"))
         val vm = createVm(repository)
-        vm.selectedQuake.test {
+        vm.selectedQuake.test(timeout = 30.seconds) {
             assertEquals(null, awaitItem())
             vm.select("us1234")
             assertEquals("us1234", awaitItem()?.id)
@@ -94,7 +102,7 @@ class QuakeSelectionViewModelTest {
         val repository = freshRepository()
         repository.ingest(freshQuake("us1234"))
         val vm = createVm(repository)
-        vm.selectedQuake.test {
+        vm.selectedQuake.test(timeout = 30.seconds) {
             assertEquals(null, awaitItem())
             vm.select("us1234")
             assertEquals("us1234", awaitItem()?.id)
@@ -118,7 +126,7 @@ class QuakeSelectionViewModelTest {
         repository.ingest(freshQuake("us1234"))
         val handle = SavedStateHandle()
         val vm = createVm(repository, handle)
-        vm.selectedQuake.test {
+        vm.selectedQuake.test(timeout = 30.seconds) {
             assertEquals(null, awaitItem())
             assertNull(handle.get<String>("selected_id"))
 
@@ -150,7 +158,7 @@ class QuakeSelectionViewModelTest {
         repository.ingest(freshQuake("us1234"))
         val handle = SavedStateHandle()
         val vm = createVm(repository, handle)
-        vm.selectedQuake.test {
+        vm.selectedQuake.test(timeout = 30.seconds) {
             assertEquals(null, awaitItem())
             vm.select("us1234")
             assertEquals("us1234", awaitItem()?.id)
@@ -179,7 +187,7 @@ class QuakeSelectionViewModelTest {
         repository.ingest(freshQuake("us1234"))
         val handle = SavedStateHandle(mapOf("selected_id" to "us1234"))
         val vm = createVm(repository, handle)
-        vm.selectedQuake.test {
+        vm.selectedQuake.test(timeout = 30.seconds) {
             var s = awaitItem()
             while (s == null) s = awaitItem()
             assertEquals("us1234", s.id)

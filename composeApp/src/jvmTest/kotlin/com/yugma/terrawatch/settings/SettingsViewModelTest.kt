@@ -29,11 +29,25 @@ import kotlinx.coroutines.test.setMain
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.time.Duration.Companion.seconds
 
 class SettingsViewModelTest {
     // Same leaked-coroutine teardown discipline as HomeViewModelTest.createVm/tearDown — every
     // SettingsViewModel this suite builds launches several viewModelScope collectors in init{},
     // none of which are children of a test's own runTest{} coroutine.
+    //
+    // Flake-hardening pass (2026-08-16, sweeping the terrawatch flaky-test playbook -- see
+    // HomeViewModelTest's own kdoc for the original Task-13/commit-5e9e922 precedent this ports):
+    // NOT every StateFlow this class exposes needs a timeout margin -- `nearbyRadiusKm`/`minMag`
+    // (AlertRuleStore) and `theme` (ThemeStore) are both a synchronous `dao.metaGet` read behind an
+    // in-memory SharedFlow, and `isPlusActive` is a plain passthrough StateFlow -- none of them ever
+    // leave Main, so those tests are left untouched. `homeLocation` and `favorites` are different:
+    // `init`'s `viewModelScope.launch(Dispatchers.Default) { _homeLocation.value =
+    // homeLocationStore.get() }` is a hard-coded, un-pinnable cross-pool hop (mirrors
+    // HomeViewModel's own identical block), and `favoritePlaceStore.favorites` is
+    // `QuakeDao.favoritePlaces()`, which hard-codes `.mapToList(Dispatchers.Default)` regardless of
+    // any pin. Every `vm.homeLocation.test {}`/`vm.favorites.test {}` below now carries
+    // `timeout = 30.seconds` for the same starved-CI-runner margin commit 5e9e922 first established.
     private val createdViewModels = mutableListOf<SettingsViewModel>()
 
     private fun createVm(
@@ -127,7 +141,7 @@ class SettingsViewModelTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val homeLocationStore = HomeLocationStore(freshDao()).apply { set(GeoPoint(12.34, 56.78)) }
         val vm = createVm(homeLocationStore = homeLocationStore)
-        vm.homeLocation.test {
+        vm.homeLocation.test(timeout = 30.seconds) {
             var v = awaitItem()
             while (v == null) v = awaitItem()
             assertEquals(GeoPoint(12.34, 56.78), v)
@@ -139,7 +153,7 @@ class SettingsViewModelTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val homeLocationStore = HomeLocationStore(freshDao())
         val vm = createVm(homeLocationStore = homeLocationStore)
-        vm.homeLocation.test {
+        vm.homeLocation.test(timeout = 30.seconds) {
             assertEquals(null, awaitItem())
             homeLocationStore.set(GeoPoint(9.9, 8.8))
             assertEquals(GeoPoint(9.9, 8.8), awaitItem())
@@ -199,7 +213,7 @@ class SettingsViewModelTest {
     @Test fun `favorites starts empty when the store has none`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val vm = createVm()
-        vm.favorites.test {
+        vm.favorites.test(timeout = 30.seconds) {
             assertEquals(emptyList(), awaitItem())
             cancelAndIgnoreRemainingEvents()
         }
@@ -209,7 +223,7 @@ class SettingsViewModelTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val favoritePlaceStore = FavoritePlaceStore(freshDao())
         val vm = createVm(favoritePlaceStore = favoritePlaceStore)
-        vm.favorites.test {
+        vm.favorites.test(timeout = 30.seconds) {
             assertEquals(emptyList(), awaitItem())
             favoritePlaceStore.add("Tokyo", GeoPoint(35.6762, 139.6503))
             assertEquals(listOf("Tokyo"), awaitItem().map { it.label })
@@ -220,7 +234,7 @@ class SettingsViewModelTest {
     @Test fun `addFavorite writes through to the store, reaching favorites`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val vm = createVm()
-        vm.favorites.test {
+        vm.favorites.test(timeout = 30.seconds) {
             assertEquals(emptyList(), awaitItem())
             vm.addFavorite("Delhi", GeoPoint(28.6139, 77.2090))
             assertEquals(listOf("Delhi"), awaitItem().map { it.label })
@@ -232,7 +246,7 @@ class SettingsViewModelTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val favoritePlaceStore = FavoritePlaceStore(freshDao())
         val vm = createVm(favoritePlaceStore = favoritePlaceStore)
-        vm.favorites.test {
+        vm.favorites.test(timeout = 30.seconds) {
             assertEquals(emptyList(), awaitItem())
             vm.addFavorite("Mumbai", GeoPoint(19.0760, 72.8777))
             val added = awaitItem().single()
@@ -245,7 +259,7 @@ class SettingsViewModelTest {
     @Test fun `setFavoriteAlertType writes through to the store, reaching favorites`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val vm = createVm()
-        vm.favorites.test {
+        vm.favorites.test(timeout = 30.seconds) {
             assertEquals(emptyList(), awaitItem())
             vm.addFavorite("Mumbai", GeoPoint(19.0760, 72.8777))
             val added = awaitItem().single()
@@ -258,7 +272,7 @@ class SettingsViewModelTest {
     @Test fun `canAddFavorite is true on the free tier with zero favorites`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val vm = createVm()
-        vm.favorites.test {
+        vm.favorites.test(timeout = 30.seconds) {
             awaitItem()
             cancelAndIgnoreRemainingEvents()
         }
@@ -268,7 +282,7 @@ class SettingsViewModelTest {
     @Test fun `canAddFavorite is false on the free tier once one favorite already exists`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val vm = createVm()
-        vm.favorites.test {
+        vm.favorites.test(timeout = 30.seconds) {
             awaitItem()
             vm.addFavorite("Mumbai", GeoPoint(19.0760, 72.8777))
             awaitItem()
@@ -281,7 +295,7 @@ class SettingsViewModelTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val fakeProvider = FakeEntitlementsProvider().apply { setPlusActive(true) }
         val vm = createVm(entitlementsProvider = fakeProvider)
-        vm.favorites.test {
+        vm.favorites.test(timeout = 30.seconds) {
             awaitItem()
             vm.addFavorite("Mumbai", GeoPoint(19.0760, 72.8777))
             awaitItem()

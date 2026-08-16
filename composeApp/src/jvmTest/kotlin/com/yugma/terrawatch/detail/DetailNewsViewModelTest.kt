@@ -26,6 +26,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 
 private const val THREE_ARTICLES = """
     {"articles":[
@@ -38,6 +39,17 @@ private const val THREE_ARTICLES = """
 class DetailNewsViewModelTest {
     // Same leak-prevention discipline as QuakeSelectionViewModelTest/InsightsViewModelTest's own
     // tearDown -- onQuakeSelected's viewModelScope.launch{} coroutine must not survive its test.
+    //
+    // Flake-hardening pass (2026-08-16, sweeping the terrawatch flaky-test playbook -- see
+    // HomeViewModelTest's own kdoc for the original Task-13/commit-5e9e922 precedent this ports):
+    // unlike InsightsNewsViewModelTest/QuakeSelectionViewModelTest, NOT every test here needs the
+    // timeout margin -- `_newsState.value = NewsUiState.Loading` is written SYNCHRONOUSLY inside
+    // fetch(), before the GDELT call is even launched (see fetch()'s own body), so a test that never
+    // clears the magnitude floor / has the kill-switch off never reaches a real dispatcher hop at
+    // all, and stays untouched. Every test that DOES reach a real GdeltClient.searchEarthquakeNews
+    // call now carries `timeout = 30.seconds` on its `vm.newsState.test { ... }` -- ktor's engine
+    // dispatch is a genuine hop off Main even against MockEngine, the same class of starved-runner
+    // exposure commit 5e9e922 documents for HomeViewModelTest's poll-loop test.
     private val createdViewModels = mutableListOf<DetailNewsViewModel>()
 
     @AfterTest fun tearDown() {
@@ -82,10 +94,14 @@ class DetailNewsViewModelTest {
         assertTrue(!called, "a sub-5.5 quake must never trigger a GDELT fetch")
     }
 
+    // Flake hardening (2026-08-16): a real GDELT fetch resolves past Loading here, and GdeltClient
+    // gives ktor's own engine dispatcher a genuine hop off Main -- same starved-CI-runner exposure
+    // commit 5e9e922 documents for HomeViewModelTest's poll-loop test. timeout = 30.seconds on every
+    // test in this file below that actually reaches a fetch (see this class's own kdoc).
     @Test fun `exactly 5,5 clears the floor (inclusive) and flashes Loading then Content`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val vm = createVm(MockEngine { respond(THREE_ARTICLES, HttpStatusCode.OK) })
-        vm.newsState.test {
+        vm.newsState.test(timeout = 30.seconds) {
             assertEquals(NewsUiState.Hidden, awaitItem())
             vm.onQuakeSelected(quake(mag = 5.5))
             assertEquals(NewsUiState.Loading, awaitItem())
@@ -110,7 +126,7 @@ class DetailNewsViewModelTest {
     @Test fun `empty GDELT results resolve to Empty with the USGS fallback link, never an empty Content or a silent Hidden`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val vm = createVm(MockEngine { respond("""{"articles":[]}""", HttpStatusCode.OK, headersOf("Content-Type", "application/json")) })
-        vm.newsState.test {
+        vm.newsState.test(timeout = 30.seconds) {
             assertEquals(NewsUiState.Hidden, awaitItem())
             vm.onQuakeSelected(quake(id = "us1", mag = 6.0))
             assertEquals(NewsUiState.Loading, awaitItem())
@@ -128,7 +144,7 @@ class DetailNewsViewModelTest {
     @Test fun `a GDELT failure resolves to Error, never a silent Hidden`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val vm = createVm(MockEngine { respond("boom", HttpStatusCode.InternalServerError) })
-        vm.newsState.test {
+        vm.newsState.test(timeout = 30.seconds) {
             assertEquals(NewsUiState.Hidden, awaitItem())
             vm.onQuakeSelected(quake(mag = 6.0))
             assertEquals(NewsUiState.Loading, awaitItem())
@@ -146,7 +162,7 @@ class DetailNewsViewModelTest {
                 if (callCount == 1) respond("boom", HttpStatusCode.InternalServerError) else respond(THREE_ARTICLES, HttpStatusCode.OK)
             },
         )
-        vm.newsState.test {
+        vm.newsState.test(timeout = 30.seconds) {
             assertEquals(NewsUiState.Hidden, awaitItem())
             vm.onQuakeSelected(quake(mag = 6.0))
             assertEquals(NewsUiState.Loading, awaitItem())
@@ -177,7 +193,7 @@ class DetailNewsViewModelTest {
     @Test fun `selecting null after a real quake clears back to Hidden`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val vm = createVm(MockEngine { respond(THREE_ARTICLES, HttpStatusCode.OK) })
-        vm.newsState.test {
+        vm.newsState.test(timeout = 30.seconds) {
             assertEquals(NewsUiState.Hidden, awaitItem())
             vm.onQuakeSelected(quake(mag = 6.0))
             assertEquals(NewsUiState.Loading, awaitItem())
@@ -192,7 +208,7 @@ class DetailNewsViewModelTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         var callCount = 0
         val vm = createVm(MockEngine { callCount++; respond(THREE_ARTICLES, HttpStatusCode.OK) })
-        vm.newsState.test {
+        vm.newsState.test(timeout = 30.seconds) {
             assertEquals(NewsUiState.Hidden, awaitItem())
             val q = quake(id = "us1", mag = 6.0)
             vm.onQuakeSelected(q)

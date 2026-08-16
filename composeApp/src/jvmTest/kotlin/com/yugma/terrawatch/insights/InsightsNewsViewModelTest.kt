@@ -31,6 +31,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 
 private const val DAY = 86_400_000L
 
@@ -44,6 +45,19 @@ private const val THREE_ARTICLES = """
 
 class InsightsNewsViewModelTest {
     // Same leak-prevention discipline as InsightsViewModelTest's own tearDown.
+    //
+    // Flake-hardening pass (2026-08-16, sweeping the terrawatch flaky-test playbook -- see
+    // HomeViewModelTest's own kdoc for the original Task-13/commit-5e9e922 precedent this ports):
+    // `repository(dao)` below never pins QuakeRepository's `ioDispatcher`, and this class's own
+    // `init` collector (`repository.recentQuakes().conflate().collect { recompute() }`) is backed by
+    // QuakeDao.recent(), which hard-codes `.mapToList(Dispatchers.Default)` regardless of any pin --
+    // un-pinnable by construction. Every `vm.newsState.test { ... }` below therefore crosses a real,
+    // uncontrolled thread pool (that hard-coded hop, plus `strongest()`/`gdeltClient`'s own
+    // ioDispatcher/engine hops) before Turbine's assertion can settle, on every single test in this
+    // file -- all now carry `timeout = 30.seconds` for the same starved-CI-runner margin commit
+    // 5e9e922 first established. This class's own `awaitSettled()` helper already handles the
+    // OTHER half of this class of bug (Loading being conflated away entirely on a fast resolve) --
+    // this pass only adds the timeout margin on top, it doesn't touch that helper.
     private val createdViewModels = mutableListOf<InsightsNewsViewModel>()
 
     @AfterTest fun tearDown() {
@@ -107,7 +121,7 @@ class InsightsNewsViewModelTest {
     @Test fun `an empty database settles on Hidden`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val vm = createVm(freshDao())
-        vm.newsState.test {
+        vm.newsState.test(timeout = 30.seconds) {
             assertEquals(NewsUiState.Hidden, awaitSettled())
             cancelAndIgnoreRemainingEvents()
         }
@@ -119,7 +133,7 @@ class InsightsNewsViewModelTest {
         val now = 100 * DAY
         dao.upsert(quake("small", timeMillis = now, mag = 5.9))
         val vm = createVm(dao, nowMillis = now)
-        vm.newsState.test {
+        vm.newsState.test(timeout = 30.seconds) {
             assertEquals(NewsUiState.Hidden, awaitSettled())
             cancelAndIgnoreRemainingEvents()
         }
@@ -131,7 +145,7 @@ class InsightsNewsViewModelTest {
         val now = 100 * DAY
         dao.upsert(quake("big", timeMillis = now, mag = 6.8, place = "Kumamoto, Japan"))
         val vm = createVm(dao, nowMillis = now)
-        vm.newsState.test {
+        vm.newsState.test(timeout = 30.seconds) {
             val content = assertIs<NewsUiState.Content>(awaitSettled())
             assertEquals(3, content.articles.size)
             cancelAndIgnoreRemainingEvents()
@@ -144,7 +158,7 @@ class InsightsNewsViewModelTest {
         val now = 100 * DAY
         dao.upsert(quake("old-big", timeMillis = now - 10 * DAY, mag = 7.0))
         val vm = createVm(dao, nowMillis = now)
-        vm.newsState.test {
+        vm.newsState.test(timeout = 30.seconds) {
             assertEquals(NewsUiState.Hidden, awaitSettled())
             cancelAndIgnoreRemainingEvents()
         }
@@ -156,7 +170,7 @@ class InsightsNewsViewModelTest {
         val now = 100 * DAY
         dao.upsert(quake("big", timeMillis = now, mag = 6.5))
         val vm = createVm(dao, gdeltResponse = """{"articles":[]}""", nowMillis = now)
-        vm.newsState.test {
+        vm.newsState.test(timeout = 30.seconds) {
             val empty = assertIs<NewsUiState.Empty>(awaitSettled())
             assertEquals("https://earthquake.usgs.gov/earthquakes/eventpage/big", empty.usgsEventUrl)
             cancelAndIgnoreRemainingEvents()
@@ -173,7 +187,7 @@ class InsightsNewsViewModelTest {
         val now = 100 * DAY
         dao.upsert(quake("big", timeMillis = now, mag = 6.5))
         val vm = createVm(dao, gdeltResponse = "boom", gdeltStatus = HttpStatusCode.InternalServerError, nowMillis = now)
-        vm.newsState.test {
+        vm.newsState.test(timeout = 30.seconds) {
             assertEquals(NewsUiState.Error, awaitSettled())
             cancelAndIgnoreRemainingEvents()
         }
@@ -194,7 +208,7 @@ class InsightsNewsViewModelTest {
             ),
         )
         val vm = InsightsNewsViewModel(repository(dao), gdeltClient, clock = { now }, newsEnabled = true).also { createdViewModels += it }
-        vm.newsState.test {
+        vm.newsState.test(timeout = 30.seconds) {
             assertEquals(NewsUiState.Error, awaitSettled())
 
             vm.retry()
@@ -211,7 +225,7 @@ class InsightsNewsViewModelTest {
         val now = 100 * DAY
         dao.upsert(quake("big", timeMillis = now, mag = 6.8))
         val vm = createVm(dao, nowMillis = now)
-        vm.newsState.test {
+        vm.newsState.test(timeout = 30.seconds) {
             assertIs<NewsUiState.Content>(awaitSettled())
 
             dao.upsert(quake("small-elsewhere", timeMillis = now, mag = 3.0))
@@ -227,7 +241,7 @@ class InsightsNewsViewModelTest {
         val now = 100 * DAY
         dao.upsert(quake("first", timeMillis = now, mag = 6.2))
         val vm = createVm(dao, nowMillis = now)
-        vm.newsState.test {
+        vm.newsState.test(timeout = 30.seconds) {
             assertIs<NewsUiState.Content>(awaitSettled())
 
             dao.upsert(quake("stronger", timeMillis = now, mag = 7.5))
@@ -249,7 +263,7 @@ class InsightsNewsViewModelTest {
         val now = 100 * DAY
         dao.upsert(quake("big", timeMillis = now, mag = 7.5))
         val vm = createVm(dao, nowMillis = now, newsEnabled = false)
-        vm.newsState.test {
+        vm.newsState.test(timeout = 30.seconds) {
             assertEquals(NewsUiState.Hidden, awaitSettled())
             cancelAndIgnoreRemainingEvents()
         }
@@ -261,7 +275,7 @@ class InsightsNewsViewModelTest {
         val now = 100 * DAY
         dao.upsert(quake("big", timeMillis = now, mag = 7.5))
         val vm = createVm(dao, nowMillis = now, newsEnabled = false)
-        vm.newsState.test {
+        vm.newsState.test(timeout = 30.seconds) {
             assertEquals(NewsUiState.Hidden, awaitSettled())
             vm.retry()
             expectNoEvents()
@@ -281,7 +295,7 @@ class InsightsNewsViewModelTest {
         var called = false
         val gdeltClient = GdeltClient(HttpClient(MockEngine { called = true; respond(THREE_ARTICLES, HttpStatusCode.OK) }))
         val vm = InsightsNewsViewModel(repository(dao), gdeltClient, clock = { now }).also { createdViewModels += it }
-        vm.newsState.test {
+        vm.newsState.test(timeout = 30.seconds) {
             assertEquals(NewsUiState.Hidden, awaitSettled())
             cancelAndIgnoreRemainingEvents()
         }
