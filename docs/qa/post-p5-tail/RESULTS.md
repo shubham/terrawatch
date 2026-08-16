@@ -2,18 +2,21 @@
 
 Branch `fix/post-p5-tail` off `main` @ 7932c04. Two fixes closing the two "still open" items from
 `docs/qa/plan-5-device-matrix/round2/RESULTS.md`'s concern #6. Device verification: OnePlus 9R
-`98bc1cd8` (Android 14, OxygenOS). Moto (Android 16) was disconnected for this whole session —
-every Moto row below is **PENDING**, not fabricated.
+`98bc1cd8` (Android 14, OxygenOS). Moto (Android 16) was disconnected for the original session —
+every Moto row was **PENDING**, not fabricated. **Moto verification pass completed 2026-08-16 on
+`main` @ 807a2c0** — per-item results folded into the rows/sections below; see the "Moto
+verification pass" section at the end of this file for build/install/crash-sweep details and the
+full artifact list.
 
 ## Item → verdict
 
-| # | Item | op9 (98bc1cd8) | Moto |
+| # | Item | op9 (98bc1cd8) | Moto (edge 50 fusion, Android 16) |
 |---|------|-----------------|------|
-| 1 | Settings ALERTS row live-refreshes on resume (grant direction) | **PASS** | PENDING |
-| 2 | Settings ALERTS row live-refreshes on resume (revoke direction) | **PASS** | PENDING |
-| 3 | Map scale-bar/compass no longer collide with the status bar | **PASS** | PENDING |
-| 4 | Map bottom ornaments (logo/attribution) vs. nav bar / ad slot | **PASS** (code-level; not independently visible — see note) | PENDING |
-| 5 | Dark mode: favorite places visible/legible (Home quick-switch chips + Settings Places rows) | **PASS** | PENDING |
+| 1 | Settings ALERTS row live-refreshes on resume (grant direction) | **PASS** | **PASS** |
+| 2 | Settings ALERTS row live-refreshes on resume (revoke direction) | **PASS** | **PASS** |
+| 3 | Map scale-bar/compass no longer collide with the status bar | **PASS** | **PASS** |
+| 4 | Map bottom ornaments (logo/attribution) vs. nav bar / ad slot | **PASS** (code-level; not independently visible — see note) | **PASS** (code-level; not independently visible — same feed-sheet occlusion as op9) |
+| 5 | Dark mode: favorite places visible/legible (Home quick-switch chips + Settings Places rows) | **PASS** | **PASS** |
 
 ## Fix 1 — Settings alerts row not refreshing on resume
 
@@ -66,7 +69,26 @@ precedent already established on this same class for `isPlusActive`.
    row correctly flipped back to **Alerts: Off** with the explainer/"Open Settings" reappearing
    (`fix1-op9-settings-alerts-revoke-after.png`).
 
-Moto: **PENDING** (disconnected all session).
+**Moto verify (`adb-ZA222RWNYX-1MmNmd (2)._adb-tls-connect._tcp`, Android 16, upgrade install over
+round2's install; `POST_NOTIFICATIONS` already granted at session start, so the revoke direction was
+exercised first):**
+1. Settings → Alerts: On (granted from round2) — `moto/fix1-moto-settings-alerts-before.png`.
+2. Home → TerraWatch's system per-app notification page (`android.settings.APP_NOTIFICATION_SETTINGS`
+   deep link, landed directly on the real page) → toggled **off** via the real switch —
+   `moto/fix1-moto-syssettings-notif-revoked.png`; `dumpsys package` confirms
+   `POST_NOTIFICATIONS: granted=false`.
+3. Returned via **recents** (`KEYCODE_APP_SWITCH` + tap the TerraWatch card — confirmed same task id
+   before/after via `dumpsys activity activities`, not a fresh relaunch) — row flipped to **Alerts:
+   Off** with the explainer/"Open Settings" affordance reappearing, live, without leaving the
+   Settings screen — `moto/fix1-moto-settings-alerts-after-revoke.png`.
+4. Reverse direction: system notification settings → toggled back **on** —
+   `moto/fix1-moto-syssettings-notif-granted.png`; `dumpsys package` confirms `granted=true` —
+   returned via recents (same task id again) — row flipped back to **Alerts: On** —
+   `moto/fix1-moto-settings-alerts-after-grant.png`. `dumpsys jobscheduler` cross-check: a real
+   `androidx.work.systemjobscheduler` job for `com.yugma.terrawatch` shows `RUNNABLE`, matching op9's
+   worker-actually-enqueued proof.
+
+Both directions **PASS** — byte-for-byte the same live-refresh behavior op9 proved.
 
 ## Fix 2 — Map ornament inset under status bar
 
@@ -105,7 +127,19 @@ screenshots.
   the library's own API shape, just not independently device-provable through a visible defect.
   Noted per this task's own "fix if visibly wrong, note if fine" allowance.
 
-Moto: **PENDING** (disconnected all session).
+**Moto verify (same upgrade install).** Home screen at launch
+(`moto/moto-upgrade-install-launch-home.png`, duplicated as `moto/fix2-moto-map-top-after.png`) vs.
+the original complaint framing (`docs/qa/plan-5-device-matrix/round2/moto-item1-adview-home-before.png`)
+— cropped the top ~350px of both for a direct comparison: **before**, the scale-bar ruler and labels
+("0", "500 km", "1000 km") sat on the exact same row as the status-bar clock/icons, visibly
+overlapping; **after**, the status bar (time, wifi/battery icons) renders cleanly on its own row
+with a clear gap before the scale bar ("0", "2500 km", "5000 km") begins — no overlap anywhere.
+Confirms the fix on a second, independent notch/cutout geometry (Android 16 edge-to-edge insets).
+Bottom ornaments: still not independently visible on Moto either — every Home screenshot this pass
+shows the feed sheet covering the same region of the map's `Box`, the identical occlusion op9 hit —
+consistent with (not a regression from) the shared-`OrnamentOptions.padding` fix.
+
+**PASS.**
 
 ## Fix 3 — Dark mode: favorite places not visible correctly
 
@@ -189,7 +223,26 @@ formula):**
   no regression. Theme restored to **System** (→ dark, device night mode confirmed still active)
   before finishing, matching the device's original state.
 
-Moto: **PENDING** (disconnected all session, same as Fixes 1/2).
+**Moto verify — and a correction to this task's own brief.** The dispatch brief for this pass asked
+to reach dark mode by "enabling dark theme via Moto quick settings/display settings." On device,
+TerraWatch's own **Theme setting was already explicitly "Dusk"** (Settings screen, scrolled to the
+THEME card) — not "System" — so the app had been rendering in dark theme all session regardless of
+the device's own system light/dark setting (`cmd uimode night` read "Night mode: no", i.e.
+system-light, the entire time TerraWatch's own UI was already dark). Home's quick-switch chips were
+captured in this already-dark state first (`moto/darkmode-moto-home-chips.png`): **both** "Home"
+(selected) and "Delhi" (unselected — the real favorite on this device) render as clearly legible dark
+glass pills over the map — no invisible-chip regression, matching the fix. To honor the letter of
+the brief anyway, the device's own system Dark theme toggle (Settings → Display → Dark theme) was
+switched **on** (`cmd uimode night` → "Night mode: yes") and Home re-captured
+(`moto/darkmode-moto-home-chips-systemdark.png`) — pixel-identical to the system-light capture,
+confirming TerraWatch's explicit "Dusk" selection is correctly independent of the system theme (no
+System-tracking regression either). Device theme was restored to its original **light/off** state
+afterward (`cmd uimode night` → "Night mode: no", matching the state found at session start).
+Settings → Places alert-type chips (All/Major only/Off) legibility cross-checked incidentally via
+the Fix 1 screenshots above (e.g. `moto/fix1-moto-settings-alerts-after-grant.png`) — clearly
+legible, unchanged, matching op9's "not broken" finding for that surface.
+
+**PASS** (both the fix itself, and the dark/light-independence of the app's own Theme setting).
 
 ## Tests / compiles
 
@@ -220,10 +273,12 @@ Moto: **PENDING** (disconnected all session, same as Fixes 1/2).
   text (the actual reported defect, and the primary legibility signal) clears 4.5:1 with real
   margin in the same bound; the container's own now-opaque-enough shape is the primary visual
   delineator, the border a secondary refinement. Flagged rather than silently left unmeasured.
-- Moto (Android 16) verification is 100% PENDING for all three fixes — device was disconnected this
-  entire session. Whoever next has it connected should repeat the device-verify sequences above
-  (grant+revoke via system Settings + recents for Fix 1; scale-bar/status-bar overlap check for Fix
-  2; Home + Settings Places dark-mode legibility check for Fix 3).
+- Moto (Android 16) verification is now **complete** (2026-08-16, `main` @ 807a2c0 — see the
+  consolidated "Moto verification pass" section at the end of this file) — all three fixes **PASS**.
+  One correction surfaced during that pass: TerraWatch's own Theme setting on this device was already
+  explicitly "Dusk," not "System," so the device's system dark/light setting was never actually the
+  mechanism keeping Fix 3's chips dark on this device — flagged rather than silently assuming the
+  original brief's premise held.
 - `pm revoke`/`pm clear` are both blocked by a `SecurityException` on this OxygenOS build (same
   restriction the task brief already flagged) — every permission-state change in this pass went
   through either a full uninstall/reinstall or the real system Settings UI, never a raw adb
@@ -348,6 +403,48 @@ inside any reasonable circular crop.
   card mock, true-24dp and 4x-zoom crops, all rendered from the exact shipped VectorDrawable
   geometry). Reads clearly as a dial-with-needle-and-dot glyph at true size in both mocks.
 
+### Device verify (Moto edge 50 fusion, `adb-ZA222RWNYX-1MmNmd (2)._adb-tls-connect._tcp`, Android 16)
+
+**2026-08-16, `main` @ 807a2c0, upgrade install.** First real themed-icon test this repo has run on
+a device that might plausibly support the AOSP/Pixel-style monochrome API — round2/plan-5's only
+other device is OxygenOS, which doesn't; this is a second, independent OEM skin on a newer Android
+version.
+
+- **Launcher grid**: real icon visible in the full alphabetical app-drawer grid alongside real
+  neighbors (SuperCam, Threads, Truecaller, Uber) — `moto/logo-moto-01-launcher-grid.png`. Also
+  confirmed via the drawer's own search (`moto/logo-moto-01-launcher-search.png`, superseded by the
+  grid capture but left un-deleted per this file's own evidence-integrity convention). Moto's
+  teardrop adaptive-icon mask applies correctly; disc/ticks/needle/dot all render undistorted.
+  Long-press context menu (`moto/logo-moto-02-longpress-menu.png`) is Pause app/App info/Install in
+  Secure folder only — no per-icon option, same "nothing app-specific broken" result as op9
+  (different option set, an OS/launcher convention difference, not a defect).
+- **Themed icon** — checked 3 real locations, same discipline as op9: system Settings' own search
+  indexed **nothing** for "themed icons" (empty result set); Settings → Display's Appearance card
+  (Dark theme + Colours: Natural) has no themed-icon entry; Moto's own launcher personalization hub
+  (long-press Home → Personalise → Icon shape) offers only shape-mask presets (rounded square/
+  circle/teardrop variants), no monochrome/themed toggle anywhere in that flow either. **Verdict:
+  this Motorola Android 16 build (its own launcher, not Pixel Launcher) also does not expose the
+  standard Android 13+ themed-icon toggle in any checked location** — the same non-support
+  conclusion as OxygenOS, now confirmed on a second OEM skin and a newer Android version. Still a
+  launcher-level gap, not an app-level one; `ic_launcher_monochrome.xml` remains correctly
+  implemented per platform spec for whichever launcher/OS build does support it. No launcher
+  theme/icon-shape state was left changed on the device — an accidental "Save theme?" prompt
+  (triggered while navigating this flow) was **discarded**, not saved, and the Icon shape page was
+  closed via its X, not its Save button.
+- **Notification glyph — SKIP, same structural reason already documented above, now reproduced on a
+  second device.** `dumpsys notification --noredact` → 0 active `NotificationRecord` entries at
+  session start. Tried this task's own suggested fallback: long-pressed the map to inject a debug
+  M6.0 quake (`origin=ORIGIN_DEBUG`), then long-pressed Settings' "Alerts" row to fire
+  `AlertDigestScheduler.triggerNow()` — logcat confirms `AlertDigestWorker` ran and returned
+  `SUCCESS`, but `dumpsys notification --noredact` still shows 0 `NotificationRecord` entries
+  afterward. This reproduces `docs/qa/plan-5-device-matrix/RESULTS.md`'s already-documented root
+  cause exactly (`Quake.sq`'s `newSince` query structurally excludes `origin='debug'` rows from ever
+  notifying, by design — "the F5-guard parity") — on a second device, this is a re-confirmation, not
+  a new finding. No real M6+ world quake happened to be pending in the digest at trigger time
+  either. Honest skip, per this task's own allowance — the glyph's own rendering stays verified via
+  `logo-07-notification-glyph-render-inspection.png` (op9 pass, drawable-render inspection,
+  unaffected by which device runs it).
+
 ### Tests / compiles
 
 - `./gradlew jvmTest --max-workers=4` — **BUILD SUCCESSFUL**, all tasks UP-TO-DATE (this task
@@ -367,5 +464,69 @@ inside any reasonable circular crop.
   the re-tint behavior itself remains outstanding for whichever device/launcher does support it.
 - Notification-glyph verification is drawable-render inspection only, not a live on-device shade
   screenshot — no TerraWatch notification existed to capture honestly at verification time.
-- Moto (Android 16) is still PENDING for this task's device-verify pass too, same as every other
-  item in this file — device was disconnected this entire session.
+- Moto (Android 16) device-verify pass is now complete (2026-08-16, `main` @ 807a2c0) — launcher
+  grid **PASS**, themed-icon toggle confirmed **not supported** on this launcher/OS build either (a
+  second, independent confirmation, see above), notification glyph live-capture still an honest
+  **SKIP** (structural debug-quake exclusion, not a defect — reproduced identically to the
+  already-documented root cause).
+
+## Moto verification pass — main @ 807a2c0 (2026-08-16)
+
+Clears the accumulated Moto-PENDING backlog above. Device: Motorola edge 50 fusion,
+`adb-ZA222RWNYX-1MmNmd (2)._adb-tls-connect._tcp`, Android 16/API 36, WiFi adb. Personal
+daily-driver device — same focus-stealing-app quirks documented in
+`docs/qa/plan-5-device-matrix/round2/RESULTS.md` (Shaadi, SuperCam Plus; the Moto launcher's own
+main/Home activity is literally named `CustomizationPanelLauncher` — a class-name quirk, not an
+actual stuck customization panel, confirmed by screenshot before assuming otherwise); `am
+force-stop`'d before interactions, same as round2. 3-button nav confirmed
+(`settings get secure navigation_mode` → `0`, not `2`) — predictive back stays N/A, unchanged from
+round2.
+
+**Build + install:** `./gradlew :composeApp:assembleDebug --max-workers=4` → `BUILD SUCCESSFUL` (all
+tasks UP-TO-DATE against a clean `git status` at `807a2c0` — no stale-build risk). `adb install -r`
+onto the existing round2 install (Moto's **first upgrade-path install** — round2 was a fresh install;
+op9 has had upgrade installs already) — Success, both favorites (Home + Delhi) survived the upgrade.
+Launch + initial crash sweep: `moto/moto-item0-launch-crash-sweep.txt` (empty, 0 hits) —
+`moto/moto-upgrade-install-launch-home.png`.
+
+### Per-item results
+
+| Item | Verdict | Artifact(s) |
+|---|---|---|
+| a. Fix 1 — Alerts row live-refresh, grant direction | **PASS** | `fix1-moto-settings-alerts-before.png`, `fix1-moto-syssettings-notif-granted.png`, `fix1-moto-settings-alerts-after-grant.png` |
+| a. Fix 1 — Alerts row live-refresh, revoke direction | **PASS** | `fix1-moto-syssettings-notif-revoked.png`, `fix1-moto-settings-alerts-after-revoke.png` |
+| b. Fix 2 — scale-bar inset at original complaint site | **PASS** | `fix2-moto-map-top-after.png` vs. `round2/moto-item1-adview-home-before.png` |
+| c. Dark-mode favorite chips | **PASS** | `darkmode-moto-home-chips.png`, `darkmode-moto-home-chips-systemdark.png` |
+| d. Logo — launcher grid | **PASS** | `logo-moto-01-launcher-grid.png`, `logo-moto-02-longpress-menu.png` |
+| d. Logo — themed icons (AOSP monochrome toggle) | **NOT SUPPORTED** (verified across 3 locations, not assumed) | no screenshot artifact — nothing existed to capture; see Logo Moto device-verify above for the 3 checked locations |
+| e. Notification glyph live check | **SKIP** (honest — structural, matches already-documented root cause) | logcat only (`AlertDigestWorker` → `SUCCESS`, 0 `NotificationRecord`s before and after) |
+| f. M4.0 magnitude floor re-confirm | **PASS** | `moto-item4-m4floor-slider-min.png` |
+| f. News-absent re-confirm (detail sheet + Insights) | **PASS** | `moto-item3-detailsheet-nonews.png`, `moto-item3-insights-nonews.png` |
+| Bottom map ornaments vs. nav bar (item 4 in the top table) | **PASS** (code-level; still not independently visible, same occlusion as op9) | — |
+| Final full-session crash sweep | **PASS** (0 crashes) | `moto-item9-final-logcat-androidruntime.txt`, `moto-item9-broad-crash-sweep.txt` (both empty) |
+
+All artifacts above live under `docs/qa/post-p5-tail/moto/`.
+
+**Themed-icon verdict, spelled out (first real test of this specific question in this repo):** every
+prior pass only had an OxygenOS device on hand, which doesn't support the AOSP Android-13+ per-app
+monochrome "Themed icons" toggle. This pass had a second, different OEM skin (Motorola's own
+launcher) on a newer Android version (16 vs. 14) available, and checked three independent real
+locations (system Settings search, Settings → Display → Appearance, and Moto's own launcher
+Personalise → Icon shape flow) — **none exposes it either.** Now a two-for-two "not supported by the
+OEM launchers on hand" result, reinforcing that the gap is launcher-specific, not something wrong
+with this app's own `ic_launcher_monochrome.xml` (which remains correctly implemented per the
+platform spec and will activate on a launcher that does support it — e.g. stock/Pixel Android, still
+untested for lack of that hardware).
+
+**Device state left as found:** `POST_NOTIFICATIONS: granted=true` (ended on the grant direction,
+matching the state found at session start), system dark theme restored to **off**
+(`cmd uimode night` → "Night mode: no", matching session start), 3-button nav untouched, no launcher
+theme/icon-shape change saved (an accidental "Save theme?" prompt was discarded, not saved).
+
+**Artifacts:** 18 files added under `docs/qa/post-p5-tail/moto/` this pass (15 PNGs + 3 crash-sweep
+`.txt` files, all verified non-zero where non-empty and read back to confirm real content before
+being cited above, per this file's own evidence-integrity convention; the 3 `.txt` files are
+legitimately empty — that's the clean-crash-sweep result, not a capture failure).
+
+**Commit:** flips every Moto-PENDING row in this file to a verdict; no source changes this pass
+(verification only).
