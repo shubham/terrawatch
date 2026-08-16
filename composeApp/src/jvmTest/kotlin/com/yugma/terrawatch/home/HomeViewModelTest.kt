@@ -152,15 +152,16 @@ class HomeViewModelTest {
     //    repository (the four `fakeRepository*()` helpers plus the direct-construction tests) to the
     //    same pinned test dispatcher. Result: 30/30 across two consecutive isolated 30x runs (this
     //    round's own proof, plus a fresh confirming run) -- the flake is gone, not just quieter.
-    //  - Left deliberately unpinned, a documented residual: `QuakeDao.favoritePlaces()`'s identical
-    //    `.mapToList(Dispatchers.Default)` hop, reached only via a SEPARATELY-constructed
-    //    `FavoritePlaceStore` in most tests here (`emptyFavoritePlaceStore()`, never threaded to any
-    //    dispatcher pin) -- the 30/30 result across two full runs already demonstrates this residual
-    //    crossing is not, on its own, contributing at a measurable rate; rippling the pin through
-    //    every store-builder helper in this file for that last increment was judged not worth the
-    //    added surface, matching this codebase's own established "un-pinnable by construction,
-    //    documented rather than chased" precedent (see e.g. `InsightsViewModelTest`'s own kdoc for
-    //    its structurally identical, never-eliminated `recentQuakes()` DAO-level crossing).
+    //  - Round 4 (2026-08-16, post-merge verification): the residual deliberately left unpinned by
+    //    round 3 -- `QuakeDao.favoritePlaces()`'s identical `.mapToList(Dispatchers.Default)` hop,
+    //    reached via the separately-constructed `emptyFavoritePlaceStore()` -- DID reproduce in an
+    //    extended 80x verification loop (79/80; the one failure's stack traced to exactly this
+    //    crossing: HomeViewModel.kt collects favoritePlaceStore.favorites on Main in every test,
+    //    docs/qa/flake-verification-2026-08-16.md has the full trace). All three empty-store
+    //    helpers below (`emptyHomeLocationStore`/`emptyAlertRuleStore`/`emptyFavoritePlaceStore`)
+    //    now pin their QuakeDao's `dispatcher` to an UnconfinedTestDispatcher, closing the last
+    //    unpinned Main<->Default crossing this suite can reach. (InsightsViewModelTest's own
+    //    `recentQuakes()` DAO-level crossing remains that file's documented, separate residual.)
     // Root-cause takeaway: this was never about test hygiene (the leaked-coroutine teardown fix
     // above already closed that class of bug) -- it was a genuine architectural gap, a real
     // background dispatcher with no seam, at THREE different layers (VM, repository, DAO) that all
@@ -1115,7 +1116,7 @@ class HomeViewModelTest {
 private fun emptyHomeLocationStore(): HomeLocationStore {
     val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
     TerraWatchDb.Schema.create(driver)
-    return HomeLocationStore(QuakeDao(TerraWatchDb(driver)))
+    return HomeLocationStore(QuakeDao(TerraWatchDb(driver), dispatcher = UnconfinedTestDispatcher()))
 }
 
 // Task 7 (Plan 3): same "fresh, empty, don't-care-what-it-resolves-to" role as
@@ -1124,7 +1125,7 @@ private fun emptyHomeLocationStore(): HomeLocationStore {
 private fun emptyAlertRuleStore(): AlertRuleStore {
     val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
     TerraWatchDb.Schema.create(driver)
-    return AlertRuleStore(QuakeDao(TerraWatchDb(driver)))
+    return AlertRuleStore(QuakeDao(TerraWatchDb(driver), dispatcher = UnconfinedTestDispatcher()))
 }
 
 // Task 2 (Plan 5): same "fresh, empty, don't-care-what-it-resolves-to" role as
@@ -1133,7 +1134,7 @@ private fun emptyAlertRuleStore(): AlertRuleStore {
 private fun emptyFavoritePlaceStore(): FavoritePlaceStore {
     val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
     TerraWatchDb.Schema.create(driver)
-    return FavoritePlaceStore(QuakeDao(TerraWatchDb(driver)))
+    return FavoritePlaceStore(QuakeDao(TerraWatchDb(driver), dispatcher = UnconfinedTestDispatcher()))
 }
 
 // Builds a real QuakeRepository over an in-memory JVM SQLDelight driver with a MockEngine that
