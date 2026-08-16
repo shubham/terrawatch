@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yugma.terrawatch.model.MagnitudeBand
 import com.yugma.terrawatch.ui.format.formatMagnitude
+import com.yugma.terrawatch.ui.theme.TerraColors
 import com.yugma.terrawatch.ui.theme.magnitudeColor
 import com.yugma.terrawatch.ui.theme.tabularFigures
 
@@ -68,7 +69,7 @@ fun MagnitudeBadge(
     ) {
         Text(
             text = formatMagnitude(mag),
-            color = Color.White,
+            color = magnitudeBadgeTextColor(band, size),
             fontWeight = FontWeight.Bold,
             fontSize = fontSize,
             style = LocalTextStyle.current.tabularFigures(),
@@ -86,3 +87,33 @@ fun MagnitudeBadge(
  */
 internal fun magnitudeContentDescription(mag: Double?): String =
     if (mag == null || mag.isNaN()) "Magnitude unknown" else "Magnitude ${formatMagnitude(mag)}"
+
+/**
+ * UI polish findings (docs/superpowers/plans/2026-08-16-ui-polish-findings.md), Part 1 table rows
+ * 1/2/3: white badge numeral text fails WCAG contrast against [magnitudeColor]'s own fill for the
+ * two most common bands - `White` on `MagLow` measures **2.45:1**, on `MagModerate` **2.04:1**
+ * (both fail even the 3:1 large-text floor; LOW+MODERATE are 92% of all quakes in the doc's sampled
+ * week) - and, more narrowly, on `MagStrong` at [BadgeSize.Small] specifically (**3.15:1**, which
+ * clears the 3:1 *large-text* floor `MagStrong` @ [BadgeSize.Large]'s 19sp bold numeral qualifies
+ * for, but not the 4.5:1 floor 13sp bold text needs).
+ *
+ * Fix: switch the numeral to [TerraColors.Ink] for LOW/MODERATE (both sizes) and for STRONG@Small
+ * only - `Ink` measures 6.57:1 / 7.89:1 / 5.11:1 respectively against those three fills (see
+ * [ContrastTest] for the pinned regression lock). MAJOR (5.26:1) and STRONG@Large (3.15:1, already
+ * at/above its applicable large-text floor per the doc's own "Keep for the Large hero badge"
+ * verdict) stay white, unchanged. UNKNOWN is untouched (out of the doc's audited scope - its fill is
+ * a semi-transparent `Ink` tint whose effective contrast depends on whatever surface sits behind
+ * it, not a fixed pair this function can reason about).
+ *
+ * Deliberately changes only THIS numeral's text color, never [magnitudeColor]'s own fill hexes -
+ * the map's quake pins ([com.yugma.terrawatch.map.QuakeMap]) read `magnitudeColor` directly with no
+ * [MagnitudeBadge]/text involved at all, so this fix cannot affect pin-on-map legibility in any way
+ * (the doc's own "check pin-on-dark-map legibility" note only applies to a fill-hex change, which
+ * this isn't).
+ */
+internal fun magnitudeBadgeTextColor(band: MagnitudeBand, size: BadgeSize): Color = when {
+    band == MagnitudeBand.LOW -> TerraColors.Ink
+    band == MagnitudeBand.MODERATE -> TerraColors.Ink
+    band == MagnitudeBand.STRONG && size == BadgeSize.Small -> TerraColors.Ink
+    else -> Color.White
+}
