@@ -1,5 +1,6 @@
 package com.yugma.terrawatch.detail
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -40,6 +41,7 @@ import com.yugma.terrawatch.model.magnitudeBand
 import com.yugma.terrawatch.motion.LocalReducedMotion
 import com.yugma.terrawatch.network.NewsArticle
 import com.yugma.terrawatch.news.NewsUiState
+import com.yugma.terrawatch.share.appIcon
 import com.yugma.terrawatch.share.isPackageInstalled
 import com.yugma.terrawatch.ui.components.BadgeSize
 import com.yugma.terrawatch.ui.components.MagnitudeBadge
@@ -427,11 +429,27 @@ internal fun shareTargetMonogram(target: ShareTarget): String = target.label.tak
  * child (`StatusShield.AlertContent`'s `MagnitudeBadge` clear, `FeedSheet.kt`'s reveal-chip `Text`
  * clear) - without it, TalkBack would announce the bare monogram letter ("W") in addition to (or
  * instead of) the real "Share via WhatsApp" sentence.
+ *
+ * feat/feed-visit-ux, "real share app icons" (user: "use the icons of the app, not the
+ * abbreviations"): each button now renders [target]'s real installed-app icon
+ * ([com.yugma.terrawatch.share.appIcon], android-only - see that function's own common kdoc) at
+ * 28dp inside the unchanged 48dp touch target, falling back to the pre-existing letter monogram
+ * only if the icon genuinely can't be loaded (see [appIcon]'s own null contract - this is NOT the
+ * "app not installed" case, [visibleTargets] upstream already excludes that entirely). The fallback
+ * itself is a bare `icon ?: monogram` null-check - looked for a non-trivial pure decision to
+ * extract and TDD the way [visibleShareTargets]/[shareTargetMonogram] already are, and there isn't
+ * one here: unlike THOSE two (a real filter, a real per-target letter mapping), "did loading
+ * succeed" has exactly one bit of real information and one branch, already fully expressed by the
+ * null-check itself - wrapping it in a same-shaped named function would test the wrapper, not add
+ * coverage. `remember(target)` (same "PackageManager query only needs to run once" reasoning
+ * [visibleTargets]'s own `remember` above this function already uses) - not `remember(Unit)` across
+ * the whole `forEach`, since each target's icon lookup is independent.
  */
 @Composable
 private fun QuickShareRow(targets: List<ShareTarget>, onClick: (ShareTarget) -> Unit, modifier: Modifier = Modifier) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = modifier.fillMaxWidth()) {
         targets.forEach { target ->
+            val icon = remember(target) { appIcon(target.packageName) }
             FilledTonalIconButton(
                 onClick = { onClick(target) },
                 modifier = Modifier
@@ -440,12 +458,24 @@ private fun QuickShareRow(targets: List<ShareTarget>, onClick: (ShareTarget) -> 
                         contentDescription = shareTargetContentDescription(target)
                     },
             ) {
-                Text(
-                    text = shareTargetMonogram(target),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.clearAndSetSemantics {},
-                )
+                if (icon != null) {
+                    Image(
+                        bitmap = icon,
+                        // Decorative - the button's own merged semantics above already carries the
+                        // real "Share via WhatsApp" sentence; a second contentDescription here would
+                        // risk the identical double-read the monogram Text's own clearAndSetSemantics
+                        // below already guards against.
+                        contentDescription = null,
+                        modifier = Modifier.size(28.dp),
+                    )
+                } else {
+                    Text(
+                        text = shareTargetMonogram(target),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.clearAndSetSemantics {},
+                    )
+                }
             }
         }
     }
