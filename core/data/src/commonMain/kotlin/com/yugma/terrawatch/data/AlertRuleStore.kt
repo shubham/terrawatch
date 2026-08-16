@@ -94,7 +94,25 @@ class AlertRuleStore(private val dao: QuakeStore) {
     private fun readRadiusKm(): Double =
         (dao.metaGet(RADIUS_KEY)?.toDoubleOrNull() ?: DEFAULT_RADIUS_KM).coerceIn(MIN_RADIUS_KM, MAX_RADIUS_KM)
 
-    private fun readMinMag(): Double = dao.metaGet(MIN_MAG_KEY)?.toDoubleOrNull() ?: DEFAULT_MIN_MAG
+    /**
+     * USER REQUIREMENT (2026-08-16, binding), M4.0 magnitude-floor ruling: clamps to
+     * [[AlertRuleEngine.MIN_NOTIFIABLE_MAGNITUDE], [MAX_MIN_MAG]] — 4.0-6.0, matching
+     * `SettingsScreen.kt`'s own `MinMagSlider` bounds exactly, mirroring [readRadiusKm]'s own M2
+     * clamp precedent (same READ-side-only posture: [setMinMag] still stores whatever it's given
+     * verbatim — every real caller is the slider itself, already pre-snapped to a valid step).
+     *
+     * The LOWER bound is a direct reference to [AlertRuleEngine.MIN_NOTIFIABLE_MAGNITUDE], not an
+     * independently-chosen literal that merely happens to match it — [AlertRuleEngine] and this
+     * class live in the same `core:data` module/package, so referencing costs nothing here, unlike
+     * [MIN_RADIUS_KM]/[MAX_RADIUS_KM]'s own cross-module duplication against `SettingsScreen.kt`
+     * (composeApp depends on core:data, not the reverse, so THAT pair can't be a reference and stays
+     * a by-value duplicate — see [readRadiusKm]'s own kdoc). This slider's floor moved to 4.0
+     * specifically so the UI can no longer even OFFER a value [AlertRuleEngine.evaluate]'s own hard
+     * floor would silently override anyway — a corrupt/pre-floor stored value (or any future
+     * non-slider caller) is clamped up to that same floor here, not merely defaulted.
+     */
+    private fun readMinMag(): Double =
+        (dao.metaGet(MIN_MAG_KEY)?.toDoubleOrNull() ?: DEFAULT_MIN_MAG).coerceIn(AlertRuleEngine.MIN_NOTIFIABLE_MAGNITUDE, MAX_MIN_MAG)
 
     companion object {
         const val DEFAULT_RADIUS_KM = 100.0
@@ -104,6 +122,11 @@ class AlertRuleStore(private val dao: QuakeStore) {
         // RADIUS_STEPS_KM slider already enforces at the UI layer — see [readRadiusKm]'s own kdoc.
         const val MIN_RADIUS_KM = 50.0
         const val MAX_RADIUS_KM = 1000.0
+
+        // M4.0 magnitude-floor ruling (2026-08-16): the slider's own ceiling. Its FLOOR is
+        // deliberately not a sibling constant here — see [readMinMag]'s own kdoc for why it
+        // references [AlertRuleEngine.MIN_NOTIFIABLE_MAGNITUDE] directly instead.
+        const val MAX_MIN_MAG = 6.0
 
         private const val RADIUS_KEY = "rule_radiuskm"
         private const val MIN_MAG_KEY = "rule_minmag"

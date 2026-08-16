@@ -362,4 +362,37 @@ class AlertDigestSupportTest {
         )
         assertEquals(null, result, "5.5 is below both the favorite's MAJOR_ONLY floor (6.0) and world's own floor (6.0)")
     }
+
+    // --- USER REQUIREMENT (2026-08-16, binding), M4.0 magnitude-floor ruling: proven end-to-end
+    // through the REAL AlertRuleEngine, same "prove the combination, not just this function's own
+    // output list" posture the dedupe tests above already establish -- this is specifically the
+    // "incl. favorites ALL path" case AlertRuleEngine.MIN_NOTIFIABLE_MAGNITUDE's own kdoc calls out:
+    // an ALL favorite's minMag is whatever AlertRuleStore.minMag currently holds, and (pre-clamp, or
+    // via any future non-slider caller) that could in principle be below 4.0 -- the engine's own
+    // hard floor is what actually stops a notification below M4.0 regardless.
+
+    @Test fun `M4 floor -- an ALL favorite configured with a sub-4 minMag still never fires below M4point0`() {
+        // favoriteMinMag = 3.0 stands in for a corrupted/pre-floor AlertRuleStore.minMag value —
+        // AlertRuleStore itself clamps that on READ (see its own kdoc), but this engine-level floor
+        // is the actual backstop no matter what any caller hands it.
+        val rules = buildDigestRules(DEFAULT_RULES, listOf(tokyo), favoriteRadiusKm = 100.0, favoriteMinMag = 3.0)
+        val subFloorQuake = Quake(
+            "q8", 1000, tokyo.point.lat, tokyo.point.lon, 10.0, 3.9, "mb", "Tokyo area", false, null,
+            QuakeStatus.AUTOMATIC, mapOf(Source.USGS to "q8"), emptyList(), 1000,
+        )
+        // home far from Tokyo -- isolates this down to exactly the favorite's own rule, same "home
+        // = GeoPoint(0.0, 0.0)" isolation shape the dedupe tests above already use.
+        val result = AlertRuleEngine().evaluate(previous = null, current = subFloorQuake, rules = rules, home = GeoPoint(0.0, 0.0))
+        assertEquals(null, result, "M3.9 must never notify, even through a favorite's own sub-4 minMag setting")
+    }
+
+    @Test fun `M4 floor -- the same sub-4 ALL favorite fires at exactly M4point0`() {
+        val rules = buildDigestRules(DEFAULT_RULES, listOf(tokyo), favoriteRadiusKm = 100.0, favoriteMinMag = 3.0)
+        val floorQuake = Quake(
+            "q9", 1000, tokyo.point.lat, tokyo.point.lon, 10.0, 4.0, "mb", "Tokyo area", false, null,
+            QuakeStatus.AUTOMATIC, mapOf(Source.USGS to "q9"), emptyList(), 1000,
+        )
+        val result = AlertRuleEngine().evaluate(previous = null, current = floorQuake, rules = rules, home = GeoPoint(0.0, 0.0))
+        assertEquals(favoriteRuleId("Tokyo"), result?.matchedRuleId, "M4.0 exactly must notify, via the favorite's own rule")
+    }
 }

@@ -379,9 +379,15 @@ private fun MinMagSlider(minMag: Double, onMinMagChange: (Double) -> Unit, modif
             onValueChangeFinished = {
                 onMinMagChange(pendingMinMag)
             },
-            valueRange = 3.0f..6.0f,
-            // 3.0..6.0 in steps of 0.5 = 7 stops = start + 5 intermediate + end.
-            steps = 5,
+            // USER REQUIREMENT (2026-08-16, binding), M4.0 magnitude-floor ruling: floor raised
+            // 3.0 -> 4.0, matching AlertRuleStore.readMinMag's own read-clamp and, ultimately,
+            // AlertRuleEngine.MIN_NOTIFIABLE_MAGNITUDE (the actual notification-path backstop —
+            // see that constant's own kdoc) — a user can no longer configure a value the engine
+            // would silently override anyway.
+            valueRange = 4.0f..6.0f,
+            // 4.0..6.0 in steps of 0.5 = 5 stops = start + 3 intermediate + end (was 7 stops/5
+            // steps over the old 3.0..6.0 range — same 0.5 granularity, just a shorter range).
+            steps = 3,
         )
     }
 }
