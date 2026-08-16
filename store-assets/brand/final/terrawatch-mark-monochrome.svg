@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TerraWatch FINAL logo mark - MONOCHROME variant (Plan 5 Task 4 phase 2).
+
+  For API 33+ "themed icons" (Material You dynamic-color re-tinting) and as the source geometry
+  for the AlertDigestWorker notification small-icon glyph (see
+  composeApp/src/androidMain/res/drawable/ic_stat_terrawatch.xml for that further-simplified
+  24dp derivative - ticks dropped there, see that file's own kdoc for why).
+
+  Same "single-color paths" convention the pre-existing
+  composeApp/src/androidMain/res/drawable/ic_launcher_monochrome.xml already used: every shape
+  here is opaque white on a fully transparent canvas (no background rect) - per Android's
+  themed-icon contract, the system reads ONLY this layer's alpha channel per pixel and re-tints
+  every non-transparent pixel with its own dynamic accent color, so the literal white is inert,
+  used purely by convention.
+
+  The four ticks keep their original 0.6 alpha (as `stroke-opacity` here, same value G2 always
+  used) rather than being forced to full opacity - after OS re-tinting this reads as a
+  correspondingly fainter version of the tint color, the same relative "quieter than the needle"
+  relationship the full-color mark has. Disc/needle/dot are full opacity, matching this file's
+  own established "opaque wherever a shape is drawn" precedent.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <title>TerraWatch mark - monochrome (themed icon)</title>
+  <desc>Disc, four cardinal ticks, sweep needle, and contact dot, all opaque/translucent white on
+  a transparent field - alpha-only, for OS dynamic re-tinting.</desc>
+
+  <!-- Disc -->
+  <circle cx="54" cy="54" r="27" fill="#FFFFFF"/>
+
+  <!-- Four cardinal ticks, alpha 0.6 (unchanged ratio from the full-color mark) -->
+  <g stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-opacity="0.6">
+    <line x1="77" y1="54" x2="80" y2="54"/>
+    <line x1="54" y1="77" x2="54" y2="80"/>
+    <line x1="31" y1="54" x2="28" y2="54"/>
+    <line x1="54" y1="31" x2="54" y2="28"/>
+  </g>
+
+  <!-- Needle -->
+  <line x1="54" y1="54" x2="74.85" y2="44.28" stroke="#FFFFFF" stroke-width="5.5" stroke-linecap="round"/>
+
+  <!-- Dot -->
+  <circle cx="38.4" cy="63" r="5.25" fill="#FFFFFF"/>
+</svg>

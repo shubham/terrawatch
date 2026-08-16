@@ -7,4 +7,5 @@ actual class AlertDigestScheduler {
     actual suspend fun isEnqueued(): Boolean = false
     actual fun isDebugTriggerAvailable(): Boolean = false
     actual fun triggerNow() {}
+    actual fun ensureEnqueued() {}
 }

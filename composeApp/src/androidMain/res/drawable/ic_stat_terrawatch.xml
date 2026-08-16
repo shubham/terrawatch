@@ -1,26 +1,48 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Plan 4 Task 7: AlertDigestWorker's notification small icon - the real, brand-aligned glyph,
-  replacing Task 3's placeholder (former ic_notification.xml, a generic ring+exclamation shape,
-  deleted by this task now that the real icon exists). A simplified ring glyph - deliberately just
-  the "radius ring" motif alone (no shield, no dot), since Android renders a notification small icon
-  as a flat white silhouette from this shape's ALPHA CHANNEL ONLY (status-bar/shade chrome ignores
-  fillColor entirely - same rule the old ic_notification.xml documented, still true here, literal
-  color below is inert), and small-icon guidance is "simple, bold, no fine detail" at status-bar
-  scale - the full shield+ring+dot launcher composition would not read cleanly that small.
+  Plan 5 Task 4/6 phase 2: AlertDigestWorker's notification small icon, updated for the FINAL
+  mark - "dial + needle + dot", ticks dropped. See
+  store-assets/brand/final/final-rationale.md's "Notification-icon derivative" section for the
+  full reasoning; summarized here since it's a bigger deviation than a straight simplification:
 
-  24x24dp viewport (Android's standard notification icon canvas), ring centered at (12,12),
-  r=7 (centerline), stroke 3dp - outer edge r=8.5, comfortably inside the 24dp canvas with a ~3dp
-  margin per side.
+  A literal transcription (filled disc + solid needle + solid dot, all one color) was rendered
+  and checked, not assumed - it fails categorically, not just at small size: Android renders a
+  notification small icon as a single flat alpha-only silhouette (status-bar/shade chrome
+  discards fillColor/strokeColor entirely, same rule this file's previous version already
+  documented), so three same-colored solid shapes are indistinguishable from each other at ANY
+  resolution once hue is stripped out - there is no second channel left to separate them.
+
+  Fix: reuses this app's own already-shipped "radius ring" glyph (this file's previous ring-only
+  design, unchanged geometry: centerline r7, stroke 3dp, center 12,12) as the "dial," with the
+  needle and dot as solid shapes INSIDE the hollow interior, giving the contrast a filled disc
+  can't. Ticks are dropped entirely (not just "optional" here) - there's no ring rim for them to
+  sit "just inside" the way they do against the master mark's own disc, and at 24dp they'd be
+  far below the 48px floor already established for their legibility.
+
+  Needle (12,12)->(16.26,10.0) and dot center (8.82,13.84) r1.1 are the master mark's own
+  needle-angle/dot-angle ratios, rescaled against the ring's inner edge (r5.5) as the analog
+  safe radius - same "never touching the rim" clearance discipline the master mark's ticks use
+  against its own disc.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
+  <!-- Ring ("the dial"): centerline r7, stroke 3, center (12,12) - unchanged from the previous glyph. -->
   <path
       android:pathData="M19,12 A7,7 0 1,1 5,12 A7,7 0 1,1 19,12 Z"
       android:fillColor="#00000000"
       android:strokeColor="#FF000000"
       android:strokeWidth="3" />
+  <!-- Needle: center (12,12) to (16.26,10.0), inside the ring's inner edge (r5.5). -->
+  <path
+      android:pathData="M12,12 L16.26,10.0"
+      android:strokeColor="#FF000000"
+      android:strokeWidth="1.2"
+      android:strokeLineCap="round" />
+  <!-- Dot: center (8.82,13.84), r1.1, inside the ring's inner edge. -->
+  <path
+      android:pathData="M9.92,13.84 A1.1,1.1 0 1,1 7.72,13.84 A1.1,1.1 0 1,1 9.92,13.84 Z"
+      android:fillColor="#FF000000" />
 </vector>

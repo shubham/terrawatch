@@ -9,6 +9,10 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -24,6 +28,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.yugma.terrawatch.model.GeoPoint
 import com.yugma.terrawatch.model.MagnitudeBand
@@ -51,7 +56,9 @@ import org.maplibre.compose.layers.CircleLayer
 import org.maplibre.compose.layers.FillLayer
 import org.maplibre.compose.layers.LineLayer
 import org.maplibre.compose.layers.SymbolLayer
+import org.maplibre.compose.map.MapOptions
 import org.maplibre.compose.map.MaplibreMap
+import org.maplibre.compose.map.OrnamentOptions
 import org.maplibre.compose.sources.GeoJsonData
 import org.maplibre.compose.sources.GeoJsonOptions
 import org.maplibre.compose.sources.rememberGeoJsonSource
@@ -442,10 +449,39 @@ actual fun QuakeMap(
     modifier
   }
 
+  // Fix (post-Plan-5 tail, RESULTS.md round2 concern #6): this map runs edge-to-edge
+  // (HomeScreen.kt's own call site is a plain `Modifier.fillMaxSize()`, no inset consumption of
+  // its own — the map body is MEANT to run full-bleed under the system bars, same as most map
+  // UIs), but maplibre-compose's own ornaments (scale bar/compass/logo/attribution) had no inset
+  // of their own either: [OrnamentOptions]'s real default (confirmed via `javap` against the
+  // resolved `maplibre-compose-android-0.14.0.aar`'s `OrnamentOptions.class` — its synthetic
+  // default-args constructor's own bytecode, not guessed from the spike doc's prose) is a flat
+  // `padding = PaddingValues(0.dp)` shared by all four ornaments alike, which left the
+  // TopStart-anchored scale bar rendering flush against the physical top edge of the screen —
+  // device-verified colliding with the status bar on both 98bc1cd8 (Android 14) and the Moto
+  // (Android 16, this concern's own original observation).
+  //
+  // [OrnamentOptions] has exactly ONE shared `padding` for all four ornaments (no independent
+  // per-ornament margin — confirmed the same way), so setting both `top` (for the TopStart scale
+  // bar / TopEnd compass) and `bottom` (for the BottomStart logo / BottomEnd attribution) on this
+  // ONE value fixes both edges in a single change rather than needing two separate API surfaces.
+  // `WindowInsets.statusBars`/`.navigationBars` (`androidx.compose.foundation.layout`, the same
+  // package `SettingsScreen.kt`'s own `WindowInsets.systemBars` already comes from) are the real,
+  // live system-bar insets — `getTop`/`getBottom` convert the raw px reading to `Dp` via the
+  // current [LocalDensity], not a hardcoded guess, so this tracks a runtime display-cutout/gesture-
+  // nav-bar change correctly on any device, not just the two judged here.
+  val density = LocalDensity.current
+  val statusBarInset = WindowInsets.statusBars.getTop(density)
+  val navigationBarInset = WindowInsets.navigationBars.getBottom(density)
+  val ornamentPadding = with(density) {
+    PaddingValues(top = statusBarInset.toDp(), bottom = navigationBarInset.toDp())
+  }
+
   MaplibreMap(
       modifier = mapModifier,
       baseStyle = BaseStyle.Uri(OPENFREEMAP_LIBERTY_STYLE_URL),
       cameraState = cameraState,
+      options = MapOptions(ornamentOptions = OrnamentOptions(padding = ornamentPadding)),
   ) {
     // Bottom-most of all: the home-radius ring, so it never sits on top of a pin or the pin-drop
     // animation rings below. Always composed (never conditional on homeLocation != null) — see

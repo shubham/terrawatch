@@ -41,6 +41,16 @@ class ContrastTest {
         assertTrue(ratio >= minRatio, "$pairName measured %.2f:1, need >= $minRatio:1".format(ratio))
     }
 
+    // Dark-mode favorites fix (post-p5-tail): reproduces the alpha-compositing Compose itself does
+    // when a semi-transparent `containerColor` is drawn over whatever's already on screen (here,
+    // PlaceQuickSwitchChips' unselected FilterChip over QuakeMap's basemap) - the standard
+    // Porter-Duff "over" operator, per RGB channel.
+    private fun compositeOver(fg: Color, alpha: Float, bg: Color): Color = Color(
+        red = alpha * fg.red + (1 - alpha) * bg.red,
+        green = alpha * fg.green + (1 - alpha) * bg.green,
+        blue = alpha * fg.blue + (1 - alpha) * bg.blue,
+    )
+
     // Reproduces the doc's own cited WCAG-fail numbers for the pre-fix white-on-fill pairing, so a
     // future reader can see exactly what was wrong (all three intentionally below their applicable
     // floor here) rather than just trusting the doc's prose.
@@ -86,5 +96,29 @@ class ContrastTest {
 
     @Test fun `dark theme tertiaryContainer pair clears 4_5 to 1`() {
         assertPasses("Canvas on DuskCardVariant (tertiaryContainer, dark)", TerraColors.Canvas, TerraColors.DuskCardVariant)
+    }
+
+    // Dark-mode "favorite places not visible" fix (post-p5-tail, device-reproduced -
+    // docs/qa/post-p5-tail/RESULTS.md): HomeScreen.PlaceQuickSwitchChips floats over QuakeMap's
+    // basemap, which is a fixed LIGHT map style in every theme (OpenFreeMap "liberty" - no dark
+    // variant exists, see QuakeMap.android.kt's own kdoc). The unselected FilterChip previously had
+    // no containerColor override (M3 default Color.Transparent), so dark theme's Water-toned label
+    // text rendered near-invisibly on top of the map - a real device screenshot measured Water
+    // (#D9E9F4) on the sampled map-ocean tile (#9EBDFF) at only 1.51:1.
+    @Test fun `white-on-map was the proven failure this fix closes (dark quick-switch chip)`() {
+        val sampledMapOceanTile = Color(0xFF9EBDFF) // device-sampled, darkmode-favorites-before-home.png
+        assertTrue(contrastRatio(TerraColors.Water, sampledMapOceanTile) < 2.0)
+    }
+
+    @Test fun `dark theme unselected quick-switch chip clears 4_5 to 1 even over a worst-case white map tile`() {
+        // Fix: containerColor = surface.copy(alpha = 0.78f) - the same "glass" tone/alpha every
+        // other floating control on this screen (StatusShield/StalenessBanner/SettingsGearChip/
+        // MyLocationFab) already uses. In dark theme, surface = DuskCard. Composited here over
+        // Color.White - the lightest a map tile could ever be, deliberately more adverse than this
+        // map style's real (cream/pale-blue, never pure white) tones - as a floor: clearing 4.5:1
+        // against pure white guarantees clearing it against any real, necessarily-less-extreme map
+        // color too.
+        val worstCaseChipBackground = compositeOver(fg = TerraColors.DuskCard, alpha = 0.78f, bg = Color.White)
+        assertPasses("Water label on worst-case glass chip background (dark)", TerraColors.Water, worstCaseChipBackground)
     }
 }
