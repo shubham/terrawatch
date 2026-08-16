@@ -228,3 +228,144 @@ Moto: **PENDING** (disconnected all session, same as Fixes 1/2).
   restriction the task brief already flagged) — every permission-state change in this pass went
   through either a full uninstall/reinstall or the real system Settings UI, never a raw adb
   permission command.
+
+## Logo finalization + application (Plan 5 Task 4 phase 2 / Task 6 phase 2)
+
+User pick: **G2's geometry** (`store-assets/brand/round3/direction-g2.svg` — dial + cardinal ticks)
+with **G4's color treatment** (`store-assets/brand/round3/direction-g4.svg` — epicenter accent dot).
+Full merge reasoning, including one hex correction made against both source files' own stated
+value, lives in `store-assets/brand/final/final-rationale.md` — summarized here.
+
+### Merge decision
+
+Disc, four cardinal ticks (Water @ 0.6 opacity), and the sweep needle are G2's exact geometry,
+unchanged. The contact dot takes G4's treatment (recolor + resize, r4.5→5.25) — **with one
+deliberate correction**: G4's file and `round3-rationale.md` both cite the dot hex as `#B08A2E`,
+which was accurate when they were written but is now stale. Re-grepping `core/ui`'s `Tokens.kt`
+fresh for this task found a same-day change
+(`docs/superpowers/plans/2026-08-16-ui-polish-findings.md`): `WarnInk` was darkened from `#B08A2E`
+to `#7A5B19` to fix a real WCAG AA failure elsewhere in the app (`RevisionBadge`'s
+`WarnInk`-on-`WarnBg` pair, 2.91:1 → 5.69:1), and this token also feeds `TerraTheme.kt`'s dark
+`errorContainer`. `Tokens.kt`'s own header calls these hex values "LAW." The final mark uses the
+**current** `#7A5B19`, not the stale `#B08A2E` — G4's own argument for WarnInk was "reuse the app's
+real token," and honoring that argument means following the token to where it now points. Honest
+consequence: the user picked G4 by looking at a render made with the brighter, now-stale hex;
+`#7A5B19` is a visibly more muted amber (confirmed side-by-side in `final-preview.png`'s 48px crops)
+— it still reads clearly as the mark's one warm element, but doesn't "pop" quite as much as what
+was actually viewed at pick time. Surfaced here rather than silently substituted.
+
+Final mark = 4 hexes (Water/Ink/Safe/WarnInk) — inherits G4's own already-disclosed departure from
+the 3-hex budget every other direction held to. Not a new trade-off, just an inherited one.
+
+### Renders
+
+`store-assets/brand/final/final-preview.png` — light canvas (Canvas `#F6FAF9`) / dark canvas
+(DuskCanvas `#10161D`) × 512px true raster / 48px true raster (plus a 4x nearest-neighbor zoom
+crop of the 48px raster for honest inspection, not a resize-up of the 512px version). Same Pillow
+(11.3.0) 8x-supersample-then-LANCZOS method rounds 1–3 used. **48px verdict**: all four ticks stay
+individually visible against the Ink disc, matching G2's own "strongest performer at 48px" claim —
+confirmed again on the actual merged mark, not just assumed to carry over. The WarnInk dot reads as
+a clear warm accent at 48px but is visibly more muted than a brighter amber would be (see hex
+correction above) — legible, not broken, but the honest ceiling of the corrected color.
+
+### Adaptive icon (vector pipeline, not PNG)
+
+Matched the existing pipeline exactly: hand-authored VectorDrawable XML (same as Plan 4 Task 7's
+shield design), not an SVG→PNG density pipeline. Updated
+`ic_launcher_foreground.xml`/`ic_launcher_monochrome.xml` (new disc+ticks+needle+dot geometry,
+pathData transliterated directly from the final SVG) and `ic_stat_terrawatch.xml` (notification
+glyph). `ic_launcher_background.xml` needed no geometry change — confirmed (not assumed) that its
+existing Water rect already matches the new mark's own background exactly; only its header comment
+was updated to stop pointing at the superseded shield design. Legacy `mipmap-*dpi/ic_launcher*.png`
+rasters (pre-API26 fallback only — this app's minSdk is 26, so adaptive icons are what every real
+device resolves) regenerated via the same Pillow rasterizer, at each density's exact target size.
+
+**Notification glyph — a bigger deviation than "simplify," reasoned through and rendered, not
+assumed:** a literal transcription (filled disc + solid-white needle + solid-white dot — all one
+color, since Android notification icons discard fillColor/strokeColor entirely) was rendered once
+to check. Result: needle and dot are completely indistinguishable from the disc — confirmed on the
+actual render, not just predicted. This is categorical (no color channel survives at any
+resolution), not a "make it bigger" problem. Fix: the glyph instead reuses this app's own
+already-shipped ring ("the radius ring," unchanged geometry) as the "dial," with the needle and dot
+as solid shapes inside the hollow interior for contrast. Ticks dropped entirely (not just
+"optional" — there's no rim for them to sit against on a hollow ring, and 24dp is well under their
+established 48px legibility floor anyway). Both candidates rendered and compared before deciding
+(see `final-rationale.md`'s "Notification-icon derivative" section for exact geometry).
+
+Safe-zone check (66dp/r33 circle): disc max extent 27, ticks 26, needle ≈25.75, dot ≈23.26 — all
+clear with margin, computed not assumed (table in `final-rationale.md`).
+
+### Store assets
+
+`store-assets/icon-1024.png` regenerated (1024×1024, mark on Water, saved as RGB — zero
+transparency, no rounded corners baked, matching Play's spec and the file's own pre-existing
+convention). `store-assets/feature-graphic.png` regenerated: reverse-engineered the existing
+layout by connected-component color analysis (not eyeballed) to recover the exact mark
+center/scale, wordmark/tagline bounding boxes, and the 3 decorative magnitude-dot positions/colors
+— then rebuilt the same canvas with only the mark swapped. Wordmark/tagline/dots are pixel-for-
+pixel the same content, same Arial/Arial Bold convention `screenshots-framed/README.md` already
+documents for this asset pipeline.
+
+### Social art (`store-assets/social/art/`, 9 files)
+
+Per `store-assets/social/art-specs.md`: `avatar-youtube-800.png`, `avatar-instagram-320.png`,
+`avatar-x-400.png`, `avatar-threads-320.png` (byte-identical to the IG avatar, per spec's "Threads
+reuse IG"), `youtube-channel-art-2560x1440.png` (safe area 1546×423 centered per the spec's own
+math, mark+wordmark placed inside it), `x-header-1500x500.png` (safe band y:[60,440], group
+centered), and 3 IG posts (`ig-post-1-home-map-1080.png`, `-2-notification-1080.png`,
+`-3-radius-ring-1080.png`) — the spec's own "accepted v1 shortcut": existing
+`screenshots-framed/*.png` pillarboxed onto a 1080×1080 Water canvas, scale 0.5625, 236px bars each
+side (matches the spec's own worked arithmetic exactly). Avatars needed no extra safe-margin
+adjustment: the mark's largest element (disc) sits at 50% of the canvas half-width, comfortably
+inside any reasonable circular crop.
+
+### Device verify (98bc1cd8, OnePlus 9R, Android 14/OxygenOS)
+
+`./gradlew :composeApp:assembleDebug --max-workers=4` → green → `adb install -r` → Success.
+
+- **Launcher grid**: real icon visible in the app drawer alongside neighbors (Substack, Theme
+  Store) — `docs/qa/post-p5-tail/logo-01-launcher-grid.png`. OS's own rounded-square mask applied
+  correctly; disc/ticks/needle/dot all render undistorted (zoomed crop confirmed all 4 ticks + the
+  needle + the dot individually, matching the design). Long-press context menu
+  (`logo-02-longpress-menu.png`) is App info/Share/Edit/Uninstall only — no per-icon option, as
+  expected.
+- **Themed icon**: checked 3 real locations, not just one glance — Wallpapers & style → Icons
+  (`logo-04-oxygenos-icons-page.png`: this is OxygenOS's own icon-shape/pack switcher + "ART+
+  Icons" curated third-party redesigns, a different mechanism from AOSP's monochrome themed-icon
+  API, and not something a small indie app would ever be curated into regardless); Wallpapers &
+  style → Colours (`logo-05-oxygenos-colours-page.png`: system accent-color picker, no icon-theming
+  toggle); Home Screen & Lock Screen settings (`logo-06-home-lock-screen-settings.png`: layout/
+  gesture options only). **Verdict: this OxygenOS build does not expose the standard Android 13+
+  themed-icon toggle in any checked location** — noted honestly rather than assumed unsupported
+  after one glance. `ic_launcher_monochrome.xml` is implemented correctly per platform spec
+  regardless, and will activate on launchers/OS builds that do support it (stock/Pixel Android).
+- **Notification glyph**: `adb shell dumpsys notification --noredact` → 0 active `NotificationRecord`
+  entries for `com.yugma.terrawatch` — no live notification existed or could be honestly triggered
+  (no favorite/alert-rule state was set up on this fresh install, and forcing one would not be the
+  "real M6+ quake happens to be pending" check the task asked for). Per the task's own honest
+  fallback: verified via direct drawable-render inspection instead —
+  `docs/qa/post-p5-tail/logo-07-notification-glyph-render-inspection.png` (status-bar mock, shade-
+  card mock, true-24dp and 4x-zoom crops, all rendered from the exact shipped VectorDrawable
+  geometry). Reads clearly as a dial-with-needle-and-dot glyph at true size in both mocks.
+
+### Tests / compiles
+
+- `./gradlew jvmTest --max-workers=4` — **BUILD SUCCESSFUL**, all tasks UP-TO-DATE (this task
+  touched only Android drawable/mipmap/PNG resources, no Kotlin source — nothing for jvmTest to
+  newly exercise, same reasoning Fix 2/3 above document for resource-only changes).
+- `./gradlew :composeApp:assembleDebug --max-workers=4` — green (see device verify above).
+
+### Concerns
+
+- The WarnInk hex correction (above) means the shipped dot color is objectively more muted than
+  what the user looked at when picking G4 — technically the right call (follows the app's own
+  current "LAW" token, avoids reintroducing a value the app moved away from for a real
+  accessibility reason elsewhere), but it's a color the user hasn't actually seen yet. Worth a
+  quick glance before this ships further.
+- Themed-icon support could not be positively demonstrated on this specific device/OS build (see
+  above) — the monochrome layer is implemented correctly per spec, but real-device confirmation of
+  the re-tint behavior itself remains outstanding for whichever device/launcher does support it.
+- Notification-glyph verification is drawable-render inspection only, not a live on-device shade
+  screenshot — no TerraWatch notification existed to capture honestly at verification time.
+- Moto (Android 16) is still PENDING for this task's device-verify pass too, same as every other
+  item in this file — device was disconnected this entire session.

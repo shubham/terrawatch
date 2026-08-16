@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TerraWatch FINAL logo mark (Plan 5 Task 4 phase 2). User pick: G2's geometry
+  (store-assets/brand/round3/direction-g2.svg - "dial + cardinal ticks") with G4's color
+  treatment applied to the contact dot only (store-assets/brand/round3/direction-g4.svg -
+  "epicenter accent dot"). See final-rationale.md for the full merge reasoning, including one
+  correction made against both source files' own stated hex (read that file before assuming
+  the dot color below is a typo - it is deliberate).
+
+  Geometry, byte-for-byte from direction-g2.svg: background rect, Ink disc (r27, unchanged
+  position/color from direction-g.svg through every round), four Water@0.6-opacity cardinal
+  hairline ticks (r23->r26), Safe sweep needle (unchanged angle/length/color from direction-g.svg
+  through every round).
+
+  ONE deliberate change from a literal copy-paste of G4: the contact dot fill is
+  #7A5B19, NOT the #B08A2E direction-g4.svg's own comments cite. Both G4's file and
+  round3-rationale.md were written against the WarnInk token's value AT THE TIME (#B08A2E).
+  Same-day (docs/superpowers/plans/2026-08-16-ui-polish-findings.md), core/ui's Tokens.kt
+  darkened WarnInk to #7A5B19 for a real WCAG AA fix (RevisionBadge's WarnInk-on-WarnBg pair,
+  2.91:1 -> 5.69:1) - and Tokens.kt's own header comment calls these hex values "LAW". G4's
+  entire rationale for using WarnInk here is "reuse the app's own real token, not an invented
+  hex" - honoring that reasoning means following the token where it now actually points, not
+  the stale value quoted before it moved. Using the old #B08A2E would silently reintroduce
+  the exact shade the app just moved away from elsewhere for a real accessibility reason.
+  Radius (5.25, G4's bump from G's/G2's 4.5) is unchanged - only the fill hex differs from a
+  literal G4 copy.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <title>TerraWatch mark</title>
+  <desc>An Ink disc on a Water-blue field, carrying four faint Water hairline ticks at the
+  cardinal points, one Safe-green sweep needle, and one warm WarnInk accent dot as the mark's
+  single focal point.</desc>
+
+  <!-- Background: Water-blue, full 108x108 bleed. -->
+  <rect x="0" y="0" width="108" height="108" fill="#D9E9F4"/>
+
+  <!-- Disc: Ink, the dial/scope face. Byte-identical to direction-g.svg / direction-g2.svg. -->
+  <circle cx="54" cy="54" r="27" fill="#17222E"/>
+
+  <!-- Four cardinal tick marks: Water, hairline, r23->r26, stroke-opacity 0.6 - G2's own device,
+       unchanged. Drawn before the needle/dot, matching G2's document order. -->
+  <g stroke="#D9E9F4" stroke-width="1.5" stroke-linecap="round" stroke-opacity="0.6">
+    <line x1="77" y1="54" x2="80" y2="54"/>   <!-- East / 3 o'clock -->
+    <line x1="54" y1="77" x2="54" y2="80"/>   <!-- South / 6 o'clock -->
+    <line x1="31" y1="54" x2="28" y2="54"/>   <!-- West / 9 o'clock -->
+    <line x1="54" y1="31" x2="54" y2="28"/>   <!-- North / 12 o'clock -->
+  </g>
+
+  <!-- Sweep needle: Safe green, center to (74.85,44.28) - unchanged from direction-g.svg. -->
+  <line x1="54" y1="54" x2="74.85" y2="44.28" stroke="#2FA36B" stroke-width="5.5" stroke-linecap="round"/>
+
+  <!-- Contact dot: G4's treatment (recolor + resize) applied to G2's dot - fill is the CURRENT
+       core/ui Tokens.kt WarnInk (#7A5B19), not G4 file's own stale #B08A2E - see header comment. -->
+  <circle cx="38.4" cy="63" r="5.25" fill="#7A5B19"/>
+</svg>

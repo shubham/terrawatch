@@ -1,14 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Plan 4 Task 7: adaptive icon MONOCHROME layer (API 33+ "themed icons" / Material You - system
-  Settings > Wallpaper & style > Themed icons). Same 3 shapes/coordinates as
-  ic_launcher_foreground.xml (ring + shield + dot - see that file's own kdoc for the full geometry
-  rationale), but every fillColor/strokeColor here is opaque white: per Android's own themed-icon
-  guidance, the system reads ONLY this layer's alpha channel and re-tints the visible pixels with
-  its own dynamic accent color, so the literal color is inert (same "alpha channel is all that
-  matters" rule ic_notification.xml/ic_stat_terrawatch.xml document for notification small icons) -
-  white is used here purely by convention (fully opaque wherever a shape is drawn, fully transparent
-  elsewhere).
+  Plan 5 Task 4/6 phase 2: adaptive icon MONOCHROME layer (API 33+ "themed icons" / Material You -
+  system Settings > Wallpaper & style > Themed icons), updated for the FINAL mark. Same 4
+  shapes/coordinates as ic_launcher_foreground.xml (disc + ticks + needle + dot - see that file's
+  own kdoc, and store-assets/brand/final/terrawatch-mark-monochrome.svg + final-rationale.md, for
+  the full geometry/rationale), but every fillColor/strokeColor here is opaque white: per
+  Android's own themed-icon guidance, the system reads ONLY this layer's alpha channel and
+  re-tints the visible pixels with its own dynamic accent color, so the literal color is inert
+  (same "alpha channel is all that matters" rule ic_stat_terrawatch.xml documents for the
+  notification small icon) - white is used here purely by convention.
+
+  The four ticks keep their 0.6 alpha (as strokeAlpha) rather than being forced fully opaque -
+  after the OS's own re-tint this reads as a correspondingly fainter version of the tint color,
+  preserving the same "ticks are quieter than the needle" relationship the full-color mark has.
+  Disc/needle/dot are fully opaque, matching this file's own established "opaque wherever a
+  shape is drawn" precedent from the previous shield design.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -16,14 +22,38 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
   <path
-      android:pathData="M83.5,54 A29.5,29.5 0 1,1 24.5,54 A29.5,29.5 0 1,1 83.5,54 Z"
-      android:fillColor="#00000000"
-      android:strokeColor="#FFFFFFFF"
-      android:strokeWidth="5" />
-  <path
-      android:pathData="M54,33 C62,33 68,36 71,39 L71,56 C71,66 64,72 54,77 C44,72 37,66 37,56 L37,39 C40,36 46,33 54,33 Z"
+      android:pathData="M81,54 A27,27 0 1,1 27,54 A27,27 0 1,1 81,54 Z"
       android:fillColor="#FFFFFFFF" />
   <path
-      android:pathData="M73.5,40 A6.5,6.5 0 1,1 60.5,40 A6.5,6.5 0 1,1 73.5,40 Z"
+      android:pathData="M77,54 L80,54"
+      android:strokeColor="#FFFFFFFF"
+      android:strokeWidth="1.5"
+      android:strokeLineCap="round"
+      android:strokeAlpha="0.6" />
+  <path
+      android:pathData="M54,77 L54,80"
+      android:strokeColor="#FFFFFFFF"
+      android:strokeWidth="1.5"
+      android:strokeLineCap="round"
+      android:strokeAlpha="0.6" />
+  <path
+      android:pathData="M31,54 L28,54"
+      android:strokeColor="#FFFFFFFF"
+      android:strokeWidth="1.5"
+      android:strokeLineCap="round"
+      android:strokeAlpha="0.6" />
+  <path
+      android:pathData="M54,31 L54,28"
+      android:strokeColor="#FFFFFFFF"
+      android:strokeWidth="1.5"
+      android:strokeLineCap="round"
+      android:strokeAlpha="0.6" />
+  <path
+      android:pathData="M54,54 L74.85,44.28"
+      android:strokeColor="#FFFFFFFF"
+      android:strokeWidth="5.5"
+      android:strokeLineCap="round" />
+  <path
+      android:pathData="M43.65,63 A5.25,5.25 0 1,1 33.15,63 A5.25,5.25 0 1,1 43.65,63 Z"
       android:fillColor="#FFFFFFFF" />
 </vector>
