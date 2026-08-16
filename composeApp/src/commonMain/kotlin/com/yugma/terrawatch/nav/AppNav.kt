@@ -1,5 +1,11 @@
 package com.yugma.terrawatch.nav
 
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -338,6 +344,37 @@ private fun navigateToTab(navController: NavHostController, route: String) {
     }
 }
 
+// UI polish findings (docs/superpowers/plans/2026-08-16-ui-polish-findings.md), Part 3 item 3: none
+// of this NavHost's composable() call sites set an explicit enterTransition/exitTransition, so tab
+// switches (Home/History/Insights/Settings) fell through to Navigation Compose's own unreviewed
+// default. A deliberate crossfade replaces that un-reviewed default with an intentional one -
+// specifically NOT a lateral slide, since these are sibling tabs/a settings push, not a forward
+// navigation-stack step. Duration/easing are the real M3 MotionTokens.kt values the doc sourced
+// directly from this project's resolved material3:1.8.2 dependency (m3.material.io's own motion
+// pages proved unfetchable - a client-rendered SPA, see the doc's Sources section) rather than
+// guessed: Medium2 = 300ms; EmphasizedDecelerate = cubic-bezier(0.05, 0.7, 0.1, 1) for the entering
+// tab, Standard = cubic-bezier(0.2, 0, 0, 1) for the exiting one. `MotionTokens` itself isn't part
+// of material3's public API surface, so these are reconstructed directly as `CubicBezierEasing`
+// (a stable, public, constructible type) from the doc's own sourced control points, rather than
+// depended on internally.
+private const val TAB_CROSSFADE_DURATION_MS = 300
+private val TabEnterEasing = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f) // EmphasizedDecelerate
+private val TabExitEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f) // Standard
+
+private fun tabEnterTransition(reducedMotion: Boolean): EnterTransition =
+    if (reducedMotion) {
+        EnterTransition.None
+    } else {
+        fadeIn(tween(TAB_CROSSFADE_DURATION_MS, easing = TabEnterEasing))
+    }
+
+private fun tabExitTransition(reducedMotion: Boolean): ExitTransition =
+    if (reducedMotion) {
+        ExitTransition.None
+    } else {
+        fadeOut(tween(TAB_CROSSFADE_DURATION_MS, easing = TabExitEasing))
+    }
+
 @Composable
 private fun AppNavHost(
     navController: NavHostController,
@@ -348,8 +385,25 @@ private fun AppNavHost(
     onboardingStore: OnboardingStore,
     modifier: Modifier = Modifier,
 ) {
+    // Read once per recomposition of this composable (an accessibility-setting-driven value, not
+    // something that changes mid-gesture) and captured by the plain (non-@Composable)
+    // enterTransition/exitTransition lambdas below - the same "read LocalReducedMotion.current once,
+    // thread the plain Boolean down" shape this app already uses throughout (e.g. BannerAdSlot's
+    // `reducedMotion = LocalReducedMotion.current` at its AppNav call site below).
+    val reducedMotion = LocalReducedMotion.current
     NavHost(navController = navController, startDestination = startDestination, modifier = modifier) {
-        composable(Routes.HOME) {
+        // Only the 4 routes the doc's own Part 3 table names (Home/History/Insights/Settings) get
+        // the crossfade - Paywall/Onboarding keep whatever default Navigation Compose already
+        // applies, deliberately out of this item's named scope (a first-run-only pager and a rare
+        // purchase-flow push read differently from a "switching sibling tabs" crossfade).
+        // popEnterTransition/popExitTransition default to enterTransition/exitTransition when not
+        // set explicitly, so back-direction (e.g. a Settings->Home system-back) gets the identical
+        // fade, not a directional asymmetry.
+        composable(
+            Routes.HOME,
+            enterTransition = { tabEnterTransition(reducedMotion) },
+            exitTransition = { tabExitTransition(reducedMotion) },
+        ) {
             HomeScreen(
                 viewModel = homeViewModel,
                 selectionViewModel = selectionViewModel,
@@ -367,7 +421,11 @@ private fun AppNavHost(
         // be the SAME Activity-scoped instance Home shares, never a second nav-back-stack-entry-
         // scoped one (see HistoryScreen's own kdoc). detailNewsViewModel (Plan 4 Task 5): same
         // Activity-scoped sharing reasoning.
-        composable(Routes.HISTORY) {
+        composable(
+            Routes.HISTORY,
+            enterTransition = { tabEnterTransition(reducedMotion) },
+            exitTransition = { tabExitTransition(reducedMotion) },
+        ) {
             HistoryScreen(selectionViewModel = selectionViewModel, detailNewsViewModel = detailNewsViewModel)
         }
         // Task 6 (Plan 3): same shape as HISTORY above -- InsightsViewModel resolves via
@@ -376,7 +434,11 @@ private fun AppNavHost(
         // detailNewsViewModel (Plan 4 Task 5): same Activity-scoped sharing reasoning; Insights'
         // OWN separate "In the news" card resolves InsightsNewsViewModel via its own defaulted
         // param instead, see InsightsScreen's own kdoc.
-        composable(Routes.INSIGHTS) {
+        composable(
+            Routes.INSIGHTS,
+            enterTransition = { tabEnterTransition(reducedMotion) },
+            exitTransition = { tabExitTransition(reducedMotion) },
+        ) {
             InsightsScreen(selectionViewModel = selectionViewModel, detailNewsViewModel = detailNewsViewModel)
         }
         // Task 7 (Plan 3): the real SettingsScreen replaces the placeholder — its own
@@ -386,7 +448,11 @@ private fun AppNavHost(
         // all (unlike HOME/HISTORY/INSIGHTS, this isn't a tab with its own back-stack root).
         // Plan 4 Task 6: onPlusClick pushes the new PAYWALL route — same "stack-only route reached
         // from a tab, popped via onBack" shape.
-        composable(Routes.SETTINGS) {
+        composable(
+            Routes.SETTINGS,
+            enterTransition = { tabEnterTransition(reducedMotion) },
+            exitTransition = { tabExitTransition(reducedMotion) },
+        ) {
             SettingsScreen(
                 onBack = { navController.popBackStack() },
                 onPlusClick = { navController.navigate(Routes.PAYWALL) },

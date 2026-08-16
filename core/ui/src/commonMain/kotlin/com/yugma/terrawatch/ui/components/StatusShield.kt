@@ -68,9 +68,17 @@ private val MIN_TOUCH_TARGET = 48.dp
  * slightly squarer corner) per the Task 9 brief's shape-morph note. Task 10 (item a, spec §4.3 rule
  * 2 - "the status shield shape-morphs between states"): the corner now *animates* between the two
  * radii via [animateDpAsState] instead of snapping — a [spring] with
- * [Spring.DampingRatioMediumBouncy] (matching this app's other signature-motion springs: the map's
- * pin-drop pop, [RevisionBadge]'s own revise pulse) so a CALM<->ALERT flip visibly morphs the pill's
- * silhouette rather than cutting between two static shapes. [reducedMotion] (threaded in explicitly,
+ * [Spring.DampingRatioNoBouncy] so a CALM<->ALERT flip visibly morphs the pill's silhouette rather
+ * than cutting between two static shapes, with zero overshoot.
+ *
+ * UI polish findings (docs/superpowers/plans/2026-08-16-ui-polish-findings.md), Part 3 item 1: this
+ * used to be [Spring.DampingRatioMediumBouncy] (matching this app's other 2 signature-motion
+ * springs: the map's pin-drop pop, [RevisionBadge]'s own revise pulse) - source-confirmed as the
+ * 2nd-bounciest of 4 built-in `animation-core` presets, in real tension with "calm brand, nothing
+ * playful about severity" for a shape that IS the app's own alert/status indicator. Swapped to
+ * [Spring.DampingRatioNoBouncy] (critically damped) along with the other 2 signature springs, chosen
+ * uniformly across all 3 rather than differentiated (see [RevisionBadge]'s own kdoc for the full
+ * reasoning). [reducedMotion] (threaded in explicitly,
  * not read from `LocalReducedMotion` — this module can't depend on composeApp's motion package;
  * see this file's own module-boundary note below) swaps the spring for [snap] so the corner still
  * changes, just instantly, honoring spec §4.3's "a reduce motion setting... disables all of it."
@@ -113,7 +121,7 @@ fun StatusShield(
     val targetCorner = if (status.kind == PillStatus.Kind.ALERT) ALERT_CORNER else TerraRadii.pill
     val animatedCorner by animateDpAsState(
         targetValue = targetCorner,
-        animationSpec = if (reducedMotion) snap() else spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        animationSpec = if (reducedMotion) snap() else spring(dampingRatio = Spring.DampingRatioNoBouncy),
         label = "pill-corner-morph",
     )
     val shape = RoundedCornerShape(animatedCorner)

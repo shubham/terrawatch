@@ -343,7 +343,13 @@ actual fun QuakeMap(
       ring1Progress.snapTo(0f)
       ring2Progress.snapTo(0f)
       coroutineScope {
-        launch { scale.animateTo(1f, spring(dampingRatio = Spring.DampingRatioMediumBouncy)) }
+        // UI polish findings (docs/superpowers/plans/2026-08-16-ui-polish-findings.md), Part 3
+        // item 1: was Spring.DampingRatioMediumBouncy (see NewQuakePinOverlay's own kdoc below for
+        // the full history) - swapped to DampingRatioNoBouncy along with this app's other 2
+        // signature springs (RevisionBadge/StatusShield), chosen uniformly rather than
+        // differentiated since a new pin's size+color are themselves magnitude-derived, making this
+        // pop just as severity-adjacent as the other two.
+        launch { scale.animateTo(1f, spring(dampingRatio = Spring.DampingRatioNoBouncy)) }
         launch { ring1Progress.animateTo(1f, tween(RING_DURATION_MS)) }
         launch {
           delay(RING_STAGGER_MS)
@@ -854,12 +860,17 @@ private fun NewQuakeRingLayer(id: String, pin: QuakePin?, progress: Animatable<F
 /**
  * The Task 10 pin-drop "pop" itself — a single-feature layer, always on top (see the call site in
  * [QuakeMap]), rendering the currently-animating pin at `pinRadiusDp(band) * scale.value` so it
- * grows from nothing (scale 0) through the spring's natural overshoot (~1.15x, an emergent
- * property of `Spring.DampingRatioMediumBouncy`'s underdamped physics, not a separate hardcoded
- * keyframe) and settles at its true resting size (scale 1) — at which point it's visually
- * indistinguishable from [QuakeBandCircleLayer]'s own rendering of the same pin, so the handoff
- * back to the normal band layer (once the animation completes and [QuakeMap] stops excluding this
- * pin's id from it) is seamless.
+ * grows from nothing (scale 0) and settles at its true resting size (scale 1) — at which point it's
+ * visually indistinguishable from [QuakeBandCircleLayer]'s own rendering of the same pin, so the
+ * handoff back to the normal band layer (once the animation completes and [QuakeMap] stops
+ * excluding this pin's id from it) is seamless.
+ *
+ * UI polish findings (docs/superpowers/plans/2026-08-16-ui-polish-findings.md), Part 3 item 1: this
+ * pop used to grow through the spring's natural overshoot (~1.15x, an emergent property of
+ * `Spring.DampingRatioMediumBouncy`'s underdamped physics, not a separate hardcoded keyframe) before
+ * settling - the spring driving it is now `Spring.DampingRatioNoBouncy` (critically damped), so the
+ * pin grows straight to its resting size with no overshoot at all, in tension-free service of "calm
+ * brand, nothing playful about severity" (this pin's own size+color are already magnitude-derived).
  */
 @Composable
 private fun NewQuakePinOverlay(pin: QuakePin?, scale: Animatable<Float, AnimationVector1D>) {
