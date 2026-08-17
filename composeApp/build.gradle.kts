@@ -203,7 +203,9 @@ android {
         // SettingsScreen.kt's APP_VERSION const (that file's own kdoc carries the same reminder) —
         // no BuildConfig surface reaches commonMain, so these two literals are the only source of
         // truth and must be bumped together.
-        versionCode = 2
+        // CI releases (release.yml) pass -PciVersionCode so every Play upload gets a unique,
+        // monotonically-increasing code without a commit; local builds keep the literal.
+        versionCode = (project.findProperty("ciVersionCode") as String?)?.toIntOrNull() ?: 2
         versionName = "0.9.0"
         // Task 13: required for connectedDebugAndroidTest to resolve a runner at all — AGP's
         // default is the deprecated android.test.InstrumentationTestRunner otherwise.
@@ -233,12 +235,29 @@ android {
     // arm64-v8a build to ~23MB. The Play path is unaffected: bundleRelease ignores this block
     // and always carries every ABI — Play then serves each device only its own (~15-18MB
     // download). isUniversalApk keeps the everything-APK available for emulators/x86.
+    // Splits + bundleRelease conflict in AGP ("Sequence contains more than one matching
+    // element" in buildReleasePreBundle), so splits switch off for bundle invocations —
+    // the AAB must carry every ABI anyway.
+    val isBundleBuild = gradle.startParameter.taskNames.any { it.contains("bundle", ignoreCase = true) }
     splits {
         abi {
-            isEnable = true
+            isEnable = !isBundleBuild
             reset()
             include("arm64-v8a", "armeabi-v7a")
             isUniversalApk = true
+        }
+    }
+    // Real upload-key signing when the CI env provides a keystore (release.yml decodes it from a
+    // GitHub secret); anything else — local builds included — falls back to debug signing so the
+    // release build type stays buildable/installable for R8 smoke work without a signing identity.
+    // The upload key signs what goes TO Play; Play App Signing re-signs what users download.
+    val ciKeystorePath = System.getenv("CI_KEYSTORE_PATH")
+    if (ciKeystorePath != null) {
+        signingConfigs.create("upload") {
+            storeFile = file(ciKeystorePath)
+            storePassword = System.getenv("CI_KEYSTORE_PASSWORD")
+            keyAlias = System.getenv("CI_KEY_ALIAS")
+            keyPassword = System.getenv("CI_KEY_PASSWORD")
         }
     }
     buildTypes {
@@ -246,11 +265,11 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // FOR NOW (Plan 4 Task 1): debug-signed so this release build type can be built and
-            // installed today for R8/manual smoke verification without a real signing identity —
-            // real release signing (keystore, Play App Signing) is Task 8's job. Revisit before any
-            // Play Console upload; a debug-signed release APK is not distributable as-is.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (ciKeystorePath != null) {
+                signingConfigs.getByName("upload")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 }

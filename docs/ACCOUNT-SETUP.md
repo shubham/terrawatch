@@ -2,7 +2,7 @@
 
 Written 2026-08-15. These are **your** actions — they involve payment, identity verification, and account creation. Do them in this order; AdMob can run in parallel with Play. Budget: **$25 total** (Play registration). Everything else is free.
 
-> **STATUS 2026-08-16:** Step 1 in progress — Play Console account created with **laughsdogcat@gmail.com**, developer name **YugMa**, $25 paid, identity documents submitted, **verification pending**. Use this same Google account for AdMob (step 2) and RevenueCat sign-in (step 3) so everything lives under one identity. Next after verification email arrives: step 1.6 (Create app) onward, then AdMob + RevenueCat.
+> **STATUS 2026-08-17:** ✅ **Identity VERIFIED** (laughsdogcat@gmail.com / YugMa). ✅ GitHub Pages live — privacy policy URL for step 1.7 is `https://shubham.github.io/terrawatch/privacy`. Now do, in order: **1.6 Create app → 1.7 App content → 1.8 closed track + 12 testers → 2 AdMob → 1.9+3 service account & RevenueCat → 4 monetization.properties → say "keys are in"**. CI auto-deployment is prepared (docs/superpowers/plans/2026-08-17-play-ci-deployment.md) — its secrets get filled during Task 8.
 
 **Timeline pressure:** Shipaton closes **Sep 30**. New personal Play accounts must run a closed test with **12 testers for 14 continuous days** before production access. Play identity verification itself can take 1–3 days. Start Step 1 tonight; recruit your 12 testers this week (friends/colleagues with Android phones — they just install from a link and keep the app installed).
 
