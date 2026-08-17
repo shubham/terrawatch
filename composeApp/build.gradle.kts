@@ -228,6 +228,19 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    // APK-only size control: libmaplibre.so alone is ~56MB across 4 ABIs (measured 2026-08-17;
+    // dex is ~10MB), so a universal APK lands at 64MB. Per-ABI split APKs cut a shareable
+    // arm64-v8a build to ~23MB. The Play path is unaffected: bundleRelease ignores this block
+    // and always carries every ABI — Play then serves each device only its own (~15-18MB
+    // download). isUniversalApk keeps the everything-APK available for emulators/x86.
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a")
+            isUniversalApk = true
+        }
+    }
     buildTypes {
         release {
             isMinifyEnabled = true
