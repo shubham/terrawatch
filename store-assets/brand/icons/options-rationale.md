@@ -3,8 +3,12 @@
 User feedback: "settings icon looks not good, use a new setting icon" — 5 variations below, plus
 the shipped glyph carried over as a reference column, so the user can pick the one that reads as
 most "modern" side by side. The my-location FAB glyph is untouched (out of scope for this pass).
-**Nothing here has been applied to the app** — this is exploration only, same stop point
-`store-assets/brand/round2`/`round3`'s own logo-direction rationale docs left their own work at.
+
+**Update: user picked v4.** It has been applied to the app (`HomeScreen.kt`'s `SettingsGlyph`,
+translated directly from `direction-v4-sliders-vertical.svg`'s 24x24 geometry) — see the v4
+section below for the PICKED/SHIPPED status note. v1/v2/v3/v5 remain exploration-only and
+untouched, same stop point `store-assets/brand/round2`/`round3`'s own logo-direction rationale
+docs left their own work at.
 
 ## Correction to this task's own starting premise
 
@@ -109,7 +113,7 @@ sync with whatever it's drawn over.
 **24px honesty:** the cleanest true-24dp read of all six columns, CURRENT included — straight lines
 and solid dots survive pixelation with the least ambiguity of anything on the sheet.
 
-### v4 — Sliders/faders, vertical variant (`direction-v4-sliders-vertical.svg`)
+### v4 — Sliders/faders, vertical variant (`direction-v4-sliders-vertical.svg`) — PICKED / SHIPPED
 
 **One-liner:** v3 rotated into a genuinely distinct silhouette — vertical tracks, a fresh diagonal
 knob rhythm, same underlying fixes.
@@ -120,6 +124,19 @@ enough silhouette that it doesn't read as "v3, just rotated" at a glance.
 
 **24px honesty:** equally clean at true 24dp as v3, for the same reason (straight lines + solid
 dots).
+
+**Status: PICKED / SHIPPED.** User picked v4 over v1/v2/v3/v5. Landed in `HomeScreen.kt`'s
+`SettingsGlyph` (called from `SettingsGearChip`) — the glyph now draws these exact vertical
+track/knob coordinates via `Canvas`/`drawLine`/`drawCircle`, single-`tint` throughout (the old
+`knobFill`/hole-punch construction is gone, same single-tint convention this doc's own
+"Cross-cutting notes" section called out as an advantage of all five options). Verified:
+`:composeApp:jvmTest`, `compileDebugKotlinAndroid`, `assembleDebug` all green.
+**Device-verification-pending** — real device `98bc1cd8` (OnePlus 9R) was not reachable from this
+session (`adb devices` empty even after an `adb kill-server`/`start-server` cycle; no USB
+enumeration visible via `system_profiler`/`ioreg` either), so the on-device zoom-crop screenshot
+this project's own real-device-only convention calls for has not been captured yet — same
+"device-verification-pending" disclosure `BannerAdSlot.android.kt`'s own kdoc already uses for an
+identical not-connected-this-session gap. Highest-value next step once the device is reconnected.
 
 ### v5 — Dot-gear hybrid (`direction-v5-dot-gear.svg`)
 

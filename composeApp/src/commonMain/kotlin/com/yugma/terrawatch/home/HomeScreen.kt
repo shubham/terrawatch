@@ -936,38 +936,55 @@ private fun SettingsGearChip(onClick: () -> Unit, modifier: Modifier = Modifier)
 }
 
 /**
- * A "sliders/equalizer" settings glyph (three horizontal tracks, each with one offset knob) drawn
- * on [Canvas] — same "no icon-library dependency in this project" reasoning as `nav/NavIcons.kt`'s
- * tab icons and core:ui's `StatusShield` glyphs. Picked over a literal gear/cog silhouette: a
- * recognizable gear needs teeth around its rim, which is a much fussier path to hand-draw reliably
- * at 24dp than three lines + three circles, and the sliders/equalizer glyph is just as widely
- * recognized for "Settings" in production apps.
+ * A "sliders/faders" settings glyph — three VERTICAL slider tracks, each topped with one SOLID
+ * filled knob in a top-right-rising diagonal stagger — drawn on [Canvas], same "no icon-library
+ * dependency in this project" reasoning as `nav/NavIcons.kt`'s tab icons and core:ui's
+ * `StatusShield` glyphs. Sliders (not a gear/cog) stays the right family for the same reason the
+ * original glyph picked it: a recognizable gear needs teeth around its rim, fussier to hand-draw
+ * reliably at 24dp than tracks + circles — and `SettingsScreen.kt`'s own two literal `Slider`
+ * controls (search radius + minimum magnitude) make "sliders" a content-accurate preview of the
+ * screen this glyph opens, not an arbitrary equalizer motif.
+ *
+ * v4 pick, user-selected from the 5-variation exploration in
+ * `store-assets/brand/icons/options-rationale.md` (geometry source:
+ * `store-assets/brand/icons/direction-v4-sliders-vertical.svg`, 24x24 viewBox) over v1/v2/v3/v5.
+ * Replaces the originally-shipped glyph's three HORIZONTAL tracks + non-monotonic knob stagger +
+ * two-color "hole-punch" knob (a `colorScheme.surface`-filled circle topped with a stroked `tint`
+ * ring, which only read correctly when that fill exactly matched whatever surface it was drawn
+ * over) with: 3 vertical tracks at x = 6.2/12/17.8 of 24, spanning y 3.2->20.8, each topped with one
+ * SOLID `tint`-filled knob (radius 2.4 of 24) at y = 17.3/11.5/5.7 of 24 — a clean top-right-rising
+ * diagonal ramp. Single-tint throughout, same construction as every OTHER hand-drawn glyph in this
+ * app ([MyLocationGlyph] below, `StatusShield`'s glyphs, all three `NavIcons.kt` icons) — no second
+ * `knobFill` color to keep in sync with whatever this chip is drawn over. Same API surface (`tint`/
+ * `modifier` params, 24dp call site in [SettingsGearChip] above) and `contentDescription`
+ * ("Settings") as before — this pass only touches the glyph's own drawing.
  */
 @Composable
 private fun SettingsGlyph(tint: Color, modifier: Modifier = Modifier) {
-    // Read here, not inside the Canvas draw lambda below: DrawScope is not a @Composable context,
-    // so MaterialTheme.colorScheme can't be read from inside it directly.
-    val knobFill = MaterialTheme.colorScheme.surface
     Canvas(modifier = modifier) {
         val w = size.width
-        val trackWidth = w * 0.09f
-        val knobRadius = w * 0.15f
-        val rows = listOf(size.height * 0.24f to w * 0.32f, size.height * 0.5f to w * 0.65f, size.height * 0.76f to w * 0.44f)
-        rows.forEach { (y, knobX) ->
+        val h = size.height
+        val strokeWidth = w * (2.00f / 24f)
+        val knobRadius = w * (2.40f / 24f)
+        val trackTop = h * (3.20f / 24f)
+        val trackBottom = h * (20.80f / 24f)
+        // (x, knobY) per column, straight off the v4 SVG's own 24x24 coordinates — the diagonal
+        // ramp is knobY descending col1 -> col3 (17.3 -> 11.5 -> 5.7), i.e. rising toward the
+        // top-right.
+        val columns = listOf(
+            (w * (6.20f / 24f)) to (h * (17.30f / 24f)),
+            (w * (12.00f / 24f)) to (h * (11.50f / 24f)),
+            (w * (17.80f / 24f)) to (h * (5.70f / 24f)),
+        )
+        columns.forEach { (x, knobY) ->
             drawLine(
                 color = tint,
-                start = Offset(w * 0.12f, y),
-                end = Offset(w * 0.88f, y),
-                strokeWidth = trackWidth,
+                start = Offset(x, trackTop),
+                end = Offset(x, trackBottom),
+                strokeWidth = strokeWidth,
                 cap = StrokeCap.Round,
             )
-            drawCircle(color = knobFill, radius = knobRadius, center = Offset(knobX, y))
-            drawCircle(
-                color = tint,
-                radius = knobRadius,
-                center = Offset(knobX, y),
-                style = Stroke(width = w * 0.05f),
-            )
+            drawCircle(color = tint, radius = knobRadius, center = Offset(x, knobY))
         }
     }
 }
@@ -1025,7 +1042,7 @@ private fun MyLocationFab(onClick: () -> Unit, modifier: Modifier = Modifier) {
  * reasoning as [SettingsGlyph] above (see [MyLocationFab]'s own kdoc for the full icon-vs-hand-draw
  * investigation this glyph is the outcome of). Proportions assume a square [modifier] (the one real
  * call site above sizes this 24dp x 24dp); `size.minDimension` (not a bare `size.width`, unlike
- * [SettingsGlyph]'s own row-based layout, which genuinely needs width and height separately) keeps
+ * [SettingsGlyph]'s own column-based layout, which genuinely needs width and height separately) keeps
  * every radius/length correct even if a future caller ever passes a non-square size.
  */
 @Composable
