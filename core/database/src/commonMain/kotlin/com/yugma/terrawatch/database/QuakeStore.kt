@@ -66,7 +66,17 @@ interface QuakeStore {
 
     fun pageBefore(timeMillis: Long, limit: Int, minMag: Double?): List<DomainQuake>
 
-    fun pageBetween(lowerInclusive: Long, upperExclusive: Long, minMag: Double?): List<DomainQuake>
+    /**
+     * User review items 3+4 (history search): [placeQuery], defaulted to `null`, is an OPTIONAL
+     * case-insensitive substring match against [DomainQuake.place] — composed as AND against
+     * [minMag] and the `[lowerInclusive, upperExclusive)` range (see `Quake.sq`'s own kdoc for the
+     * exact predicate). Defaulted so every pre-existing call site (grepped the whole repo first —
+     * EVIDENCE INTEGRITY: [com.yugma.terrawatch.data.QuakeRepository.pageBetween] and every test
+     * across core:database/core:data/composeApp construct this call with exactly 3 arguments) keeps
+     * compiling and behaving byte-for-byte unchanged — a `null`/blank [placeQuery] is a pure no-op
+     * predicate, identical to this method's behavior before this parameter existed.
+     */
+    fun pageBetween(lowerInclusive: Long, upperExclusive: Long, minMag: Double?, placeQuery: String? = null): List<DomainQuake>
 
     fun lastFetchedAtMillis(): Long?
 

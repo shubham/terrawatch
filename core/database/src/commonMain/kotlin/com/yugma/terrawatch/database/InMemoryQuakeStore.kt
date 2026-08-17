@@ -74,9 +74,13 @@ class InMemoryQuakeStore(private val clock: () -> Long = { 0L }) : QuakeStore {
             .byRecency { it.timeMillis < timeMillis && matchesMinMag(it, minMag) }
             .take(limit)
 
-    override fun pageBetween(lowerInclusive: Long, upperExclusive: Long, minMag: Double?): List<DomainQuake> =
+    // No default here — same "overriding functions can't redeclare a default" restriction
+    // QuakeDao.pageBetween's own comment documents; QuakeStore.pageBetween's interface-level
+    // default is what lets a QuakeStore-typed caller (QuakeRepository) keep omitting it.
+    override fun pageBetween(lowerInclusive: Long, upperExclusive: Long, minMag: Double?, placeQuery: String?): List<DomainQuake> =
         quakes.value.values.byRecency {
-            it.timeMillis >= lowerInclusive && it.timeMillis < upperExclusive && matchesMinMag(it, minMag)
+            it.timeMillis >= lowerInclusive && it.timeMillis < upperExclusive &&
+                matchesMinMag(it, minMag) && matchesPlaceQuery(it, placeQuery)
         }
 
     override fun lastFetchedAtMillis(): Long? = fetchedAt.values.maxOrNull()
@@ -255,6 +259,14 @@ class InMemoryQuakeStore(private val clock: () -> Long = { 0L }) : QuakeStore {
         val mag = quake.mag
         return minMag == null || (mag != null && mag >= minMag)
     }
+
+    /** User review items 3+4 (history search): mirrors `Quake.sq`'s own `pageBetween` LIKE
+     * predicate exactly — a null/blank [placeQuery] matches everything (SQL's `:placeQuery IS NULL`
+     * branch), otherwise a case-insensitive substring match against [DomainQuake.place]
+     * ([String.contains]'s own `ignoreCase = true`, the in-memory equivalent of SQLite's default
+     * ASCII-case-insensitive `LIKE` — see that query's own kdoc). */
+    private fun matchesPlaceQuery(quake: DomainQuake, placeQuery: String?): Boolean =
+        placeQuery == null || quake.place.contains(placeQuery, ignoreCase = true)
 
     private fun Collection<DomainQuake>.byRecency(predicate: (DomainQuake) -> Boolean): List<DomainQuake> =
         filter(predicate).sortedByDescending { it.timeMillis }

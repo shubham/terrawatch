@@ -113,8 +113,12 @@ class QuakeDao(
      * no LIMIT — see [com.yugma.terrawatch.data.QuakeRepository.pageBetween]'s own kdoc for why
      * History's display query needs a range instead of a count-based page.
      */
-    override fun pageBetween(lowerInclusive: Long, upperExclusive: Long, minMag: Double?): List<DomainQuake> =
-        db.quakeQueries.pageBetween(lowerInclusive, upperExclusive, minMag).executeAsList().map { it.toDomain() }
+    // No default here — Kotlin forbids an overriding function from redeclaring a default parameter
+    // value (see QuakeStore.pageBetween's own kdoc); every direct, concrete-typed caller of this
+    // method (QuakeDaoTest) spells placeQuery out explicitly, exactly as it already does for the
+    // pre-existing minMag parameter.
+    override fun pageBetween(lowerInclusive: Long, upperExclusive: Long, minMag: Double?, placeQuery: String?): List<DomainQuake> =
+        db.quakeQueries.pageBetween(lowerInclusive, upperExclusive, minMag, placeQuery).executeAsList().map { it.toDomain() }
 
     fun countAll(): Long = db.quakeQueries.countAll().executeAsOne()
 

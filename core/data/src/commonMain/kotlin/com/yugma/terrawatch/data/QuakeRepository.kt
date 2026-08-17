@@ -273,9 +273,16 @@ class QuakeRepository(
      * `quake_time` index keeps the read itself cheap, and reaching that depth requires the user to
      * have actually scrolled that far, at which point the query is proportionate to what's already
      * been shown; revisit if real usage ever makes this measurably slow.
+     *
+     * User review items 3+4 (history search): [placeQuery], a 4th DEFAULTED param (`null` — every
+     * pre-existing caller keeps compiling/behaving unchanged, same "defaulted, additive" shape every
+     * earlier parameter on this class follows), is a plain pass-through to
+     * [QuakeStore.pageBetween]'s own new optional predicate — this class is a genuine (non-
+     * overriding) method, so unlike [QuakeDao]/[com.yugma.terrawatch.database.InMemoryQuakeStore]'s
+     * own overrides, Kotlin has no restriction against a default here.
      */
-    suspend fun pageBetween(lowerInclusive: Long, upperExclusive: Long, minMag: Double? = null): List<Quake> =
-        withContext(ioDispatcher) { dao.pageBetween(lowerInclusive, upperExclusive, minMag) }
+    suspend fun pageBetween(lowerInclusive: Long, upperExclusive: Long, minMag: Double? = null, placeQuery: String? = null): List<Quake> =
+        withContext(ioDispatcher) { dao.pageBetween(lowerInclusive, upperExclusive, minMag, placeQuery) }
 
     /**
      * Task 5 (Plan 3): [HistoryPager]'s cursor persistence — a suspend + [ioDispatcher] pass-through

@@ -86,11 +86,14 @@ class HistoryViewModelTest {
         return HistoryViewModel(repo, pager).also { createdViewModels += it }
     }
 
-    private fun featureJson(id: String, timeMillis: Long, mag: Double = 5.0) = """
+    // User review item 3 (history search): [place] is a new, defaulted (unchanged "Test $id")
+    // parameter — every pre-existing call site keeps compiling/behaving unchanged; only the new
+    // search tests below pass a real, distinguishable place string.
+    private fun featureJson(id: String, timeMillis: Long, mag: Double = 5.0, place: String = "Test $id") = """
         {
           "type": "Feature",
           "id": "$id",
-          "properties": {"mag": $mag, "place": "Test $id", "time": $timeMillis, "updated": $timeMillis, "magType": "mw", "status": "automatic", "tsunami": 0},
+          "properties": {"mag": $mag, "place": "$place", "time": $timeMillis, "updated": $timeMillis, "magType": "mw", "status": "automatic", "tsunami": 0},
           "geometry": {"type": "Point", "coordinates": [10.0, 20.0, 10.0]}
         }
     """.trimIndent()
@@ -412,6 +415,159 @@ class HistoryViewModelTest {
             // exactly where A's walk left off, so the display window still covers all 3 rows.
             val content = assertIs<HistoryUiState.Content>(s4, "expected filter A's cached depth to still show; got $s4")
             assertTrue(content.totalQuakes() >= 3, "revisiting filter A must not shrink below its previous depth (3), was ${content.totalQuakes()}")
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    // ---- User review item 3: history search — local, DB-cached-only, case-insensitive substring
+    // match on `place`, composing as AND with the existing minMag/year filter. See
+    // HistoryViewModel.setSearchQuery's own kdoc for why this never touches the network/pager.
+
+    @Test fun `setSearchQuery filters the cached list to a case-insensitive place substring`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val engine = MockEngine {
+            geojson(featureCollection(
+                featureJson("a", 9_000_000, place = "10km SE of Jakarta, Indonesia"),
+                featureJson("b", 8_000_000, place = "20km N of Tokyo, Japan"),
+            ))
+        }
+        val vm = createVm(engine)
+        vm.state.test(timeout = 30.seconds) {
+            var s = awaitItem()
+            while (s is HistoryUiState.LoadingFirst) s = awaitItem()
+            assertEquals(2, assertIs<HistoryUiState.Content>(s).totalQuakes())
+
+            vm.setSearchQuery("INDO") // uppercase — proves case-insensitivity, not a lucky match
+
+            var s2 = awaitItem()
+            while (s2 is HistoryUiState.Content && s2.totalQuakes() == 2) s2 = awaitItem()
+            val content = assertIs<HistoryUiState.Content>(s2)
+            assertEquals(listOf("a"), content.sections.single().quakes.map { it.id })
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `clearing search restores the full cached list`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val engine = MockEngine {
+            geojson(featureCollection(
+                featureJson("a", 9_000_000, place = "10km SE of Jakarta, Indonesia"),
+                featureJson("b", 8_000_000, place = "20km N of Tokyo, Japan"),
+            ))
+        }
+        val vm = createVm(engine)
+        vm.state.test(timeout = 30.seconds) {
+            var s = awaitItem()
+            while (s is HistoryUiState.LoadingFirst) s = awaitItem()
+
+            vm.setSearchQuery("indo")
+            var s2 = awaitItem()
+            while (s2 is HistoryUiState.Content && s2.totalQuakes() == 2) s2 = awaitItem()
+            assertEquals(1, assertIs<HistoryUiState.Content>(s2).totalQuakes())
+
+            vm.setSearchQuery("")
+            var s3 = awaitItem()
+            while (s3 is HistoryUiState.Content && s3.totalQuakes() == 1) s3 = awaitItem()
+            assertEquals(2, assertIs<HistoryUiState.Content>(s3).totalQuakes())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `search composes with the magnitude filter as AND, not either-or`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        val engine = MockEngine { req ->
+            if (req.url.parameters["minmagnitude"] == "6.0") {
+                geojson(featureCollection(
+                    featureJson("strong-jakarta", 7_000_000, mag = 6.5, place = "Jakarta, Indonesia"),
+                    featureJson("strong-tokyo", 6_500_000, mag = 6.2, place = "Tokyo, Japan"),
+                ))
+            } else {
+                geojson(featureCollection(featureJson("a", 9_000_000, place = "Jakarta, Indonesia")))
+            }
+        }
+        val vm = createVm(engine)
+        vm.state.test(timeout = 30.seconds) {
+            var s = awaitItem()
+            while (s is HistoryUiState.LoadingFirst) s = awaitItem()
+
+            vm.setFilter(HistoryFilter(minMag = 6.0))
+            var s2 = awaitItem()
+            while (s2 is HistoryUiState.LoadingFirst) s2 = awaitItem()
+            assertEquals(2, assertIs<HistoryUiState.Content>(s2).totalQuakes())
+
+            vm.setSearchQuery("jakarta")
+            var s3 = awaitItem()
+            while (s3 is HistoryUiState.Content && s3.totalQuakes() == 2) s3 = awaitItem()
+            val content = assertIs<HistoryUiState.Content>(s3)
+            assertEquals(listOf("strong-jakarta"), content.sections.single().quakes.map { it.id })
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `a search matching nothing shows an empty Content, not a network refetch`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        var callCount = 0
+        val engine = MockEngine {
+            callCount++
+            geojson(featureCollection(featureJson("a", 9_000_000, place = "Jakarta, Indonesia")))
+        }
+        val vm = createVm(engine)
+        vm.state.test(timeout = 30.seconds) {
+            var s = awaitItem()
+            while (s is HistoryUiState.LoadingFirst) s = awaitItem()
+            assertEquals(1, assertIs<HistoryUiState.Content>(s).totalQuakes())
+            val callsBeforeSearch = callCount
+
+            vm.setSearchQuery("nonexistent-place-xyz")
+            var s2 = awaitItem()
+            while (s2 is HistoryUiState.Content && s2.totalQuakes() > 0) s2 = awaitItem()
+            val content = assertIs<HistoryUiState.Content>(s2, "a local search miss must still be Content(sections=empty), never Error/Empty")
+            assertEquals(0, content.totalQuakes())
+            assertEquals(
+                callsBeforeSearch, callCount,
+                "search is LOCAL — it must never trigger another archive fetch looking for a match",
+            )
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `a page loaded while a search is already active is search-filtered too`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        var callCount = 0
+        val engine = MockEngine {
+            callCount++
+            if (callCount == 1) {
+                // A non-matching quake alongside the matching one, deliberately: applying the
+                // search below must actually CHANGE the visible set (2 -> 1) so the StateFlow emits
+                // a genuinely new value — a first page containing ONLY an already-matching quake
+                // would make the post-search Content data-equal to the pre-search one, which
+                // StateFlow conflates away (no emission at all), hanging this test's own awaitItem().
+                geojson(featureCollection(
+                    featureJson("a", 9_000_000, place = "Jakarta, Indonesia"),
+                    featureJson("x", 8_500_000, place = "Osaka, Japan"),
+                ))
+            } else {
+                geojson(featureCollection(
+                    featureJson("b", 8_000_000, place = "Tokyo, Japan"),
+                    featureJson("c", 7_000_000, place = "Bandung, Indonesia"),
+                ))
+            }
+        }
+        val vm = createVm(engine)
+        vm.state.test(timeout = 30.seconds) {
+            var s = awaitItem()
+            while (s is HistoryUiState.LoadingFirst) s = awaitItem()
+            assertEquals(2, assertIs<HistoryUiState.Content>(s).totalQuakes())
+
+            vm.setSearchQuery("indo") // narrows 2 -> 1 ("x"/Osaka excluded)
+            var s2 = awaitItem()
+            while (s2 is HistoryUiState.Content && s2.totalQuakes() != 1) s2 = awaitItem()
+
+            vm.loadMore() // fetches "b" (Tokyo, excluded) + "c" (Bandung, Indonesia, included)
+            var s3 = awaitItem()
+            while (s3 is HistoryUiState.Content && s3.totalQuakes() == 1) s3 = awaitItem()
+            val content = assertIs<HistoryUiState.Content>(s3)
+            assertEquals(setOf("a", "c"), content.sections.flatMap { it.quakes }.map { it.id }.toSet())
             cancelAndIgnoreRemainingEvents()
         }
     }

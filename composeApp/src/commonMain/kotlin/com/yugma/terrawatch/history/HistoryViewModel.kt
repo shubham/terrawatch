@@ -41,8 +41,19 @@ sealed interface HistoryUiState {
     ) : HistoryUiState
 
     /** The archive is exhausted (or the current filter's year floor was already crossed) and not
-     * one visible row matched the current filter. Distinct from [Content] with empty sections
-     * mid-walk — that transient shape never reaches [HistoryViewModel.state] (see [loadUntilDecided]). */
+     * one visible row matched the current filter's magnitude/year — i.e. SEARCH-OBLIVIOUS
+     * emptiness (see [HistoryViewModel.loadUntilDecided]'s own `unsearchedVisible` check). Distinct
+     * from a mid-walk [Content] with empty sections purely because a page's own batch happened to
+     * add nothing new — that transient shape never reaches [HistoryViewModel.state] on its own.
+     *
+     * User review item 3 (history search): [Content] WITH empty `sections` IS now a legitimate,
+     * durable published shape distinct from this one — a search text matching zero of an otherwise
+     * non-empty cache (see [HistoryViewModel.renderFromCache]). `HistoryScreen`'s own UI layer
+     * treats the two identically for rendering purposes (both are "nothing to show right now"), the
+     * search-active/inactive check that tells them apart lives there, not in this sealed hierarchy —
+     * adding a THIRD, search-specific state here would just be this exact same "sections is empty"
+     * fact spelled two different ways.
+     */
     data object Empty : HistoryUiState
 
     /** The very FIRST page for this filter failed and there is nothing cached to browse instead —
@@ -106,6 +117,15 @@ class HistoryViewModel(
     private val _filter = MutableStateFlow(HistoryFilter())
     val filter: StateFlow<HistoryFilter> = _filter
 
+    // User review item 3 (history search): raw, un-trimmed text straight from the search field —
+    // session-only, same as [_filter] itself (this screen's filter has never been persisted; see
+    // [com.yugma.terrawatch.data.HistoryFilter]'s own kdoc), so a fresh HistoryViewModel always
+    // starts with an empty box. [effectiveSearchQuery] is what actually reaches the DB (trimmed,
+    // blank collapsed to `null`) — this field stays the field's own literal contents so the search
+    // box itself never silently mutates what the user typed.
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery
+
     private val _state = MutableStateFlow<HistoryUiState>(HistoryUiState.LoadingFirst)
     val state: StateFlow<HistoryUiState> = _state
 
@@ -113,6 +133,12 @@ class HistoryViewModel(
     // Job, cancel before replacing it" shape as HomeViewModel's own retryJob/QuakeSelectionViewModel's
     // selectJob.
     private var loadJob: Job? = null
+
+    // User review item 3: the identical "cancel the previous one before launching the next" guard
+    // as [loadJob], scoped to [renderFromCache] instead — a fast typist re-triggering
+    // [setSearchQuery] on every keystroke must not leave several overlapping re-renders racing to
+    // write [_state] last; only the most recent keystroke's render should ever win.
+    private var searchJob: Job? = null
 
     init {
         loadFirstPage()
@@ -137,12 +163,47 @@ class HistoryViewModel(
     }
 
     /** Chip taps (`HistoryScreen`'s filter rows) call this with a `copy()` of the current [filter].
-     * A no-op filter (same value) changes nothing — no reset, no re-fetch. */
+     * A no-op filter (same value) changes nothing — no reset, no re-fetch. [searchJob] is
+     * cancelled alongside [loadJob] purely as tidiness (an in-flight search re-render would be a
+     * guaranteed no-op the instant it tried to [publish] against the now-stale `filter` it
+     * captured — see that function's own guard — this just avoids paying for a DB read whose
+     * result is already known to be discarded). The search TEXT itself is deliberately left
+     * untouched: filter and search are independent, simultaneously-applicable facets (the user's
+     * own spec: "chips + search compose") — flipping a year chip while "japan" is typed should keep
+     * narrowing to Japan-related quakes for the new year, not silently clear the box. */
     fun setFilter(newFilter: HistoryFilter) {
         if (newFilter == _filter.value) return
         loadJob?.cancel()
+        searchJob?.cancel()
         _filter.value = newFilter
         loadFirstPage()
+    }
+
+    /**
+     * User review item 3: [query] is matched, case-insensitively, as a substring of each cached
+     * quake's `place` text — LOCAL only, per the user's own explicit instruction. This NEVER calls
+     * [HistoryPager.loadNext] or otherwise touches the network: it only re-reads whatever is
+     * ALREADY cached for the active [filter], through [QuakeRepository.pageBetween]'s own new
+     * `placeQuery` SQL predicate (see that method's kdoc) — a real DB hit, not a filter over an
+     * already-materialized `List<Quake>` snapshot, so a concurrent background write (Home's poll
+     * loop/live WebSocket share this SAME `quake` table) is picked up immediately rather than only
+     * on this screen's own next unrelated page load.
+     *
+     * Composes as AND with [filter]'s own minMag/year (unchanged) — both predicates narrow the SAME
+     * underlying cached range, never independently or as an either-or.
+     *
+     * Deliberately does NOT cancel/restart [loadJob]: an archive fetch already in flight (e.g. the
+     * user had scrolled to the bottom just before typing) keeps running exactly as it would with no
+     * search active — see [visibleAndUnsearched]'s own kdoc for why that fetch's own "did this page
+     * add anything real" decision must stay search-oblivious, and [historyContentFrom]/
+     * [effectiveSearchQuery] for how its eventual publish still ends up correctly search-filtered
+     * anyway, since both read [_searchQuery] fresh at publish time rather than at fetch-start time.
+     */
+    fun setSearchQuery(query: String) {
+        if (query == _searchQuery.value) return
+        _searchQuery.value = query
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch { renderFromCache() }
     }
 
     /** [HistoryUiState.Error]'s retry CTA re-attempts the first load; a [HistoryUiState.Content]
@@ -165,10 +226,13 @@ class HistoryViewModel(
     /**
      * The one loop every load path ([loadFirstPage]/[loadMore]) funnels through. Keeps calling
      * [HistoryPager.loadNext] until it has something definitive to show: a [PageResult.Loaded] page
-     * that actually produced at least one VISIBLE row (see [visibleItems] — a year filter's page can
-     * legitimately add zero visible rows if this page's whole batch spilled outside the requested
-     * year, in which case this keeps walking rather than surfacing a false [HistoryUiState.Empty]
-     * while more pages remain untried), or a terminal [PageResult.End]/[PageResult.Failed].
+     * that actually produced at least one VISIBLE row, SEARCH-OBLIVIOUS (see
+     * [visibleAndUnsearched]'s own kdoc for why — a year filter's page can legitimately add zero
+     * visible rows if this page's whole batch spilled outside the requested year, in which case
+     * this keeps walking rather than surfacing a false [HistoryUiState.Empty] while more pages
+     * remain untried; a search matching zero of a page's rows must NOT be mistaken for the same
+     * "keep walking" signal — search is local-only and must never itself drive a further fetch), or
+     * a terminal [PageResult.End]/[PageResult.Failed].
      *
      * Belt-and-suspenders filter check: [setFilter] already cancels [loadJob] before starting a new
      * one, so an in-flight call here should never outlive a filter change (coroutine cancellation is
@@ -181,24 +245,28 @@ class HistoryViewModel(
         while (_filter.value == filter) {
             when (val result = pager.loadNext(filter)) {
                 is PageResult.Loaded -> {
-                    val visible = visibleItems(filter)
-                    if (visible.isNotEmpty()) {
-                        publish(filter, historyContent(visible, endReached = false, loadMoreFailed = false))
+                    val (visible, unsearchedVisible) = visibleAndUnsearched(filter)
+                    if (unsearchedVisible.isNotEmpty()) {
+                        publish(filter, historyContentFrom(visible, endReached = false, loadMoreFailed = false))
                         return
                     }
                     // Nothing in this page fell inside the filter's year window — keep walking.
                 }
                 PageResult.End -> {
-                    val visible = visibleItems(filter)
-                    publish(filter, if (visible.isEmpty()) HistoryUiState.Empty else historyContent(visible, endReached = true, loadMoreFailed = false))
+                    val (visible, unsearchedVisible) = visibleAndUnsearched(filter)
+                    publish(
+                        filter,
+                        if (unsearchedVisible.isEmpty()) HistoryUiState.Empty
+                        else historyContentFrom(visible, endReached = true, loadMoreFailed = false),
+                    )
                     return
                 }
                 is PageResult.Failed -> {
-                    val visible = visibleItems(filter)
+                    val (visible, unsearchedVisible) = visibleAndUnsearched(filter)
                     publish(
                         filter,
-                        if (visible.isEmpty()) HistoryUiState.Error(result.cause)
-                        else historyContent(visible, endReached = false, loadMoreFailed = true),
+                        if (unsearchedVisible.isEmpty()) HistoryUiState.Error(result.cause)
+                        else historyContentFrom(visible, endReached = false, loadMoreFailed = true),
                     )
                     return
                 }
@@ -210,9 +278,48 @@ class HistoryViewModel(
      * against a `setFilter()` slipping in on Main during this loop's last suspension point, between
      * the loop's own `while (_filter.value == filter)` check and this call (cooperative
      * cancellation should already prevent it in practice; this is the belt half of the
-     * belt-and-suspenders this function's own kdoc mentions). */
+     * belt-and-suspenders this function's own kdoc mentions). Also the guard that makes a stale,
+     * superseded [renderFromCache] publish (a search re-render that finishes after [setFilter] has
+     * already moved on) a safe no-op instead of clobbering the new filter's fresh
+     * [HistoryUiState.LoadingFirst].
+     */
     private fun publish(filter: HistoryFilter, state: HistoryUiState) {
         if (_filter.value == filter) _state.value = state
+    }
+
+    /**
+     * User review item 3 (history search): re-derives [_state] purely from whatever's already
+     * cached for the active [filter] + [_searchQuery], with no [pager]/network call — the function
+     * [setSearchQuery] launches on every keystroke.
+     *
+     * A no-op while nothing is cached yet to search over: [HistoryUiState.LoadingFirst] has no
+     * cache at all (the in-flight first load will itself publish through [historyContentFrom],
+     * which reads [_searchQuery] fresh, once it resolves), and [HistoryUiState.Error] has nothing
+     * cached either (only [retry] can recover from that state). [HistoryUiState.Content]'s own
+     * `loadingMore` is preserved verbatim (not forced back to `false` the way a genuine page-load
+     * publish always does) — a search re-render is not a page settling, so it must not make an
+     * actually-still-in-flight [loadMore] spinner disappear early.
+     */
+    private suspend fun renderFromCache() {
+        val filter = _filter.value
+        val current = _state.value
+        val loadingMore = (current as? HistoryUiState.Content)?.loadingMore ?: false
+        val endReached = when (current) {
+            is HistoryUiState.Content -> current.endReached
+            HistoryUiState.Empty -> true
+            HistoryUiState.LoadingFirst, is HistoryUiState.Error -> return
+        }
+        val loadMoreFailed = (current as? HistoryUiState.Content)?.loadMoreFailed ?: false
+        val visible = visibleItems(filter, effectiveSearchQuery())
+        publish(
+            filter,
+            HistoryUiState.Content(
+                sections = groupByMonth(visible, currentTimeMillis()),
+                loadingMore = loadingMore,
+                endReached = endReached,
+                loadMoreFailed = loadMoreFailed,
+            ),
+        )
     }
 
     /**
@@ -245,16 +352,47 @@ class HistoryViewModel(
      * See [QuakeRepository.pageBetween]'s own kdoc for the cross-filter cache-bleed semantics this
      * range read carries (rows shown are always correct, but can be broader than what this exact
      * filter's own walk fetched) and the accepted no-`LIMIT` performance tradeoff.
+     *
+     * User review item 3: [placeQuery] threads straight through to [QuakeRepository.pageBetween]'s
+     * own new optional predicate — `null` here reproduces this function's exact pre-search
+     * behavior, byte-for-byte (every pre-existing caller of the ORIGINAL single-arg [visibleItems]
+     * effectively passed `null` implicitly; every one of them is preserved via
+     * [visibleAndUnsearched]'s own "search-oblivious" half).
      */
-    private suspend fun visibleItems(filter: HistoryFilter): List<Quake> {
+    private suspend fun visibleItems(filter: HistoryFilter, placeQuery: String?): List<Quake> {
         val ceilingExclusive = filter.yearCeilingMillisExclusiveOrNull() ?: Long.MAX_VALUE
         val lowerInclusive = pager.currentCursor(filter)
-        val rows = repository.pageBetween(lowerInclusive, ceilingExclusive, filter.minMag)
+        val rows = repository.pageBetween(lowerInclusive, ceilingExclusive, filter.minMag, placeQuery)
         val floor = filter.yearFloorMillisOrNull()
         return if (floor != null) rows.filter { it.timeMillis >= floor } else rows
     }
 
-    private fun historyContent(visible: List<Quake>, endReached: Boolean, loadMoreFailed: Boolean) =
+    /** [_searchQuery]'s raw field contents, trimmed and collapsed to `null` when blank — the shape
+     * [visibleItems]'/[QuakeRepository.pageBetween]'s own `placeQuery IS NULL` branch expects, and
+     * the single place this trim/blank-collapse decision is made (both [loadUntilDecided] — via
+     * [visibleAndUnsearched] — and [renderFromCache] funnel through here, so the two can never
+     * apply search text inconsistently). */
+    private fun effectiveSearchQuery(): String? = _searchQuery.value.trim().ifBlank { null }
+
+    /**
+     * User review item 3: returns BOTH the search-applied display rows ([Pair.first]) and the
+     * search-OBLIVIOUS rows [loadUntilDecided]'s own "did this page/end/failure actually have
+     * anything real to show" decision must keep using ([Pair.second]) — a search matching zero
+     * cached rows must never look like "the archive has nothing here, keep fetching" (that would
+     * violate the user's own explicit "LOCAL, never triggers a network fetch" instruction for
+     * search). When no search is active ([effectiveSearchQuery] is `null`) the two halves are the
+     * exact SAME single DB read, reused — this function costs nothing extra over the pre-search
+     * version of this class for the common case (nobody has touched the search box); only a
+     * genuinely active search pays for the second, still-local (no network) read.
+     */
+    private suspend fun visibleAndUnsearched(filter: HistoryFilter): Pair<List<Quake>, List<Quake>> {
+        val query = effectiveSearchQuery()
+        val visible = visibleItems(filter, query)
+        val unsearchedVisible = if (query == null) visible else visibleItems(filter, placeQuery = null)
+        return visible to unsearchedVisible
+    }
+
+    private fun historyContentFrom(visible: List<Quake>, endReached: Boolean, loadMoreFailed: Boolean) =
         HistoryUiState.Content(
             sections = groupByMonth(visible, currentTimeMillis()),
             loadingMore = false,

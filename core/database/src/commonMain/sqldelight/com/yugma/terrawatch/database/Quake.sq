@@ -80,9 +80,22 @@ ORDER BY timeMillis DESC LIMIT :limit;
 -- its cursor — an unbounded row count here would only happen for a filter whose own archive walk
 -- has gone extremely deep, which is a real usage pattern this app accepts un-paginated for v1 (see
 -- that kdoc's own performance note).
+--
+-- User review items 3+4 (history search): `:placeQuery` is the same nullable-optional-predicate
+-- shape `:minMag` already establishes on this exact query (`IS NULL OR ...`) — composes as AND, not
+-- a separate query, so a search + magnitude filter apply together (HistoryViewModel's own spec:
+-- "chips + search compose"). Plain `LIKE '%' || :placeQuery || '%'`, no `COLLATE NOCASE` needed:
+-- SQLite's LIKE is already case-insensitive for ASCII by default (verified against SQLite's own
+-- docs, not assumed) — every place string this app's feeds produce (USGS/EMSC "N km ## of City,
+-- Region" phrasing) is plain ASCII, so the default already gives the case-insensitive substring
+-- match this task asks for with no extra collation clause. Not escaping literal `%`/`_` wildcard
+-- characters in the user's own typed search text — a deliberate, accepted v1 gap: this is a local,
+-- single-user search box (not attacker-facing input), and a real place name containing a literal
+-- `%`/`_` is not a pattern USGS/EMSC's own feeds produce.
 pageBetween:
 SELECT * FROM quake
 WHERE timeMillis >= :lowerInclusive AND timeMillis < :upperExclusive AND (:minMag IS NULL OR mag >= :minMag)
+  AND (:placeQuery IS NULL OR place LIKE '%' || :placeQuery || '%')
 ORDER BY timeMillis DESC;
 
 countAll:

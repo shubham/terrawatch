@@ -91,7 +91,13 @@ class QuakeDaoTest {
         ))
         // [200, 400) with minMag=4.5 -- "a" excluded (below range), "d" excluded (at/above ceiling),
         // "b"/"c" both included even though that's more than a single arbitrary page size.
-        val rows = dao.pageBetween(lowerInclusive = 200, upperExclusive = 400, minMag = 4.5)
+        // placeQuery = null spelled out explicitly (not relying on QuakeStore's interface-level
+        // default): `dao` here is statically typed as the concrete QuakeDao, and Kotlin does not
+        // carry an overridden function's default parameter values through to the overriding
+        // declaration (a real, deliberate language restriction, not an oversight here) — only a
+        // caller holding a QuakeStore-typed reference (e.g. QuakeRepository) gets the interface's
+        // own default for free.
+        val rows = dao.pageBetween(lowerInclusive = 200, upperExclusive = 400, minMag = 4.5, placeQuery = null)
         assertEquals(listOf("c", "b"), rows.map { it.id })
     }
 
@@ -100,13 +106,58 @@ class QuakeDaoTest {
             quake(id = "old", updated = 1).copy(timeMillis = 100, mag = 1.0),
             quake(id = "new", updated = 1).copy(timeMillis = 500, mag = 9.0),
         ))
-        val rows = dao.pageBetween(lowerInclusive = 500, upperExclusive = Long.MAX_VALUE, minMag = null)
+        val rows = dao.pageBetween(lowerInclusive = 500, upperExclusive = Long.MAX_VALUE, minMag = null, placeQuery = null)
         assertEquals(listOf("new"), rows.map { it.id })
     }
 
     @Test fun `pageBetween on an empty range returns nothing`() {
         dao.upsert(quake(id = "a").copy(timeMillis = 100))
-        assertEquals(emptyList(), dao.pageBetween(lowerInclusive = 200, upperExclusive = 300, minMag = null))
+        assertEquals(emptyList(), dao.pageBetween(lowerInclusive = 200, upperExclusive = 300, minMag = null, placeQuery = null))
+    }
+
+    // History search (user review items 3+4): pageBetween's new optional placeQuery param — a
+    // case-insensitive SQL LIKE substring match on `place`, composable with the existing minMag
+    // predicate (AND, not OR) exactly like minMag itself composes with the range bounds.
+    @Test fun `pageBetween with a placeQuery matches a case-insensitive substring of place`() {
+        dao.upsertAll(listOf(
+            quake(id = "a", updated = 1).copy(timeMillis = 100, place = "10km SE of Jakarta, Indonesia"),
+            quake(id = "b", updated = 1).copy(timeMillis = 200, place = "20km N of Tokyo, Japan"),
+        ))
+        val rows = dao.pageBetween(lowerInclusive = 0, upperExclusive = 1000, minMag = null, placeQuery = "indo")
+        assertEquals(listOf("a"), rows.map { it.id })
+    }
+
+    @Test fun `pageBetween placeQuery is uppercase-insensitive too`() {
+        dao.upsert(quake(id = "a", updated = 1).copy(timeMillis = 100, place = "10km SE of Jakarta, Indonesia"))
+        val rows = dao.pageBetween(lowerInclusive = 0, upperExclusive = 1000, minMag = null, placeQuery = "JAKARTA")
+        assertEquals(listOf("a"), rows.map { it.id })
+    }
+
+    @Test fun `pageBetween composes placeQuery AND minMag, not either-or`() {
+        dao.upsertAll(listOf(
+            quake(id = "small", updated = 1).copy(timeMillis = 100, place = "Jakarta, Indonesia", mag = 2.0),
+            quake(id = "big", updated = 1).copy(timeMillis = 200, place = "Jakarta, Indonesia", mag = 6.0),
+            quake(id = "other-place", updated = 1).copy(timeMillis = 300, place = "Tokyo, Japan", mag = 6.0),
+        ))
+        val rows = dao.pageBetween(lowerInclusive = 0, upperExclusive = 1000, minMag = 4.5, placeQuery = "jakarta")
+        assertEquals(listOf("big"), rows.map { it.id })
+    }
+
+    @Test fun `pageBetween with a null placeQuery is unaffected — existing minMag-only behavior unchanged`() {
+        dao.upsertAll(listOf(
+            quake(id = "a", updated = 1).copy(timeMillis = 100, mag = 2.0),
+            quake(id = "b", updated = 1).copy(timeMillis = 200, mag = 5.0),
+        ))
+        val rows = dao.pageBetween(lowerInclusive = 0, upperExclusive = 1000, minMag = 4.5, placeQuery = null)
+        assertEquals(listOf("b"), rows.map { it.id })
+    }
+
+    @Test fun `pageBetween with a placeQuery matching nothing returns an empty list, not an error`() {
+        dao.upsert(quake(id = "a", updated = 1).copy(timeMillis = 100, place = "Jakarta, Indonesia"))
+        assertEquals(
+            emptyList(),
+            dao.pageBetween(lowerInclusive = 0, upperExclusive = 1000, minMag = null, placeQuery = "nonexistent-place-xyz"),
+        )
     }
 
     @Test fun `delete removes the row`() {
