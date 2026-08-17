@@ -520,7 +520,7 @@ private fun QuickShareRow(targets: List<ShareTarget>, onClick: (ShareTarget) -> 
                     Text(
                         text = shareTargetMonogram(target),
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.clearAndSetSemantics {},
                     )
                 }

@@ -553,7 +553,7 @@ private fun FeedSheetHeader(
                     Text(
                         text = feedRevealChipText(newCount),
                         style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.SemiBold,
                         color = Color.White,
                         modifier = Modifier
                             .padding(horizontal = 8.dp, vertical = 2.dp)
@@ -570,7 +570,7 @@ private fun FeedSheetHeader(
                 Text(
                     text = "$newCount NEW",
                     style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.SemiBold,
                     color = Color.White,
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                 )
@@ -612,7 +612,7 @@ private fun FeedFilterControl(activeMinMag: Double?, onFilterChange: (Double?) -
             Text(
                 text = "$activeLabel ▾",
                 style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
                     .padding(horizontal = 8.dp, vertical = 2.dp)
@@ -665,7 +665,7 @@ fun LiveStatusRow(isLive: Boolean, modifier: Modifier = Modifier) {
         Text(
             text = if (isLive) "LIVE" else "OFFLINE",
             style = if (isLive) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelSmall,
-            fontWeight = if (isLive) FontWeight.Bold else FontWeight.Normal,
+            fontWeight = if (isLive) FontWeight.SemiBold else FontWeight.Normal,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }

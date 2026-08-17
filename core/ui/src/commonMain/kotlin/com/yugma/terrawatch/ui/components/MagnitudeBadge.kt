@@ -70,7 +70,7 @@ fun MagnitudeBadge(
         Text(
             text = formatMagnitude(mag),
             color = magnitudeBadgeTextColor(band, size),
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.SemiBold,
             fontSize = fontSize,
             style = LocalTextStyle.current.tabularFigures(),
         )

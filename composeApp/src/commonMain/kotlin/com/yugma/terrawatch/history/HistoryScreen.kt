@@ -230,7 +230,7 @@ internal fun HistoryHeader(modifier: Modifier = Modifier) {
         Text(
             text = "History",
             style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onBackground,
         )
         // Small - same quiet register as InsightsHeader's own subtitle (bodySmall/onSurfaceVariant).
@@ -370,7 +370,7 @@ private fun MonthHeader(label: String, modifier: Modifier = Modifier) {
         Text(
             text = label,
             style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(vertical = 8.dp),
         )

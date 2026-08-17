@@ -189,7 +189,7 @@ internal fun InsightsHeader(
             Text(
                 text = "Insights",
                 style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onBackground,
             )
             // Task 11: small, matches the mockup's own title treatment (the mockup itself has no

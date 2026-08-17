@@ -242,7 +242,7 @@ private fun WhatItDoesStep(modifier: Modifier = Modifier) {
         Text(
             text = step.title,
             style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.SemiBold,
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onBackground,
         )
@@ -308,7 +308,7 @@ private fun LocationStep(onAdvance: () -> Unit, modifier: Modifier = Modifier) {
         Text(
             text = step.title,
             style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.SemiBold,
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onBackground,
         )
@@ -437,7 +437,7 @@ private fun NotificationsAskStep(modifier: Modifier = Modifier) {
         Text(
             text = step.title,
             style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.SemiBold,
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onBackground,
         )
@@ -462,7 +462,7 @@ private fun NotificationsAskStep(modifier: Modifier = Modifier) {
                 text = ruleSummary,
                 modifier = Modifier.padding(16.dp),
                 style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.SemiBold,
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onSurface,
             )

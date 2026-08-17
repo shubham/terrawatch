@@ -1,5 +1,26 @@
 # TerraWatch Font Selection: Research + Decision
 
+**Status: IMPLEMENTED** (2026-08-17, same branch, later same day). Full implementation report:
+`docs/qa/review-round-3/RESULTS.md` ("Review round 3 — Inter font rollout" section). Summary of
+where reality diverged from this doc's own sketch, verified rather than assumed: (1) static Inter
+instances were bundled, not the variable file — but the doc's own ~100–300 KB/instance estimate for
+statics didn't hold (measured actual: ~400 KB each, ~1.22 MB combined, *larger* than the 856 KB
+variable file); static was chosen anyway because Compose Multiplatform's variable-`wght`-axis support
+turned out to have two open JetBrains bugs on this app's own non-Android compile targets (desktop/iOS
+`#3127`, `wasmJs` `#4635`), verified via WebSearch, not assumed from this doc's own framing. (2) Font
+files live in `core/ui/…/composeResources/`, not `composeApp/…` — `TerraTheme.kt` (Part 5 step 3's
+consumer) lives in `core:ui`, and compose-resources' generated `Res` accessor doesn't cross module
+boundaries the wrong way. (3) `Typography(defaultFontFamily = …)` (Part 5 step 3) does not exist on
+this project's actually-resolved Material3 (`org.jetbrains.compose.material3:material3:1.8.2`,
+confirmed via `javap` against the real resolved jar) — AndroidX's own version of that parameter landed
+in `1.5.0-alpha19`, a revision line this CMP fork hasn't caught up to at this pin; worked around with
+explicit per-role `.copy(fontFamily = …)` across all 15 roles instead, same net effect. (4) Part 5
+item 4's undecided Bold-migration question resolved to decision (b) (sweep to SemiBold) — 28 real
+call sites swept, not the "27 outside `TerraTheme.kt`" this doc counted, because the doc's own
+"silently ships faux-bold on every magnitude badge" warning necessarily includes `TerraTheme.kt`'s own
+titleLarge/headlineMedium roles (which style the magnitude hero), not just the scattered ad hoc
+overrides.
+
 **Type:** Research + decision doc only — no app code, Gradle, or device work performed (owned by other in-flight agents on this branch). **Source:** user request 2026-08-17 — "font issues: use ONE consistent font, research good user-friendly font." **Branch:** `feat/review-round-3`. **Method:** direct code read (`TerraTheme.kt`, `TabularFigures.kt`, `MagnitudeBadge.kt`) + repo-wide grep for `FontFamily`/`fontWeight`/`TextStyle`/`.tabularFigures()` across `core/` and `composeApp/`, direct read of 3 real device screenshots (`docs/qa/feed-visit-ux/`, `docs/qa/post-p5-tail/`), a read of this repo's own design-mockup history (`docs/design/mockups/ui-direction.html`), WebSearch across font-selection criteria and per-candidate license/OpenType-feature research, `gh api` byte-exact file-size checks against the `google/fonts` GitHub mirror, and a primary-source `WebFetch` of JetBrains' own Compose Multiplatform resources documentation.
 
 ---
