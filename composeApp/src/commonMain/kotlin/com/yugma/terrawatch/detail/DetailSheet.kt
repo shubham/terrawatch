@@ -143,7 +143,55 @@ fun DetailSheet(
     // real source of the "extra dismiss button... feels weird" dogfooding complaint. Scrim-tap,
     // swipe-down, and the drag handle's own TalkBack action remain fully intact - all
     // library-guaranteed, none of them app code this change gives up.
-    val sheetState = rememberModalBottomSheetState()
+    // review-round-3 (Samsung dogfooding: "sheet not fully visible" + "Share button overlapping the
+    // nav bar" + "takes 2 back presses to close"): all three trace to ONE missing config, confirmed
+    // by reading this project's actual resolved androidx.compose.material3:material3:1.8.2
+    // ModalBottomSheet.kt/SheetDefaults.kt sources (gradle cache, not guessed from docs):
+    //
+    // - `rememberModalBottomSheetState()`'s default `skipPartiallyExpanded = false` gives this sheet
+    //   a PartiallyExpanded anchor whenever its measured content is taller than half the screen
+    //   (`ModalBottomSheetContent`'s own `draggableAnchors`: `if (sheetSize.height > fullHeight / 2
+    //   && !skipPartiallyExpanded) PartiallyExpanded at fullHeight / 2f`) — true on essentially any
+    //   phone screen once news/quick-share are showing (a real device screenshot already documented
+    //   this content "reaching the literal bottom edge" — see this composable's own `verticalScroll`
+    //   kdoc below).
+    // - `SheetState.show()` (called unconditionally on first composition by `ModalBottomSheet`
+    //   itself) PREFERS that PartiallyExpanded anchor over Expanded whenever one exists (`val
+    //   targetValue = when { hasPartiallyExpandedState -> PartiallyExpanded; else -> Expanded }`) —
+    //   so this sheet always opened parked at the halfway line, not full height. Content below that
+    //   line is measured/laid out at full height regardless (drag only changes the sheet's Y
+    //   *offset*, not its size), so the back half of it renders below the display's physical bottom
+    //   edge entirely: "not fully visible" is literal here, not a figure of speech. Wherever that
+    //   half-height cutoff happened to land (device/content-dependent) could bisect content right at
+    //   the screen's bottom edge — exactly where a 3-button nav bar overlays app content in
+    //   edge-to-edge mode — which reads as "Share is behind the nav bar" even though the real
+    //   Expanded state already reserves correct nav-bar clearance (M3's own default
+    //   `contentWindowInsets = { BottomSheetDefaults.windowInsets }` = `WindowInsets.safeDrawing
+    //   .only(Bottom)`, applied via `windowInsetsPadding(...)` on the sheet's own content column in
+    //   `ModalBottomSheetContent` — verified in source; nothing wrong with it, it just never got
+    //   reached before the user manually dragged past the halfway resting point).
+    // - Separately, `ModalBottomSheetDialog`'s back-press handler (`ModalBottomSheet.kt`) special-
+    //   cases exactly this: `if (currentValue == Expanded && hasPartiallyExpandedState)
+    //   partialExpand() else { hide(); onDismissRequest() }` — the FIRST back press from Expanded
+    //   only collapses to PartiallyExpanded and never calls this composable's own [onDismiss]; only
+    //   the SECOND press (now not Expanded) actually hides and dismisses. That is exactly the
+    //   reported "takes 2 back presses."
+    //
+    // `skipPartiallyExpanded = true` removes the PartiallyExpanded anchor outright (the
+    // `!skipPartiallyExpanded` guard above then never lets it exist), fixing all three symptoms as
+    // one config change rather than three patches: `show()` has no PartiallyExpanded anchor left to
+    // prefer, so the sheet always opens straight to Expanded (full content immediately visible, no
+    // manual drag-up needed); with no PartiallyExpanded state, `hasPartiallyExpandedState` is always
+    // false, so EVERY back press takes the `hide()` branch — one press, from anywhere, fully closes
+    // it, matching Material's own guidance and the user's stated expectation. The existing
+    // `verticalScroll` below still cleanly handles content taller than the display in the Expanded
+    // state — this doesn't remove or fight that, it only removes the resting state that was hiding
+    // part of it. Deliberately NOT a hand-rolled `BackHandler`/manual dismiss dance: that would just
+    // reimplement (and risk drifting from) what this one library flag already gives for free —
+    // `ModalBottomSheet.android.kt`'s own back-callback wiring flows through this same `sheetState`
+    // unchanged. Device-verified on OnePlus 9R (98bc1cd8); Samsung (the reporting device) unavailable
+    // for direct re-verification — see docs/qa/review-round-3/RESULTS.md's residual-risk note.
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val shareText = buildShareText(quake, nowMillis)
     // `remember` (no key): isPackageInstalled's PackageManager query only needs to run once per
     // sheet-open, not once per recomposition - this composable is added/removed from composition

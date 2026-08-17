@@ -188,6 +188,17 @@ kotlin {
             // real quakes into) keeps this test's data isolated from anything else on the device.
             implementation(libs.ktor.client.mock)
             implementation(libs.sqldelight.android.driver)
+            // review-round-3: ComponentsTest's new back-press dismissal regression needs a REAL
+            // system back-key dispatch, not a direct SheetState/dispatcher method call — DetailSheet's
+            // ModalBottomSheet renders into its own Dialog window with its own OnBackInvokedDispatcher
+            // (see ModalBottomSheet.android.kt's ModalBottomSheetDialogWrapper), separate from the
+            // host Activity's — so only a real injected back event reaches the right callback the
+            // same way a device's physical back press/gesture would. Espresso.pressBack() does
+            // exactly that via the instrumentation/UiAutomation input path. Not already on this
+            // classpath despite the jar existing in the local Gradle cache (that copy came from an
+            // unrelated transitive graph, not this source set) — added explicitly rather than
+            // relying on an incidental transitive resolution.
+            implementation(libs.androidx.test.espresso.core)
         }
     }
 }
