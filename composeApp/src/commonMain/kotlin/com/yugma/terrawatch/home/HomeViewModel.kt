@@ -4,11 +4,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yugma.terrawatch.data.AlertRuleStore
 import com.yugma.terrawatch.data.FavoritePlaceStore
+import com.yugma.terrawatch.data.FeedFilterStore
 import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.data.QuakeRepository
 import com.yugma.terrawatch.data.RefreshStatus
 import com.yugma.terrawatch.data.VisitStore
 import com.yugma.terrawatch.database.InMemoryQuakeStore
+import com.yugma.terrawatch.filter.quakeMatchesMagFilter
 import com.yugma.terrawatch.location.LocationAskUiState
 import com.yugma.terrawatch.location.LocationProvider
 import com.yugma.terrawatch.location.LocationRequester
@@ -157,6 +159,15 @@ class HomeViewModel(
     // of its own. AppModule.kt's real Koin wiring is the one call site that supplies the real,
     // persisted one.
     private val visitStore: VisitStore = VisitStore(InMemoryQuakeStore()),
+    // User review items 3+4: appended as an 11th, DEFAULTED param — same "doesn't disturb any
+    // existing positional construction" reasoning every prior addition above already established.
+    // Defaults to a real, working FeedFilterStore backed by InMemoryQuakeStore() — same "a
+    // genuinely functioning throwaway default, not a mock" precedent [visitStore]'s own default
+    // just above already sets, and it already resolves to the real 4.0 default (nothing written to
+    // the throwaway backing store) so a Koin-free construction still honors the "first-run default
+    // 4.0+" instruction. AppModule.kt's real Koin wiring is the one call site that supplies the
+    // real, persisted one.
+    private val feedFilterStore: FeedFilterStore = FeedFilterStore(InMemoryQuakeStore()),
 ) : ViewModel() {
     private val _state = MutableStateFlow<HomeUiState>(HomeUiState.Loading)
     val state: StateFlow<HomeUiState> = _state
@@ -236,10 +247,36 @@ class HomeViewModel(
     private val _minMag = MutableStateFlow(AlertRuleStore.DEFAULT_MIN_MAG)
     val minMag: StateFlow<Double> = _minMag
 
+    // User review items 3+4: the dashboard feed sheet's own list-scoped magnitude filter — "All /
+    // 4.0+ / 5.0+ / 6.0+" (com.yugma.terrawatch.filter.MAGNITUDE_FILTER_CHIPS), persisted via
+    // [feedFilterStore]. Seeded with the store's own compile-time default (4.0, not e.g. null/"All")
+    // so the very first composition — before the live collector below has resolved a real DB read —
+    // already renders scoped to M4.0+, matching the user's own explicit "first-run default 4.0+"
+    // instruction rather than a momentarily-unfiltered flash. Same "MutableStateFlow seeded with a
+    // sane default, then updated by a live collector" shape [_nearbyRadiusKm]/[_minMag] above
+    // already establish for their own AlertRuleStore-backed Flows.
+    //
+    // MAP PINS UNAFFECTED, by construction: nothing below ever reads this to build `pins` (see
+    // [Quake.toPin] at the bottom of this class) or to narrow [QuakeRepository.recentQuakes]'s own
+    // window — `HomeScreen.kt` is the one place this value (and [newSinceExpand]'s own filter-gated
+    // count just below) actually reaches the feed sheet's/two-pane panel's DISPLAYED list; see that
+    // file's own kdoc note at its `FeedSheet`/`FeedList` call sites.
+    private val _feedFilterMinMag = MutableStateFlow<Double?>(FeedFilterStore.DEFAULT_MIN_MAG)
+    val feedFilterMinMag: StateFlow<Double?> = _feedFilterMinMag
+
     // Task 9: how many quakes have arrived since the feed sheet was last dragged open — the
     // sheet's "N NEW" chip. Incremented alongside refreshFailed's clearing below (same triggering
     // event: a genuinely new quake, per insertedQuakeIds' own not-on-updates contract), reset by
     // [markSheetExpanded] when HomeScreen observes the sheet reach SheetValue.Expanded.
+    //
+    // User review items 3+4, COHERENCE: the increment itself (in init{}'s insertedQuakeIds
+    // collector, below) is now GATED on [quakeMatchesMagFilter] against the CURRENT
+    // [_feedFilterMinMag] — an arrival under the active filter (e.g. an M2.2 while scoped to 4.0+)
+    // must not move this counter at all, since a counter bump with nothing new actually visible in
+    // the (separately, Compose-layer-filtered — see [_feedFilterMinMag]'s own kdoc) list it
+    // describes would be a lie the "N NEW" badge/reveal chip/auto-scroll would all repeat. Every
+    // OTHER effect that same collector drives (refreshFailed clearing, refreshGeneration bumping)
+    // stays UNGATED — those are "is data flowing at all" signals, not list-display ones.
     private val _newSinceExpand = MutableStateFlow(0)
     val newSinceExpand: StateFlow<Int> = _newSinceExpand
 
@@ -453,6 +490,14 @@ class HomeViewModel(
             alertRuleStore.minMag.collect { minMag -> _minMag.value = minMag }
         }
 
+        // User review items 3+4: the feed sheet's own filter — same "the store's own Flow already
+        // emits its current value to a fresh subscriber" shape as the alertRuleStore collectors just
+        // above (FeedFilterStore.minMag mirrors AlertRuleStore.minMag's own onStart{}-seeded Flow
+        // shape exactly — see that class's own kdoc).
+        viewModelScope.launch {
+            feedFilterStore.minMag.collect { minMag -> _feedFilterMinMag.value = minMag }
+        }
+
         // Task 2 (Plan 5): the quick-switch chip row — FavoritePlaceStore.favorites is itself a
         // reactive Flow (SQLDelight's own asFlow()/InMemoryQuakeStore's MutableStateFlow, see
         // QuakeStore.favoritePlaces' own kdoc), so a plain collect{} is all this needs: no separate
@@ -483,7 +528,7 @@ class HomeViewModel(
             // react to the exact same event (ingest() just wrote a genuinely new quake), so it's
             // one subscription with two consequences, not two subscriptions.
             launch {
-                repository.insertedQuakeIds.collect {
+                repository.insertedQuakeIds.collect { id ->
                     refreshFailed.value = false
                     // Task 2 (Plan 3): a live-clear invalidates any [refreshOnce] attempt already
                     // in flight — see [refreshGeneration]'s own kdoc. Bumped here (not just
@@ -491,7 +536,22 @@ class HomeViewModel(
                     // can originate from outside that function entirely (a live-WebSocket-sourced
                     // insert never goes through [refreshOnce] at all).
                     refreshGeneration++
-                    _newSinceExpand.value += 1
+                    // User review items 3+4, COHERENCE: [_newSinceExpand]'s own increment (ONLY
+                    // this one — refreshFailed/refreshGeneration above stay ungated, see
+                    // [_newSinceExpand]'s own kdoc) is gated on the ARRIVING quake's magnitude
+                    // against the CURRENT [_feedFilterMinMag]. [insertedQuakeIds] itself only ever
+                    // carries an id (see [QuakeRepository.insertedQuakeIds]'s own kdoc), so [byId] is
+                    // the one extra, cheap DAO read this needs — the exact same lookup
+                    // [QuakeSelectionViewModel.select] already does for an unrelated reason, not a
+                    // new kind of query this codebase hasn't already paid for elsewhere. A null
+                    // lookup (should not happen — the id was JUST inserted — but defensively
+                    // possible if a razor-thin race let it get pruned/superseded already) degrades
+                    // to "does not match" via [quakeMatchesMagFilter]'s own null-magnitude handling,
+                    // never to a spurious increment.
+                    val quake = repository.byId(id)
+                    if (quakeMatchesMagFilter(quake?.mag, _feedFilterMinMag.value)) {
+                        _newSinceExpand.value += 1
+                    }
                 }
             }
             // Fix Round 2 (review finding): pin mapping and the lastFetchedAtMillis() read used to
@@ -610,6 +670,27 @@ class HomeViewModel(
         _newSinceExpand.value = 0
     }
 
+    /**
+     * User review items 3+4: the feed filter chip/menu's own tap handler (`HomeScreen.kt`'s
+     * `FeedSheet`/`FeedList` call sites) — writes straight through to [feedFilterStore], mirroring
+     * [com.yugma.terrawatch.settings.SettingsViewModel]'s own AlertRuleStore-writing setters exactly
+     * (this class never mutates [_feedFilterMinMag] directly outside the init{} collector, same
+     * "the store is the one source of truth, this class only mirrors it" discipline
+     * [_nearbyRadiusKm]/[_minMag] already establish for their own AlertRuleStore-backed fields).
+     *
+     * Deliberately does NOT retroactively re-evaluate the already-accumulated [newSinceExpand]
+     * count against the newly-chosen [minMag] — an accepted, documented scope boundary: this
+     * counter is a running tally of qualifying ARRIVAL events (gated at ingest time, see that
+     * field's own kdoc), not a live re-derivable set membership question, so changing the filter
+     * only ever affects arrivals from this point forward. A user who raises the filter while "3 NEW"
+     * is showing keeps seeing "3 NEW" until the next arrival or [markSheetExpanded] — simplest
+     * correct, and consistent with how a real magnitude revision to an already-counted arrival is
+     * likewise never un-counted.
+     */
+    fun setFeedFilterMinMag(minMag: Double?) {
+        feedFilterStore.setMinMag(minMag)
+    }
+
     /** Called by `QuakeMap` once it has actually applied [startupCameraTarget] to the camera —
      * clears the signal so a later recomposition/rotation can never re-apply the same cold-start
      * jump again (mirrors `MainActivity`'s own `pendingQuakeId`/`onQuakeIdConsumed` "consume once"
@@ -697,7 +778,18 @@ class HomeViewModel(
      * real quake if one ever surfaces somewhere this purge doesn't reach.
      */
     @OptIn(ExperimentalTime::class)
-    fun injectDebugQuake(lat: Double, lon: Double) {
+    // User review items 3+4, device-verification hook: [mag] is a new, DEFAULTED (6.0, unchanged)
+    // parameter — every real production call site (`QuakeMap`'s debug long-press gesture, via
+    // `HomeScreen.kt`'s `onDebugLongPress`) keeps calling this with two args and keeps injecting
+    // the identical M6.0 it always has; this widening exists solely so a device-verification pass
+    // can inject a BELOW-the-default-feed-filter magnitude (e.g. `mag = 2.2`) to prove
+    // [_newSinceExpand]'s own filter-gating (see that field's kdoc) end to end on a real device,
+    // without touching `QuakeMap.android.kt`'s own carefully-tuned long-press gesture-timing code
+    // (that file's own kdoc already documents one hard-won device-verified double-fire bug fix in
+    // that exact block — not a place to add a second, riskier gesture variant for a one-off QA
+    // need). `place`/`revisions` both interpolate [mag] too, so an alternate-magnitude debug row
+    // never carries a stale "M6.0" label that no longer matches its own `mag` column.
+    fun injectDebugQuake(lat: Double, lon: Double, mag: Double = 6.0) {
         viewModelScope.launch {
             val now = Clock.System.now().toEpochMilliseconds()
             val id = "debug-$now-${Random.nextInt(100_000)}"
@@ -708,14 +800,14 @@ class HomeViewModel(
                     lat = lat,
                     lon = lon,
                     depthKm = 10.0,
-                    mag = 6.0,
+                    mag = mag,
                     magType = "mw",
-                    place = "[DEBUG] Injected M6.0",
+                    place = "[DEBUG] Injected M$mag",
                     tsunami = false,
                     felt = null,
                     status = QuakeStatus.AUTOMATIC,
                     sources = mapOf(Source.USGS to id),
-                    revisions = listOf(MagRevision(6.0, "mw", now, Source.USGS)),
+                    revisions = listOf(MagRevision(mag, "mw", now, Source.USGS)),
                     updatedAtMillis = now,
                 ),
             )

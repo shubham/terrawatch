@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -33,6 +34,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -55,6 +58,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.yugma.terrawatch.filter.MAGNITUDE_FILTER_CHIPS
 import com.yugma.terrawatch.model.Quake
 import com.yugma.terrawatch.motion.LocalReducedMotion
 import com.yugma.terrawatch.ui.components.QuakeCard
@@ -143,6 +147,20 @@ fun FeedSheet(
     // that function's own kdoc for the gating). Defaulted so every pre-existing call site
     // (HomeScreen's TwoPaneLayout, ComponentsTest) keeps compiling unchanged.
     visitSummaryText: String? = null,
+    // User review items 3+4: the dashboard list's own magnitude filter — HomeViewModel.
+    // feedFilterMinMag's current value. Defaulted to 4.0 (mirroring
+    // com.yugma.terrawatch.data.FeedFilterStore.DEFAULT_MIN_MAG's own value by convention, not by
+    // reference — this is a pure-UI file with no data-layer dependency of its own, same
+    // cross-module-duplication tradeoff `AlertRuleStore.readRadiusKm`'s own kdoc already accepts
+    // for an analogous pair) so every pre-existing call site (ComponentsTest's Koin-free render)
+    // keeps compiling unchanged.
+    activeFilterMinMag: Double? = 4.0,
+    // User review items 3+4: the filter menu's own tap handler — a no-op default, same "harmless
+    // for a test that never interacts with it" shape every other defaulted callback on this
+    // composable already uses (e.g. onQuakeClick has no such default because every real call site
+    // DOES care; this one, like a hypothetical unused onRetry, only needs a safe default for
+    // ComponentsTest's own non-interactive render).
+    onFilterChange: (Double?) -> Unit = {},
 ) {
     val listState = rememberLazyListState()
     val reducedMotion = LocalReducedMotion.current
@@ -252,6 +270,8 @@ fun FeedSheet(
             isSheetExpanded = isSheetExpanded,
             showRevealChip = chipVisible && newCount > 0,
             onRevealChipClick = onRevealChipClick,
+            activeFilterMinMag = activeFilterMinMag,
+            onFilterChange = onFilterChange,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         )
         // feat/feed-visit-ux, "since-last-visit summary": above the list, below the header - see
@@ -497,6 +517,13 @@ private fun FeedSheetHeader(
     isSheetExpanded: Boolean,
     showRevealChip: Boolean,
     onRevealChipClick: () -> Unit,
+    // User review items 3+4: the dashboard list's own filter control — see [FeedFilterControl]'s
+    // own kdoc for why this is a single compact menu chip rather than the 4-chip row History uses
+    // (space: this Row already carries the LIVE dot/label plus, conditionally, either the reveal
+    // chip or the "N NEW" badge — a 4-chip row would either wrap or force horizontal scrolling in a
+    // header this short, neither of which reads as "compact").
+    activeFilterMinMag: Double?,
+    onFilterChange: (Double?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -505,6 +532,9 @@ private fun FeedSheetHeader(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         LiveStatusRow(isLive)
+        // Pushes the reveal-chip/NEW-badge/filter-control cluster to the row's far end — LIVE stays
+        // pinned to the start regardless of how many of the other three are showing at once.
+        Spacer(Modifier.weight(1f))
         if (isSheetExpanded) {
             if (showRevealChip) {
                 Surface(
@@ -543,6 +573,63 @@ private fun FeedSheetHeader(
                     fontWeight = FontWeight.Bold,
                     color = Color.White,
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                )
+            }
+        }
+        FeedFilterControl(activeMinMag = activeFilterMinMag, onFilterChange = onFilterChange)
+    }
+}
+
+/**
+ * User review items 3+4: the dashboard list's own magnitude filter control — a single compact
+ * "label ▾" chip (never the 4-chip row [MAGNITUDE_FILTER_CHIPS] would need if laid out flat, per
+ * the task's own offered escape hatch: "maybe a single filter chip opening a menu if row is
+ * tight") that opens a [DropdownMenu] with the shared "All/4.0+/5.0+/6.0+" vocabulary on tap.
+ *
+ * The "▾" glyph is plain text, not an icon — this codebase's own established "no icon-library
+ * dependency anywhere" rule (`StatusShield.kt`/`nav/NavIcons.kt`/this same file's own
+ * `VisitSummaryBanner` all document it) applies here exactly as it does for
+ * [com.yugma.terrawatch.history.HistoryScreen]'s own search-field clear glyph.
+ *
+ * `mergeDescendants` (not `clearAndSetSemantics`) on the outer `Surface`, same
+ * [FeedSheetHeader]'s own reveal-chip precedent: clearing here would discard the `onClick` the
+ * `Surface` itself contributes, silently making the control untappable via TalkBack's activate
+ * gesture.
+ */
+@Composable
+private fun FeedFilterControl(activeMinMag: Double?, onFilterChange: (Double?) -> Unit, modifier: Modifier = Modifier) {
+    var expanded by remember { mutableStateOf(false) }
+    val activeLabel = MAGNITUDE_FILTER_CHIPS.firstOrNull { it.second == activeMinMag }?.first ?: "All"
+    Box(modifier) {
+        Surface(
+            onClick = { expanded = true },
+            shape = RoundedCornerShape(TerraRadii.pill),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            modifier = Modifier.semantics(mergeDescendants = true) {
+                contentDescription = "Magnitude filter, currently $activeLabel. Double tap to change."
+            },
+        ) {
+            Text(
+                text = "$activeLabel ▾",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .padding(horizontal = 8.dp, vertical = 2.dp)
+                    // Same double-read fix as FeedSheetHeader's own reveal-chip Text — blocks this
+                    // Text's own implicit "read the literal string" semantics from riding along
+                    // into the Surface's merged node on top of the contentDescription above.
+                    .clearAndSetSemantics {},
+            )
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            MAGNITUDE_FILTER_CHIPS.forEach { (label, value) ->
+                DropdownMenuItem(
+                    text = { Text(label) },
+                    onClick = {
+                        onFilterChange(value)
+                        expanded = false
+                    },
                 )
             }
         }

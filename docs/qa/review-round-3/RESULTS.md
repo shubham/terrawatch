@@ -207,3 +207,190 @@ this report), trailer `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
   initSharePlatformContext` addition) is a test-infrastructure fix bundled into this pass because it
   directly blocked verifying the new regression test — not because it was in this task's original
   scope. Called out explicitly rather than silently folded in uncredited.
+
+---
+
+# Review round 3, items 3+4 — history search + magnitude filters — RESULTS
+
+User review items 3 ("local search for earthquake in history") and 4 ("filter support in history,
+quake list in dashboard list on the basis of richter scale; in the list default should be 4.0 and
+above; user should be able to filter"). Device verification: OnePlus 9R `98bc1cd8` (same device as
+above), verified connected before, throughout (2 rebuild/reinstall cycles), and after this pass.
+
+## Item → verdict
+
+| # | Item | Verdict (98bc1cd8) |
+|---|------|-----|
+| 3 | History search (local, case-insensitive, place text) | **PASS** |
+| 4 | Shared magnitude filter, both lists, dashboard defaults 4.0+, persists | **PASS** |
+
+## Design
+
+**Shared vocabulary** (`composeApp/.../filter/MagnitudeFilter.kt`, new): one `MAGNITUDE_FILTER_CHIPS`
+list ("All"/"4.0+"/"5.0+"/"6.0+") consumed by both `HistoryScreen`'s chip row (replacing that screen's
+former, independent "All/M4.5+/M6+" set) and the feed sheet's new filter control, plus one shared pure
+predicate `quakeMatchesMagFilter(mag, minMag)` used wherever the feed list needs client-side filtering.
+History's own chip selection was confirmed session-only, never persisted (`HistoryViewModel._filter`
+is a plain `MutableStateFlow`, grepped for any meta-table write — none exists), so there was no stored
+user selection to migrate; the only carry-over is `HistoryPager`'s per-filter-value paging-cursor meta
+key, where the retired "M4.5+" (4.5) combination's cursor row is now simply orphaned (harmless — never
+looked up again) and the retained "M6+"→"6.0+" (6.0) combination's cursor carries over unchanged.
+
+**History search** (`HistoryViewModel`/`QuakeRepository.pageBetween`/`Quake.sq`): a new optional
+`placeQuery` predicate on the existing `pageBetween` SQL query (`AND (:placeQuery IS NULL OR place
+LIKE '%' || :placeQuery || '%')` — SQLite's own default ASCII case-insensitive `LIKE`, no `COLLATE`
+needed), threaded through `QuakeStore`/`QuakeDao`/`InMemoryQuakeStore`/`QuakeRepository`. Deliberately
+LOCAL: `HistoryViewModel.setSearchQuery` never touches `HistoryPager`/the network — a new
+`visibleAndUnsearched()` helper computes the archive-walk's own "did this page add anything real"
+decision SEARCH-OBLIVIOUS (always `placeQuery = null`) so a search matching zero cached rows can never
+be mistaken for "nothing here, keep paging the network," while the actually-displayed rows apply the
+live search text; the two reads collapse into one when no search is active (zero added cost for the
+common case). A search-caused `Content(sections = emptyList())` is a new, legitimate, durable
+published shape (documented on `HistoryUiState.Empty`'s own kdoc) — `HistoryScreen` folds it and the
+true archive-wide `Empty` into one "effectively empty" check, then `searchQuery.isNotBlank()` alone
+decides which of two copies renders ("No quakes match 'x'" + Clear search, vs. the pre-existing "no
+quakes match these filters" + Widen filters) — so clearing a search that had been applied against a
+genuinely-Empty state still shows the original widen-filters treatment, not a bare list.
+
+**Feed filter, `FeedFilterStore` (new, `core:data`)**: same `AlertRuleStore`-shaped persisted
+single-value store (meta-table row, `Flow<Double?>`, `updates` SharedFlow, `distinctUntilChanged`) —
+`minMag: Double?` (null = "All"), unset-default **4.0** per the user's explicit binding instruction, a
+dedicated `"all"` sentinel string tells a genuine stored "All" apart from "never configured." Wired
+into `HomeViewModel` as an 11th defaulted constructor param (`feedFilterStore`), mirroring
+`visitStore`'s own precedent exactly.
+
+## Coherence design (the tricky part)
+
+Filtering the dashboard list happens ONLY at the `HomeScreen` Compose boundary — a new
+`feedFilteredQuakes` local `val` (`state.quakes.filter { quakeMatchesMagFilter(it.mag,
+feedFilterMinMag) }`), passed as `FeedSheet`'s/`FeedList`'s own `quakes` param. `HomeViewModel.state`
+itself, `content.pins` (map), and `pillStatus(s.quakes, ...)` (the safety pill) all keep reading the
+ORIGINAL, unfiltered list — there is no single "filtered state" a future caller could accidentally
+wire into the map or the pill, because the filtered list never exists as a StateFlow at all, only as
+this one Compose-local value. **This is also what makes `FeedSheet.kt`'s existing reveal/topId-change
+wiring filter-coherent for free, with zero edits inside that file's `LaunchedEffect`s**: since a
+below-filter arrival is excluded from the list `FeedSheet` receives, `quakes.firstOrNull()`'s id never
+changes for it, so the pre-existing T3b "did the top change" logic never fires a reveal/auto-scroll for
+something the user can't even see. The one signal that DOES need explicit gating is
+`HomeViewModel._newSinceExpand` (the "N NEW" badge/count fed into `feedRevealAction`/
+`feedExpandRevealAction`) — it's an accumulating ViewModel-level counter, independent of any
+particular list snapshot, so its own `insertedQuakeIds` collector now does one extra `repository.byId
+(id)` lookup per genuine arrival and only increments when `quakeMatchesMagFilter(quake?.mag,
+feedFilterMinMag)` holds; every OTHER effect that same collector drives (`refreshFailed` clearing,
+`refreshGeneration` bumping) stays ungated, since those answer "is data flowing at all," not "does the
+list have something new to show." Net effect: an M2.2 arrival while scoped to 4.0+ gets a map pin (pins
+unaffected, per the user's own "in the list" scoping) but bumps neither the counter, nor the reveal
+chip, nor an auto-scroll, nor the peeking "N NEW" badge — verified on-device (see below), not just in
+jvmTest. Changing the filter does NOT retroactively re-derive the already-accumulated
+`newSinceExpand` count (accepted, documented scope boundary — it's an arrival-time-gated tally, not a
+live re-derivable set) — a raised filter can leave a stale-but-honest "N NEW" badge showing until the
+next arrival or `markSheetExpanded()`. The visit-summary banner's own fixed M4.0+ threshold
+(`VISIT_SUMMARY_MIN_MAG`) is completely independent of this new, user-adjustable filter (which merely
+happens to share the same 4.0 DEFAULT) — cross-referenced in both constants' own kdoc so a future
+reader doesn't conflate the two.
+
+## TDD
+
+New/changed test files, all new logic red→green verified (not just written and assumed):
+- `core/database/.../QuakeDaoTest.kt` + `InMemoryQuakeStoreTest.kt`: 5 new `pageBetween` `placeQuery`
+  cases each (case-insensitive match, uppercase input, AND-composition with `minMag`, null-query
+  no-op, no-match-returns-empty).
+- `core/data/.../FeedFilterStoreTest.kt` (new, 10 tests): default-when-unset, round-trip (including
+  the nullable "All" case), live-update-in-order, corrupt-value-degrades-to-default, `updates`
+  emission, cross-instance persistence, the synchronous escape hatch.
+- `composeApp/.../filter/MagnitudeFilterTest.kt` (new, 5 tests): the shared chip list's exact
+  contents/order, `quakeMatchesMagFilter`'s truth table (null filter matches everything including
+  unknown mag; at/above floor matches; below floor and unknown-mag-under-a-real-floor don't).
+- `composeApp/.../HistoryViewModelTest.kt` (+6): live substring filter, case-insensitivity, AND-compose
+  with magnitude filter, clearing restores the full list, a zero-match search shows an empty `Content`
+  **without** an extra network fetch (asserted via `MockEngine` call-count), a page loaded via
+  `loadMore()` while a search is active is itself search-filtered.
+- `composeApp/.../HomeViewModelTest.kt` (+7): `feedFilterMinMag` default/live-update/write-through,
+  the core coherence proof (a sub-threshold arrival never bumps `newSinceExpand`; an at-threshold one
+  still does; widening the filter to "All" lets a previously-gated arrival through; the SAME gate
+  holds at a user-raised 6.0+ floor, not just the default), and confirmation that a gated arrival still
+  clears `refreshFailed` (the gate is scoped to the one counter, not the whole collector).
+- Two tests initially had real bugs, caught by actually running them (not just writing them): one
+  relied on two StateFlow emissions of an identical value (`StateFlow` conflates — fixed to expect
+  one), one nested `withTimeoutOrNull { awaitItem() }` around Turbine's own `awaitItem()` — this exact
+  file's own pre-existing "a slow-failed poll..." test already documents why that combination breaks
+  (Turbine's internal timeout exception isn't recognized by an enclosing `withTimeoutOrNull`); fixed to
+  the same `try { awaitItem() } catch (e: AssertionError)` idiom that test already established.
+
+## Device verify (98bc1cd8, live app data, 2026-08-17)
+
+1. **Fresh-install default 4.0+** — `op9-feed-freshinstall-default4.0plus.png`: uninstalled, reinstalled,
+   onboarding skipped; feed sheet header reads "4.0+ ▾" on the very first cold start, with real M4.9
+   Indonesia quakes already showing.
+2. **Feed filter menu + change** — `op9-feed-filter-changed-to-6.0plus.png`: tapped the chip, the
+   shared "All/4.0+/5.0+/6.0+" `DropdownMenu` opened; picked 6.0+; list immediately re-filtered to
+   empty ("Quiet right now" — no M6+ globally in the last 24h at verification time).
+3. **Persists across restart** — `op9-feed-filter-persists-after-restart.png`: `am force-stop` +
+   relaunch; chip still reads "6.0+" with no further interaction — a real SQLite meta-table
+   round-trip, not in-memory session state.
+4. **Coherence: sub-threshold arrival, filter 4.0+** — `op9-feed-M2.2-inject-no-NEW-badge.png` +
+   `op9-feed-M2.2-inject-detail-confirms-mag.png`: reset filter to 4.0+, long-pressed the map to
+   debug-inject (temporarily re-pointed at `mag = 2.2` for this one verification pass only — see
+   Concerns — reverted before commit). A pin appeared on the map (pins unaffected, confirmed) but the
+   header's "NEW" badge never appeared and the list never changed; tapping the new pin confirmed
+   "[DEBUG] Injected M2.2" — the actual injected magnitude, not a guess.
+5. **History search, live** — `op9-history-search-indo-live-filter.png`: typed "INDO" (uppercase);
+   list narrowed to exactly the Indonesia-place rows (Flores Region ×3, Ruteng) live, no submit needed.
+6. **History search, empty state** — `op9-history-search-empty-state.png`: extended the query to a
+   non-existent place; "No quakes match "indonesiazzznomatch"" + Clear search, verbatim per spec.
+7. **Clear search restores list** — `op9-history-search-cleared-restores-list.png`: tapped Clear
+   search; full list (incl. the still-present `[DEBUG] Injected M2.2` row — History has no
+   origin-based exclusion, pre-existing/unrelated behavior) reappeared.
+8. **History chips** — `op9-history-chips-5.0plus.png`: tapped "5.0+"; list re-paged and settled on
+   exactly the M5.0+ rows.
+9. **Crash sweep**: `adb logcat -d -b crash` and an `AndroidRuntime: E` filter, both empty across the
+   entire session (uninstall/reinstall, onboarding skip, 2 app rebuild+reinstall cycles, filter
+   changes, force-stop/relaunch, debug injection, History search/chip taps).
+10. **Debug quake left in local DB** — same existing, unconditional `purgeDebugQuakes()` startup
+    housekeeping as every prior round; no manual cleanup performed or required.
+
+Screenshots: `docs/qa/review-round-3/op9-feed-*.png` (5 files), `op9-history-*.png` (4 files).
+
+## Tests / compiles
+
+- `./gradlew jvmTest --max-workers=4` (all modules) — **BUILD SUCCESSFUL**: composeApp 273, core:model
+  25, core:network 50, core:database 138, core:data 187, core:ui 61, core:monetization 9, core:ads 12
+  — **755 tests total, 0 failures, 0 errors** (up from round 3's own 717 baseline; +10 database, +10
+  data, +18 composeApp).
+- `./gradlew allTests --max-workers=4` (every KMP target incl. `wasmJsBrowserTest`) — **BUILD
+  SUCCESSFUL**.
+- `./gradlew :composeApp:compileDebugKotlinAndroid :composeApp:compileKotlinJvm
+  :composeApp:compileKotlinWasmJs --max-workers=4` — all 3 targets green.
+- `./gradlew :composeApp:assembleDebug --max-workers=4` — green; arm64 APK installed via `adb install
+  -r` for the device-verify pass above (3 install cycles total: clean uninstall+install for the
+  fresh-default check, one reinstall for the temporary low-mag debug hook, one final reinstall of the
+  reverted/committed code).
+
+## Concerns
+
+- **Temporary debug-hook magnitude, reverted before commit**: `HomeViewModel.injectDebugQuake` gained
+  a defaulted `mag: Double = 6.0` param (permanent, zero behavior change for the real long-press
+  gesture) specifically so this pass could device-verify the sub-4.0 coherence gate without touching
+  `QuakeMap.android.kt`'s own carefully-tuned, already-once-device-debugged long-press gesture-timing
+  code (judged disproportionate risk for a one-off QA need). `HomeScreen.kt`'s own call site was
+  temporarily edited to `mag = 2.2` for exactly the one verification screenshot, then reverted — `git
+  diff`/the commit itself carries no trace of the temporary value, only the permanent, defaulted
+  parameter.
+- **Feed sheet's empty-state copy is generic, not filter-aware**: a strict filter (e.g. 6.0+) that
+  happens to leave zero visible rows shows the SAME "Quiet right now — no quakes in the last 24h" copy
+  a genuinely quiet unfiltered 24h window would — not filter-labeled the way History's own search-empty
+  state is. Not explicitly requested for the feed sheet (unlike History's own verbatim-specified "No
+  quakes match 'x'"); accepted as a minor, honestly-flagged UX imprecision rather than adding a fourth
+  empty-state variant beyond this task's actual scope.
+- **`newSinceExpand` is not retroactively re-scoped on a filter change** — see Coherence design above;
+  a deliberate, documented simplification, not an oversight.
+- **TwoPaneLayout (desktop/tablet) gets the filtered DATA, not a filter UI control** — consistent with
+  this project's own Android-only device-verified scope; the panel reflects whatever the phone sheet
+  (or a future desktop control) last set. Untested beyond a jvm/wasmJs compile check, same as every
+  other TwoPaneLayout-only path in this codebase.
+- **History's `place LIKE` predicate does not escape literal `%`/`_`** in user-typed search text — an
+  accepted v1 gap (single-user local search box, not adversarial input; no real USGS/EMSC place string
+  contains either character).
+- All 755 jvmTest cases and both `allTests`/3-target-compile/`assembleDebug` gates are green; no
+  pre-existing failures were newly introduced by this pass (spot-checked `HistoryViewModelTest`/
+  `HomeViewModelTest`/`QuakeDaoTest`/`InMemoryQuakeStoreTest` test counts before/after this diff).

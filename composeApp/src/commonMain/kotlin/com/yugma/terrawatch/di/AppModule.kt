@@ -3,6 +3,7 @@ package com.yugma.terrawatch.di
 import com.yugma.terrawatch.alerts.AlertDigestScheduler
 import com.yugma.terrawatch.data.AlertRuleStore
 import com.yugma.terrawatch.data.FavoritePlaceStore
+import com.yugma.terrawatch.data.FeedFilterStore
 import com.yugma.terrawatch.data.HistoryPager
 import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.data.OnboardingStore
@@ -82,6 +83,10 @@ fun appModule(
     // since-last-visit summary's read side) and MainActivity.android.kt (the write side, on
     // Activity onStop — see that class's own kdoc for why the write lives there rather than here).
     single { VisitStore(get()) }
+    // User review items 3+4: same "plain single over the shared QuakeStore" shape as
+    // AlertRuleStore/HomeLocationStore/FavoritePlaceStore/VisitStore above. Consumed by
+    // HomeViewModel alone (the feed sheet's persisted magnitude filter).
+    single { FeedFilterStore(get()) }
     // Task 4 (Plan 3): resolved via koinInject<OnboardingStore>() at AppNav's composition root
     // (same non-ViewModel "plain single, plain koinInject()" shape LocationAskDialog.kt already
     // uses for HomeLocationStore/LocationRequester) rather than through any ViewModel constructor
@@ -129,7 +134,11 @@ fun appModule(
     // persisted VisitStore single reaches HomeViewModel — its own default (a throwaway
     // InMemoryQuakeStore-backed instance) exists purely so jvmTest/HomeFlowTest/OnboardingGateTest's
     // pre-existing construction keeps compiling, not for production use.
-    viewModel { HomeViewModel(get(), get(), get(), get(), favoritePlaceStore = get(), visitStore = get()) }
+    // User review items 3+4: feedFilterStore is a NAMED arg, same reasoning as visitStore's own
+    // comment immediately above — the REAL, persisted FeedFilterStore single (not its own
+    // throwaway-InMemoryQuakeStore-backed default) is what makes "User choice PERSISTS" actually
+    // true in production.
+    viewModel { HomeViewModel(get(), get(), get(), get(), favoritePlaceStore = get(), visitStore = get(), feedFilterStore = get()) }
     // Task 3 (Plan 3): QuakeSelectionViewModel's second constructor param is
     // androidx.lifecycle.SavedStateHandle, which has no `single {}`/`factory {}` registration
     // anywhere in this module — and needs none. Koin's own ViewModel factory

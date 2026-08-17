@@ -7,6 +7,7 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import app.cash.turbine.test
 import com.yugma.terrawatch.data.AlertRuleStore
 import com.yugma.terrawatch.data.FavoritePlaceStore
+import com.yugma.terrawatch.data.FeedFilterStore
 import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.data.QuakeRepository
 import com.yugma.terrawatch.data.VisitStore
@@ -199,10 +200,15 @@ class HomeViewModelTest {
         // feat/feed-visit-ux: same "add a new store, default it" shape favoritePlaceStore's own
         // comment above already establishes for this helper.
         visitStore: VisitStore = emptyVisitStore(),
+        // User review items 3+4: same "add a new store, default it" shape every prior store param
+        // above already establishes for this helper — none of the pre-existing tests care about the
+        // feed filter, so they all keep compiling/behaving unchanged via this default.
+        feedFilterStore: FeedFilterStore = emptyFeedFilterStore(),
     ): HomeViewModel =
         HomeViewModel(
             repository, homeLocationStore, locationProvider, alertRuleStore, clock,
             favoritePlaceStore = favoritePlaceStore, ioDispatcher = ioDispatcher, visitStore = visitStore,
+            feedFilterStore = feedFilterStore,
         ).also { createdViewModels += it }
 
     @AfterTest fun tearDown() {
@@ -796,6 +802,161 @@ class HomeViewModelTest {
         }
     }
 
+    // ---- User review items 3+4: feedFilterMinMag + newSinceExpand coherence -----------------------
+    // The dashboard feed sheet's own persisted magnitude filter, and the "N NEW" counter's own
+    // gating against it — an M<filter arrival must not bump newSinceExpand (no reveal chip, no
+    // auto-scroll, no "N NEW" badge increment), even though it DOES still reach the DB/quakes list
+    // (map pins/pillStatus are unaffected — see HomeScreen.kt's own kdoc note for where the actual
+    // list DISPLAY filtering happens; this class only owns the filter's own persisted value and the
+    // counter's gating against it).
+
+    @Test fun `feedFilterMinMag defaults to FeedFilterStore's own 4-0 default`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val vm = createVm(fakeRepositoryAlwaysFailing(ioDispatcher = testDispatcher), ioDispatcher = testDispatcher)
+        vm.feedFilterMinMag.test {
+            // ONE awaitItem(), not two: [_feedFilterMinMag] is already seeded at 4.0 before init{}'s
+            // own feedFilterStore.minMag collector re-emits that SAME 4.0 — a StateFlow conflates an
+            // equal consecutive value, so there is only ever one real emission here to observe (same
+            // "seeded default, live collector re-confirms it, no second event" shape
+            // `nearbyRadiusKm defaults to AlertRuleStore's own 100km default` above already pins).
+            assertEquals(FeedFilterStore.DEFAULT_MIN_MAG, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `feedFilterMinMag reacts to a store update landing mid-session, no restart needed`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val feedFilterStore = emptyFeedFilterStore()
+        val vm = createVm(fakeRepositoryAlwaysFailing(ioDispatcher = testDispatcher), ioDispatcher = testDispatcher, feedFilterStore = feedFilterStore)
+        vm.feedFilterMinMag.test {
+            assertEquals(4.0, awaitItem())
+            feedFilterStore.setMinMag(6.0)
+            assertEquals(6.0, awaitItem())
+            feedFilterStore.setMinMag(null) // "All"
+            assertEquals(null, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `setFeedFilterMinMag writes through to the store and round-trips`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val feedFilterStore = emptyFeedFilterStore()
+        val vm = createVm(fakeRepositoryAlwaysFailing(ioDispatcher = testDispatcher), ioDispatcher = testDispatcher, feedFilterStore = feedFilterStore)
+        vm.feedFilterMinMag.test {
+            assertEquals(4.0, awaitItem())
+            vm.setFeedFilterMinMag(5.0)
+            assertEquals(5.0, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    // The coherence proof: an arrival BELOW the active filter must not move newSinceExpand at all.
+    @Test fun `newSinceExpand does not increment for an arrival below the active feed filter`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val repository = fakeRepositoryAlwaysFailing(ioDispatcher = testDispatcher)
+        // Default filter is 4.0+ (FeedFilterStore.DEFAULT_MIN_MAG) — an M2.2 arrival must be gated out.
+        val vm = createVm(repository, ioDispatcher = testDispatcher)
+        vm.newSinceExpand.test {
+            assertEquals(0, awaitItem())
+            repository.ingest(freshQuake("sub-threshold", mag = 2.2))
+            // Nothing further should ever arrive on this StateFlow for this ingest. NOT
+            // `withTimeoutOrNull(...) { awaitItem() }` — this file's own "a slow-failed poll landing
+            // after a live-clear..." test already documents why that specific combination breaks:
+            // Turbine's `awaitItem()` internally catches ANY TimeoutCancellationException reaching
+            // it, INCLUDING one thrown by an enclosing withTimeoutOrNull, and rethrows it as its own
+            // (package-internal) TurbineAssertionError — which the enclosing withTimeoutOrNull no
+            // longer recognizes as its own cancellation, so it propagates as a real test failure
+            // instead of yielding `null`. Catching the AssertionError directly (Turbine's own 3s
+            // wall-clock default timeout) is this file's own established way to say "prove nothing
+            // arrived" — see that other test's identical `try { awaitItem() } catch (...: AssertionError)`.
+            val late = try { awaitItem() } catch (expectedWhenGateHolds: AssertionError) { null }
+            assertEquals(null, late, "an arrival below the active feed filter must never increment newSinceExpand")
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    // The complementary proof: an arrival AT/ABOVE the active filter still increments normally —
+    // the gate excludes sub-threshold arrivals specifically, not arrivals in general.
+    @Test fun `newSinceExpand still increments for an arrival at or above the active feed filter`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val repository = fakeRepositoryAlwaysFailing(ioDispatcher = testDispatcher)
+        val vm = createVm(repository, ioDispatcher = testDispatcher)
+        vm.newSinceExpand.test {
+            assertEquals(0, awaitItem())
+            repository.ingest(freshQuake("at-threshold", mag = 4.0))
+            assertEquals(1, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    // Setting the filter to "All" (null) must let a normally-gated sub-threshold arrival through —
+    // proves the gate reads the LIVE filter value, not a value frozen at HomeViewModel construction.
+    @Test fun `newSinceExpand increments for a sub-threshold arrival once the filter is widened to All`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val feedFilterStore = emptyFeedFilterStore()
+        val repository = fakeRepositoryAlwaysFailing(ioDispatcher = testDispatcher)
+        val vm = createVm(repository, ioDispatcher = testDispatcher, feedFilterStore = feedFilterStore)
+        vm.setFeedFilterMinMag(null)
+        vm.newSinceExpand.test {
+            assertEquals(0, awaitItem())
+            repository.ingest(freshQuake("sub-threshold", mag = 2.2))
+            assertEquals(1, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    // The user's own explicit device-verification scenario, pinned at the ViewModel level: setting
+    // the filter to 6.0+ must gate out an M4-M5.9 arrival that the DEFAULT 4.0+ filter would have let
+    // through — not just prove the default filter's own floor works.
+    @Test fun `newSinceExpand does not increment for an arrival below a user-raised 6-0+ filter`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val feedFilterStore = emptyFeedFilterStore()
+        val repository = fakeRepositoryAlwaysFailing(ioDispatcher = testDispatcher)
+        val vm = createVm(repository, ioDispatcher = testDispatcher, feedFilterStore = feedFilterStore)
+        vm.setFeedFilterMinMag(6.0)
+        vm.newSinceExpand.test {
+            assertEquals(0, awaitItem())
+            repository.ingest(freshQuake("m5", mag = 5.0))
+            // See the previous test's own kdoc for why this is a plain try/catch around awaitItem()
+            // (Turbine's own 3s default timeout), not a nested withTimeoutOrNull.
+            val late = try { awaitItem() } catch (expectedWhenGateHolds: AssertionError) { null }
+            assertEquals(null, late, "an M5.0 arrival under a 6.0+ filter must never increment newSinceExpand")
+            repository.ingest(freshQuake("m6-5", mag = 6.5, timeMillis = 1_950_000 + 3_600_000))
+            assertEquals(1, awaitItem(), "an M6.5 arrival under the SAME 6.0+ filter must still increment")
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    // A gated (filtered-out) arrival must not silently break the OTHER, unrelated effects the same
+    // insertedQuakeIds collector drives — refreshFailed clearing still fires regardless of whether
+    // the arrival happened to qualify for the feed filter (the gate is scoped to newSinceExpand
+    // alone, per this task's own spec — refreshFailed is a "is data flowing at all" signal, not a
+    // magnitude-scoped one).
+    @Test fun `a sub-threshold arrival still clears refreshFailed even though it does not bump newSinceExpand`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val repository = fakeRepositoryAlwaysFailing(ioDispatcher = testDispatcher)
+        val vm = createVm(repository, ioDispatcher = testDispatcher)
+        vm.state.test {
+            var s = awaitItem()
+            while (s is HomeUiState.Loading || (s is HomeUiState.Content && !s.refreshFailed)) s = awaitItem()
+            assertTrue(assertIs<HomeUiState.Content>(s).refreshFailed)
+
+            repository.ingest(freshQuake("sub-threshold", mag = 2.2))
+            var s2 = awaitItem()
+            while (s2 is HomeUiState.Content && s2.refreshFailed) s2 = awaitItem()
+            assertFalse(assertIs<HomeUiState.Content>(s2).refreshFailed)
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
     // Task 3b: pins the exact ViewModel-level fact that makes FeedSheet.kt's own reveal wiring need
     // its OWN baseline tracking (a remembered "previous top id", null until the first real
     // emission — see FeedSheet's kdoc) rather than trusting newCount == 0 to mean "nothing to
@@ -1340,6 +1501,17 @@ private fun emptyVisitStore(): VisitStore {
     val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
     TerraWatchDb.Schema.create(driver)
     return VisitStore(QuakeDao(TerraWatchDb(driver), dispatcher = UnconfinedTestDispatcher()))
+}
+
+// User review items 3+4: same "fresh, empty, don't-care-what-it-resolves-to" role as
+// emptyVisitStore()/emptyAlertRuleStore() above, for HomeViewModel's new FeedFilterStore
+// constructor param — "empty" here still resolves to FeedFilterStore's own real 4.0 default
+// (nothing written to the underlying dao yet), matching the user's own "first-run default 4.0+"
+// instruction for every test that doesn't explicitly override it.
+private fun emptyFeedFilterStore(): FeedFilterStore {
+    val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+    TerraWatchDb.Schema.create(driver)
+    return FeedFilterStore(QuakeDao(TerraWatchDb(driver), dispatcher = UnconfinedTestDispatcher()))
 }
 
 private val ONE_FEATURE_GEOJSON = """
