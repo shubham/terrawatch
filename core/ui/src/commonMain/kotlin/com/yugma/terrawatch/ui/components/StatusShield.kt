@@ -198,7 +198,7 @@ private fun CalmContent(radiusKm: Double) {
         Text(
             text = "All calm near you",
             style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurface,
         )
         Text(
@@ -237,7 +237,7 @@ private fun AlertContent(status: PillStatus, nowMillis: Long) {
         text = text,
         // Task 10 (item f): magnitude-bearing (the "M X.X" prefix) - tabularFigures per the brief.
         style = MaterialTheme.typography.bodyMedium.tabularFigures(),
-        fontWeight = FontWeight.Bold,
+        fontWeight = FontWeight.SemiBold,
         color = MaterialTheme.colorScheme.onSurface,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
@@ -251,7 +251,7 @@ private fun AskLocationContent() {
         Text(
             text = "Where are you?",
             style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurface,
         )
         Text(

@@ -300,7 +300,7 @@ private fun SettingsHeader(onBack: () -> Unit, modifier: Modifier = Modifier) {
         Text(
             text = "Settings",
             style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onBackground,
         )
     }
@@ -482,7 +482,7 @@ private fun AlertsPermissionRow(
             Text(
                 text = alertsRowStatusText(uiState, enqueued),
                 style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface,
             )
         }
@@ -614,7 +614,7 @@ private fun AddPlaceRow(onClick: () -> Unit, modifier: Modifier = Modifier) {
         Text(
             text = "Add place",
             style = MaterialTheme.typography.bodyLarge,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.primary,
         )
     }
@@ -645,7 +645,7 @@ private fun PlusRow(isPlusActive: Boolean, onClick: () -> Unit, modifier: Modifi
         Text(
             text = if (isPlusActive) "Active" else "Free",
             style = MaterialTheme.typography.bodyLarge,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurface,
         )
     }
@@ -758,5 +758,12 @@ private fun AboutContent(modifier: Modifier = Modifier) {
         Text("Data sources: USGS · EMSC", style = MaterialTheme.typography.bodyMedium, color = bodyColor)
         Text("© OpenStreetMap contributors", style = MaterialTheme.typography.bodyMedium, color = bodyColor)
         Text("Map data © OpenFreeMap", style = MaterialTheme.typography.bodyMedium, color = bodyColor)
+        // Font selection doc (docs/superpowers/plans/2026-08-17-font-selection.md), Part 5 step 2:
+        // OFL 1.1 requires the license text travel with the font (core:ui's own
+        // composeResources/files/OFL.txt does that); it does NOT require in-app attribution UI, but
+        // this static ABOUT list already credits every other bundled/third-party asset (map tiles,
+        // quake data) the same one-line way, so Inter gets the identical treatment rather than a
+        // silent exception.
+        Text("Inter font © The Inter Project Authors, SIL OFL 1.1", style = MaterialTheme.typography.bodyMedium, color = bodyColor)
     }
 }

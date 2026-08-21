@@ -131,13 +131,54 @@ class InMemoryQuakeStoreTest {
         store.replace(quake(id = "c", timeMillis = 300, mag = 6.5))
         store.replace(quake(id = "d", timeMillis = 400, mag = 7.0))
         // [200, 400) with minMag=4.5 -- "a" excluded (below range), "d" excluded (at/above ceiling).
-        val rows = store.pageBetween(lowerInclusive = 200, upperExclusive = 400, minMag = 4.5)
+        // placeQuery = null spelled out explicitly — see QuakeDaoTest's identical note: an
+        // overriding function can't redeclare the interface's default, so a concrete-typed `store`
+        // reference needs every argument named here.
+        val rows = store.pageBetween(lowerInclusive = 200, upperExclusive = 400, minMag = 4.5, placeQuery = null)
         assertEquals(listOf("c", "b"), rows.map { it.id })
     }
 
     @Test fun `pageBetween on an empty range returns nothing`() {
         store.replace(quake(id = "a", timeMillis = 100))
-        assertEquals(emptyList(), store.pageBetween(lowerInclusive = 200, upperExclusive = 300, minMag = null))
+        assertEquals(emptyList(), store.pageBetween(lowerInclusive = 200, upperExclusive = 300, minMag = null, placeQuery = null))
+    }
+
+    // History search (user review items 3+4): mirrors QuakeDaoTest's own placeQuery cases exactly —
+    // both QuakeStore implementations honor the same contract.
+    @Test fun `pageBetween with a placeQuery matches a case-insensitive substring of place`() {
+        store.replace(quake(id = "a", timeMillis = 100).copy(place = "10km SE of Jakarta, Indonesia"))
+        store.replace(quake(id = "b", timeMillis = 200).copy(place = "20km N of Tokyo, Japan"))
+        val rows = store.pageBetween(lowerInclusive = 0, upperExclusive = 1000, minMag = null, placeQuery = "indo")
+        assertEquals(listOf("a"), rows.map { it.id })
+    }
+
+    @Test fun `pageBetween placeQuery is uppercase-insensitive too`() {
+        store.replace(quake(id = "a", timeMillis = 100).copy(place = "10km SE of Jakarta, Indonesia"))
+        val rows = store.pageBetween(lowerInclusive = 0, upperExclusive = 1000, minMag = null, placeQuery = "JAKARTA")
+        assertEquals(listOf("a"), rows.map { it.id })
+    }
+
+    @Test fun `pageBetween composes placeQuery AND minMag, not either-or`() {
+        store.replace(quake(id = "small", timeMillis = 100, mag = 2.0).copy(place = "Jakarta, Indonesia"))
+        store.replace(quake(id = "big", timeMillis = 200, mag = 6.0).copy(place = "Jakarta, Indonesia"))
+        store.replace(quake(id = "other-place", timeMillis = 300, mag = 6.0).copy(place = "Tokyo, Japan"))
+        val rows = store.pageBetween(lowerInclusive = 0, upperExclusive = 1000, minMag = 4.5, placeQuery = "jakarta")
+        assertEquals(listOf("big"), rows.map { it.id })
+    }
+
+    @Test fun `pageBetween with a null placeQuery is unaffected — existing minMag-only behavior unchanged`() {
+        store.replace(quake(id = "a", timeMillis = 100, mag = 2.0))
+        store.replace(quake(id = "b", timeMillis = 200, mag = 5.0))
+        val rows = store.pageBetween(lowerInclusive = 0, upperExclusive = 1000, minMag = 4.5, placeQuery = null)
+        assertEquals(listOf("b"), rows.map { it.id })
+    }
+
+    @Test fun `pageBetween with a placeQuery matching nothing returns an empty list, not an error`() {
+        store.replace(quake(id = "a", timeMillis = 100).copy(place = "Jakarta, Indonesia"))
+        assertEquals(
+            emptyList(),
+            store.pageBetween(lowerInclusive = 0, upperExclusive = 1000, minMag = null, placeQuery = "nonexistent-place-xyz"),
+        )
     }
 
     // --- meta ------------------------------------------------------------------------------------

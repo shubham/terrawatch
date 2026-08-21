@@ -15,6 +15,8 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.unit.dp
+import androidx.test.espresso.Espresso
+import androidx.test.platform.app.InstrumentationRegistry
 import com.yugma.terrawatch.data.PillStatus
 import com.yugma.terrawatch.detail.DetailSheet
 import com.yugma.terrawatch.history.HISTORY_SUBTITLE
@@ -30,6 +32,7 @@ import com.yugma.terrawatch.model.Quake
 import com.yugma.terrawatch.model.QuakeStatus
 import com.yugma.terrawatch.model.Source
 import com.yugma.terrawatch.model.magnitudeBand
+import com.yugma.terrawatch.share.initShareContext
 import com.yugma.terrawatch.ui.components.BadgeSize
 import com.yugma.terrawatch.ui.components.MagnitudeBadge
 import com.yugma.terrawatch.ui.components.QuakeCard
@@ -38,6 +41,8 @@ import com.yugma.terrawatch.ui.components.TsunamiBanner
 import com.yugma.terrawatch.ui.theme.TerraColors
 import com.yugma.terrawatch.ui.theme.TerraTheme
 import kotlin.math.abs
+import org.junit.Assert.assertEquals
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 
@@ -57,6 +62,34 @@ import org.junit.Test
 class ComponentsTest {
     @get:Rule
     val composeTestRule = createComposeRule()
+
+    /**
+     * review-round-3 (found while device-verifying the back-press fix below, unrelated to it):
+     * BOTH `DetailSheet` tests in this class were already broken before this pass touched anything
+     * — `detailSheet_rendersRevisionBadgeTsunamiBannerAndShareAction` (pre-existing) fails on a
+     * clean run of this suite too, not just the new test — with
+     * `kotlin.UninitializedPropertyAccessException: lateinit property appContext has not been
+     * initialized` at `Share.android.kt`'s `isPackageInstalled`. Root cause: `DetailSheet` composes
+     * `remember { visibleShareTargets(::isPackageInstalled) }` unconditionally (added by the later
+     * "real share app icons" work, `feat/feed-visit-ux` — see `DetailSheet.kt`'s own kdoc), and
+     * `isPackageInstalled` reads `Share.android.kt`'s module-level `lateinit var appContext`
+     * unconditionally with no null-check — the same class of bug `NavRoundTripTest`'s own kdoc
+     * already documents fixing once for `AlertDigestScheduler`'s identical `appContext` holder. This
+     * class's own stated design (see class kdoc: "no MainActivity, no Koin, no DI wiring") makes
+     * `NavRoundTripTest`'s fix (routing through the full `ensureKoinStarted`) the wrong-weight
+     * solution here — that would drag in a real Koin graph/DB/HTTP client for tests that need none
+     * of it. `initShareContext` is a plain top-level function with no Koin dependency of its own
+     * (`Share.android.kt`), so calling it directly with the instrumentation's target context is the
+     * narrowest fix that satisfies the one lateinit these tests actually exercise, matching this
+     * class's own "direct composable content only" scope exactly. Idempotent by construction
+     * (`initShareContext` is a bare reassignment, not an Koin-style "throws if already started"
+     * guard), so running it once per `@Before` across every test in this class - not just the two
+     * DetailSheet ones - is harmless.
+     */
+    @Before
+    fun initSharePlatformContext() {
+        initShareContext(InstrumentationRegistry.getInstrumentation().targetContext)
+    }
 
     // MagnitudeBadge -----------------------------------------------------------------------------
 
@@ -254,6 +287,63 @@ class ComponentsTest {
         // ActionRow.kt's own onShare callback already covers via buildShareText, unit-tested in
         // DetailSheetTest.kt).
         composeTestRule.onNodeWithText("Share").assertExists()
+    }
+
+    // DetailSheet back-press dismissal ----------------------------------------------------------
+
+    /**
+     * review-round-3 (Samsung dogfooding: "takes 2 back presses to close"): pins the actual fix
+     * (`DetailSheet.kt`'s `rememberModalBottomSheetState(skipPartiallyExpanded = true)`) against
+     * THIS project's own real call site, not just against M3's library behavior in the abstract —
+     * see that composable's own kdoc for the full root-cause trace through the real, resolved
+     * `androidx.compose.material3:material3:1.8.2` sources. A future edit that dropped
+     * `skipPartiallyExpanded` back to the library default would silently reintroduce the 2-press
+     * bug with nothing else here to catch it: `DetailSheetTest.kt` (jvmTest) only covers
+     * `buildShareText`/`ShareTarget`, no Compose runtime at all, so this is the one place a
+     * regression on THIS specific behavior would actually be caught. `Espresso.pressBack()`
+     * (already a transitive dependency of `compose.uiTestJUnit4`'s android artifact — no new
+     * dependency needed) dispatches a real system back event, the same input path a device's back
+     * gesture/button takes, rather than calling `SheetState` methods directly (which would test M3's
+     * own state machine, not this app's wiring into it).
+     */
+    @Test
+    fun detailSheet_singleBackPress_fullyDismissesTheSheet() {
+        val quake = Quake(
+            id = "us1234",
+            timeMillis = 1_000_000L,
+            lat = 7.1,
+            lon = 126.5,
+            depthKm = 10.0,
+            mag = 6.1,
+            magType = "mw",
+            place = "Mindanao, Philippines",
+            tsunami = false,
+            felt = null,
+            status = QuakeStatus.AUTOMATIC,
+            sources = mapOf(Source.USGS to "us1234"),
+            revisions = listOf(MagRevision(6.1, "mw", 1_000_000L, Source.USGS)),
+            updatedAtMillis = 1_000_000L,
+        )
+        var dismissCount = 0
+        composeTestRule.setContent {
+            TerraTheme {
+                DetailSheet(
+                    quake = quake,
+                    distanceKm = 4102.3,
+                    nowMillis = 1_000_000L,
+                    onShare = {},
+                    onDismiss = { dismissCount++ },
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+        // Confirms the OTHER half of the same fix first (sheet opens straight to Expanded, Share
+        // reachable with no manual drag) so a failure below can't be misread as "the sheet just
+        // never opened."
+        composeTestRule.onNodeWithText("Share").assertExists()
+        Espresso.pressBack()
+        composeTestRule.waitForIdle()
+        assertEquals(1, dismissCount)
     }
 
     // FeedList ----------------------------------------------------------------------------------

@@ -50,7 +50,7 @@ fun TsunamiBanner(tsunami: Boolean, modifier: Modifier = Modifier) {
             Text(
                 text = text,
                 style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.SemiBold,
                 color = accent,
             )
         }

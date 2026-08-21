@@ -75,7 +75,7 @@ fun PaywallScreen(
             Text(
                 text = if (isPlusActive) "Active" else "You're on the Free tier",
                 style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onBackground,
             )
             Spacer(Modifier.height(16.dp))
@@ -117,7 +117,7 @@ private fun PaywallHeader(onBack: () -> Unit, modifier: Modifier = Modifier) {
         Text(
             text = "TerraWatch Plus",
             style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onBackground,
         )
     }
@@ -167,7 +167,7 @@ private fun BenefitRow(text: String, modifier: Modifier = Modifier) {
         Text(
             text = "✓",
             style = MaterialTheme.typography.bodyLarge,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.SemiBold,
             color = TerraColors.Safe,
             modifier = Modifier.width(24.dp),
         )

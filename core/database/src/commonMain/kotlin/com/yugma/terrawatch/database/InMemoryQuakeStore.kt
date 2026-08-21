@@ -74,9 +74,13 @@ class InMemoryQuakeStore(private val clock: () -> Long = { 0L }) : QuakeStore {
             .byRecency { it.timeMillis < timeMillis && matchesMinMag(it, minMag) }
             .take(limit)
 
-    override fun pageBetween(lowerInclusive: Long, upperExclusive: Long, minMag: Double?): List<DomainQuake> =
+    // No default here — same "overriding functions can't redeclare a default" restriction
+    // QuakeDao.pageBetween's own comment documents; QuakeStore.pageBetween's interface-level
+    // default is what lets a QuakeStore-typed caller (QuakeRepository) keep omitting it.
+    override fun pageBetween(lowerInclusive: Long, upperExclusive: Long, minMag: Double?, placeQuery: String?): List<DomainQuake> =
         quakes.value.values.byRecency {
-            it.timeMillis >= lowerInclusive && it.timeMillis < upperExclusive && matchesMinMag(it, minMag)
+            it.timeMillis >= lowerInclusive && it.timeMillis < upperExclusive &&
+                matchesMinMag(it, minMag) && matchesPlaceQuery(it, placeQuery)
         }
 
     override fun lastFetchedAtMillis(): Long? = fetchedAt.values.maxOrNull()
@@ -255,6 +259,29 @@ class InMemoryQuakeStore(private val clock: () -> Long = { 0L }) : QuakeStore {
         val mag = quake.mag
         return minMag == null || (mag != null && mag >= minMag)
     }
+
+    /** User review items 3+4 (history search): mirrors `Quake.sq`'s own `pageBetween` LIKE
+     * predicate for the common case — a null/blank [placeQuery] matches everything (SQL's
+     * `:placeQuery IS NULL` branch), otherwise a case-insensitive substring match against
+     * [DomainQuake.place] ([String.contains]'s own `ignoreCase = true`, the in-memory equivalent of
+     * SQLite's default ASCII-case-insensitive `LIKE` — see that query's own kdoc).
+     *
+     * Round-3 review NIT (I-1), correcting this kdoc's own prior "mirrors exactly" overclaim: this
+     * does NOT actually match `Quake.sq`'s `LIKE '%' || :placeQuery || '%'` for every input — SQL
+     * `LIKE` treats a literal `%`/`_` typed by the user as WILDCARDS (any run of characters / any
+     * single character), while [String.contains] here treats them as plain literal characters with
+     * no special meaning at all. The two implementations therefore diverge only when the typed query
+     * itself contains a literal `%`/`_` — e.g. searching `"90%"` matches a place containing that
+     * exact substring here, but on the SQL/Android path matches any place with "90" followed by
+     * anything. `Quake.sq`'s own kdoc already accepts not escaping those characters as a deliberate
+     * v1 gap on ITS side; this class (wasmJs's production [QuakeStore], per this file's own class
+     * kdoc) never shared that gap in the first place — [String.contains] has no wildcard concept to
+     * begin with, so there was nothing to escape here either way. Narrow in practice (real place
+     * names essentially never contain `%`/`_`) and left as a doc-only correction, no behavior
+     * change: this app's only device-verified target is Android (this class's own real usage is
+     * wasmJs, out of this fix round's Android-only verification scope). */
+    private fun matchesPlaceQuery(quake: DomainQuake, placeQuery: String?): Boolean =
+        placeQuery == null || quake.place.contains(placeQuery, ignoreCase = true)
 
     private fun Collection<DomainQuake>.byRecency(predicate: (DomainQuake) -> Boolean): List<DomainQuake> =
         filter(predicate).sortedByDescending { it.timeMillis }

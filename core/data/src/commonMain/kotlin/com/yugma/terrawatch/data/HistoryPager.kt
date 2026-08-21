@@ -138,13 +138,17 @@ class HistoryPager(
     // `toString()` for the interpolated key segment — an assumption, not independently verified for
     // arbitrary values, that Kotlin's `Double.toString()` renders identically (no scientific
     // notation, no locale-dependent separator) across the jvm/android/wasmJs targets for the SPECIFIC
-    // values this UI ever actually produces (`null`, `4.5`, `6.0` — the only three the shipped
-    // magnitude chips can select). Holds for those three trivially (short, exact, non-scientific
-    // decimals) but is not a general-purpose guarantee — an arbitrary future `minMag` (e.g. something
-    // computed rather than chip-selected, or an extreme magnitude) could in principle render
-    // differently across targets and split one logical filter into two cursor rows. Revisit with an
-    // explicit format (e.g. a fixed-decimal string) if `minMag` ever stops being one of these three
-    // literal values.
+    // values this UI ever actually produces (`null`, `4.0`, `5.0`, `6.0` — the only four the shipped
+    // magnitude chips can select; round-3 review MINOR N-2: updated from the pre-`67480c5` chip set's
+    // `null`/`4.5`/`6.0` — that commit migrated the chip row to the shared MAGNITUDE_FILTER_CHIPS
+    // vocabulary, retiring 4.5 and adding 5.0, but never touched this file, so this comment kept
+    // describing values the chips can no longer produce; see HistoryScreen.kt's own migration note
+    // for the orphaned-cursor-row consequence of that retirement). Holds for those four trivially
+    // (short, exact, non-scientific decimals) but is not a general-purpose guarantee — an arbitrary
+    // future `minMag` (e.g. something computed rather than chip-selected, or an extreme magnitude)
+    // could in principle render differently across targets and split one logical filter into two
+    // cursor rows. Revisit with an explicit format (e.g. a fixed-decimal string) if `minMag` ever
+    // stops being one of these four literal values.
     private fun HistoryFilter.stableKey(): String = "min${minMag ?: "x"}_yr${year ?: "x"}"
 }
 

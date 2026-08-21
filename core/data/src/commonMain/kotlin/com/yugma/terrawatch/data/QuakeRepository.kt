@@ -64,7 +64,31 @@ class QuakeRepository(
     // (previous == null below) — never on an update/revision to an already-stored row. Home's map
     // (via HomeViewModel) uses this to drive the pin-drop animation (Task 10), which must not
     // replay every time an already-seen quake merely gets a magnitude revision.
-    private val _insertedQuakeIds = MutableSharedFlow<String>(extraBufferCapacity = 16)
+    //
+    // Round-3 review MINOR (N-3): extraBufferCapacity bumped 16 -> 256. tryEmit() (this flow's only
+    // producer — see `ingest()`'s own call below) is non-suspending and silently DROPS past capacity
+    // rather than blocking `ingestMutex`'s critical section (confirmed: no deadlock/contention risk
+    // either size, this is purely about how much of a burst survives). Two compounding reasons 16
+    // was too tight, both from the review:
+    // 1. Burst SIZE: UsgsApi polls USGS's own `.../summary/all_day.geojson` — the M1.0+/past-24h
+    //    feed, typically 100-300+ events worldwide — so every fresh install's very first
+    //    refreshFeed() ingests a burst this size against an empty DB, where EVERY row is
+    //    `previous == null` and fires a tryEmit; 16 slots silently dropped the tail of that burst
+    //    even before this round.
+    // 2. Drain RATE: this round's own HomeViewModel collector (`HomeViewModel.kt`'s
+    //    `insertedQuakeIds.collect { id -> ... }`) now does one extra suspending `repository.byId
+    //    (id)` DB round trip per item before deciding whether to bump `_newSinceExpand` — strictly
+    //    more per-item latency than before this round, which can only make the collector drain a
+    //    burst SLOWER, increasing (not creating) the odds of overrunning whatever the buffer size
+    //    is while a cold-start burst is still arriving.
+    // The one real consumer (HomeViewModel's collector) only uses this to bump the cosmetic "N NEW"
+    // reveal-chip counter — map pins, pillStatus, and the quake list itself all read `state.quakes`
+    // directly, never this flow — so a dropped emission was never a correctness or data-loss bug,
+    // only an undercounted badge that self-corrects on the next live arrival or
+    // markSheetExpanded(). 256 comfortably covers the documented burst size with headroom even at
+    // the slower post-`byId` drain rate; cheap insurance for a `SharedFlow<String>` buffer (each
+    // pending element is one String reference).
+    private val _insertedQuakeIds = MutableSharedFlow<String>(extraBufferCapacity = 256)
     val insertedQuakeIds: SharedFlow<String> = _insertedQuakeIds
 
     // Task 10: truthful LIVE indicator — HomeUiState.isLive binds to this instead of the old
@@ -273,9 +297,16 @@ class QuakeRepository(
      * `quake_time` index keeps the read itself cheap, and reaching that depth requires the user to
      * have actually scrolled that far, at which point the query is proportionate to what's already
      * been shown; revisit if real usage ever makes this measurably slow.
+     *
+     * User review items 3+4 (history search): [placeQuery], a 4th DEFAULTED param (`null` — every
+     * pre-existing caller keeps compiling/behaving unchanged, same "defaulted, additive" shape every
+     * earlier parameter on this class follows), is a plain pass-through to
+     * [QuakeStore.pageBetween]'s own new optional predicate — this class is a genuine (non-
+     * overriding) method, so unlike [QuakeDao]/[com.yugma.terrawatch.database.InMemoryQuakeStore]'s
+     * own overrides, Kotlin has no restriction against a default here.
      */
-    suspend fun pageBetween(lowerInclusive: Long, upperExclusive: Long, minMag: Double? = null): List<Quake> =
-        withContext(ioDispatcher) { dao.pageBetween(lowerInclusive, upperExclusive, minMag) }
+    suspend fun pageBetween(lowerInclusive: Long, upperExclusive: Long, minMag: Double? = null, placeQuery: String? = null): List<Quake> =
+        withContext(ioDispatcher) { dao.pageBetween(lowerInclusive, upperExclusive, minMag, placeQuery) }
 
     /**
      * Task 5 (Plan 3): [HistoryPager]'s cursor persistence — a suspend + [ioDispatcher] pass-through

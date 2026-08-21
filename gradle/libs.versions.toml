@@ -30,6 +30,13 @@ maplibreCompose = "0.14.0"
 # compose.uiTest accessor resolves alongside without a conflict (verified via a real
 # androidDebugAndroidTestCompileClasspath resolution — see task-13-report.md).
 androidxTestRunner = "1.7.0"
+# review-round-3: androidTest-only, same "androidx.test family, checked against what's already
+# resolving" discipline as androidxTestRunner's own note above. 3.7.0 is the espresso-core release
+# published alongside androidx.test:runner 1.7.0 (both part of the same androidx.test 1.7 family
+# release train) and was already present in this machine's local Gradle cache before this pin was
+# added (a transitive resolution from compose.uiTestJUnit4's own android artifact graph), so pinning
+# it explicitly here doesn't newly reach for anything unresolvable offline.
+androidxTestEspresso = "3.7.0"
 androidxComposeUiTestManifest = "1.8.3"
 # Task 4 (Plan 3): the JetBrains KMP fork of AndroidX Navigation Compose. Checked Maven Central's
 # own maven-metadata.xml directly (2026-08-09) rather than trusting this plan's own placeholder
@@ -124,6 +131,7 @@ androidx-lifecycle-runtime-compose = { module = "org.jetbrains.androidx.lifecycl
 androidx-work-runtime-ktx = { module = "androidx.work:work-runtime-ktx", version.ref = "androidxWork" }
 maplibre-compose = { module = "org.maplibre.compose:maplibre-compose", version.ref = "maplibreCompose" }
 androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidxTestRunner" }
+androidx-test-espresso-core = { module = "androidx.test.espresso:espresso-core", version.ref = "androidxTestEspresso" }
 androidx-compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest", version.ref = "androidxComposeUiTestManifest" }
 navigation-compose = { module = "org.jetbrains.androidx.navigation:navigation-compose", version.ref = "navigationCompose" }
 revenuecat-purchases-kmp-core = { module = "com.revenuecat.purchases:purchases-kmp-core", version.ref = "revenueCatPurchasesKmp" }

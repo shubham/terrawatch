@@ -18,6 +18,15 @@ kotlin {
             implementation(compose.foundation)
             implementation(compose.material3)
             implementation(compose.ui)
+            // Font selection doc (docs/superpowers/plans/2026-08-17-font-selection.md), Part 5 step
+            // 1: net-new build wiring (grep-confirmed zero prior use of compose.components.resources
+            // anywhere in this repo) — TerraTheme.kt's Res.font.* accessors (the bundled Inter static
+            // TTFs under commonMain/composeResources/font/) need this artifact on the classpath. Lives
+            // in core:ui (not composeApp) because TerraTheme.kt itself — the sole consumer — lives
+            // here; compose-resources' generated Res class is module-private by default and
+            // composeApp already depends on core:ui, never the reverse, so this is the only module
+            // that can host the font files AND have TerraTheme.kt reference them directly.
+            implementation(compose.components.resources)
             api(projects.core.model)
             // Task 9: StatusShield's public signature takes a PillStatus (core:data's pure pill
             // logic) directly, so consumers of core:ui's StatusShield need that type on their

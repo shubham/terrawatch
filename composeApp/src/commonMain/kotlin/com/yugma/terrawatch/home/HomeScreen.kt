@@ -59,6 +59,7 @@ import com.yugma.terrawatch.data.PillStatus
 import com.yugma.terrawatch.data.pillStatus
 import com.yugma.terrawatch.detail.DetailNewsViewModel
 import com.yugma.terrawatch.detail.DetailSheet
+import com.yugma.terrawatch.filter.quakeMatchesMagFilter
 import com.yugma.terrawatch.location.LocationAskDialog
 import com.yugma.terrawatch.location.LocationAskUiState
 import com.yugma.terrawatch.location.LocationRequester
@@ -67,6 +68,7 @@ import com.yugma.terrawatch.location.rememberLocationCondition
 import com.yugma.terrawatch.map.QuakeMap
 import com.yugma.terrawatch.model.FavoritePlace
 import com.yugma.terrawatch.model.GeoPoint
+import com.yugma.terrawatch.model.Quake
 import com.yugma.terrawatch.model.haversineKm
 import com.yugma.terrawatch.motion.LocalReducedMotion
 import com.yugma.terrawatch.share.openUrl
@@ -220,6 +222,26 @@ fun HomeScreen(
     val state by viewModel.state.collectAsState()
     val homeLocation by viewModel.homeLocation.collectAsState()
     val newSinceExpand by viewModel.newSinceExpand.collectAsState()
+    // User review items 3+4: the dashboard list's own magnitude filter — collected once here (same
+    // "collect once at this level, thread the resolved value down" convention every other
+    // ViewModel-fed value on this screen already follows) and applied to BOTH PhoneLayout's
+    // FeedSheet and TwoPaneLayout's FeedList below via [feedFilteredQuakes] — see that val's own
+    // kdoc for exactly where and why the filtering itself happens at THIS Compose boundary rather
+    // than inside HomeViewModel.state.
+    val feedFilterMinMag by viewModel.feedFilterMinMag.collectAsState()
+    // MAP PINS UNAFFECTED (user's own explicit "in the list" scoping) + pillStatus's own safety
+    // evaluation UNAFFECTED: both PhoneLayout/TwoPaneLayout's `content?.pins`/`pillStatus(s.quakes,
+    // ...)` calls below keep reading straight off `state`'s own unfiltered `quakes`/`pins` —
+    // this filtered copy is a SEPARATE list, threaded only into FeedSheet's/FeedList's own `quakes`
+    // parameter (the dashboard LIST, the one surface the user's own instruction actually scoped
+    // this filter to), never into the map or the safety pill. Filtering here — a plain Compose-layer
+    // `.filter{}` over whatever `state` already holds — rather than inside HomeViewModel.state
+    // itself is what keeps that separation structurally impossible to violate by accident: there is
+    // no single "filtered quakes" StateFlow a future caller could mistakenly wire into the pin list
+    // or pillStatus, because the filtered list never exists anywhere but this one local `val`.
+    val feedFilteredQuakes = (state as? HomeUiState.Content)?.quakes
+        ?.filter { quakeMatchesMagFilter(it.mag, feedFilterMinMag) }
+        .orEmpty()
     // feat/feed-visit-ux, "since-last-visit summary": phone-only, same scoping as newSinceExpand's
     // own "N NEW" chip above (Task 12's own kdoc: TwoPaneLayout's always-visible list has no
     // peek/expanded state, and this banner is rendered INSIDE FeedSheet, which only PhoneLayout
@@ -325,6 +347,7 @@ fun HomeScreen(
                 locationPermissionGranted = locationPermissionGranted,
                 favorites = favorites,
                 focusTarget = focusTarget,
+                feedFilteredQuakes = feedFilteredQuakes,
             )
         } else {
             PhoneLayout(
@@ -350,6 +373,8 @@ fun HomeScreen(
                 // of it — see FeedSheet.kt's own kdoc for the full "no animation churn" rule.
                 isDetailOpen = selectedQuake != null,
                 visitSummaryText = visitSummaryText,
+                feedFilteredQuakes = feedFilteredQuakes,
+                feedFilterMinMag = feedFilterMinMag,
             )
         }
         // Task 4 (Plan 3): the settings entry point — a glass chip floating top-right, above
@@ -451,6 +476,11 @@ private fun PhoneLayout(
     // feat/feed-visit-ux: HomeViewModel.visitSummary, threaded straight through to FeedSheet — see
     // this function's own call site (HomeScreen) for why TwoPaneLayout has no equivalent param.
     visitSummaryText: String?,
+    // User review items 3+4: HomeScreen's own `feedFilteredQuakes` — see that val's own kdoc for why
+    // this is a SEPARATE list from `content.quakes` (used everywhere else in this function
+    // unchanged: pins, pillStatus) rather than a narrowing of `state` itself.
+    feedFilteredQuakes: List<Quake>,
+    feedFilterMinMag: Double?,
 ) {
     val content = state as? HomeUiState.Content
     // Task 10 (item e): the banner's freshness-only verdict — see shouldShowStalenessBanner's own
@@ -484,7 +514,13 @@ private fun PhoneLayout(
         sheetContainerColor = MaterialTheme.colorScheme.surface,
         sheetContent = {
             FeedSheet(
-                quakes = content?.quakes.orEmpty(),
+                // User review items 3+4: filtered list, NOT content?.quakes — see this function's
+                // own [feedFilteredQuakes] param kdoc / HomeScreen's own kdoc note at that val's
+                // computation. This is also what makes FeedSheet.kt's own reveal/topId-change
+                // wiring filter-COHERENT for free — a below-filter arrival never changes THIS
+                // list's own front id, so no code inside FeedSheet.kt itself needed to change at all
+                // for the "M2.2 arrival under 4.0+ never auto-scrolls/shows a reveal chip" behavior.
+                quakes = feedFilteredQuakes,
                 isLive = content?.isLive ?: false,
                 newCount = newSinceExpand,
                 nowMillis = nowMillis,
@@ -499,6 +535,8 @@ private fun PhoneLayout(
                 isLoading = state is HomeUiState.Loading,
                 isSheetExpanded = isSheetExpanded,
                 isDetailOpen = isDetailOpen,
+                activeFilterMinMag = feedFilterMinMag,
+                onFilterChange = viewModel::setFeedFilterMinMag,
                 visitSummaryText = visitSummaryText,
             )
         },
@@ -656,6 +694,13 @@ private fun TwoPaneLayout(
     locationPermissionGranted: Boolean,
     favorites: List<FavoritePlace>,
     focusTarget: GeoPoint?,
+    // User review items 3+4: same filtered list PhoneLayout's own FeedSheet gets — see
+    // HomeScreen's own [feedFilteredQuakes] kdoc. No filter UI control here (Android-only
+    // device-verified scope for this task; the desktop/tablet panel simply reflects whatever
+    // PhoneLayout's own sheet control — or a future desktop control — last set), same
+    // "TwoPaneLayout reuses the data, not the chrome" precedent this file's own Task 12 kdoc
+    // already establishes for [LiveStatusRow] vs. the full [FeedSheetHeader].
+    feedFilteredQuakes: List<Quake>,
 ) {
     val content = state as? HomeUiState.Content
     // Task 10 (item e): same banner freshness-only verdict PhoneLayout computes - see
@@ -768,9 +813,13 @@ private fun TwoPaneLayout(
             // either a first load or a genuinely quiet 24h window.
             when {
                 state is HomeUiState.Loading -> FeedSkeletonList(modifier = Modifier.fillMaxWidth().weight(1f))
-                content != null && content.quakes.isEmpty() -> FeedEmptyState(modifier = Modifier.fillMaxWidth().weight(1f))
+                // User review items 3+4: checks feedFilteredQuakes, not content.quakes — matches
+                // FeedSheet's own identical "quakes.isEmpty()" check on the phone side, so a strict
+                // filter renders the same calm empty state here as it does there, consistently
+                // (rather than an empty FeedList with nothing telling the user why).
+                content != null && feedFilteredQuakes.isEmpty() -> FeedEmptyState(modifier = Modifier.fillMaxWidth().weight(1f))
                 else -> FeedList(
-                    quakes = content?.quakes.orEmpty(),
+                    quakes = feedFilteredQuakes,
                     nowMillis = nowMillis,
                     distanceKm = { quake ->
                         homeLocation?.let { haversineKm(it, GeoPoint(quake.lat, quake.lon)) }
