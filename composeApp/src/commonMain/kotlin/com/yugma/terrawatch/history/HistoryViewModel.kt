@@ -38,6 +38,20 @@ sealed interface HistoryUiState {
         val loadingMore: Boolean,
         val endReached: Boolean,
         val loadMoreFailed: Boolean,
+        /**
+         * Round-3 review MAJOR (M-1) fix: true while [HistoryViewModel] is auto-paging deeper into
+         * the archive because an active search has no visible match yet in whatever is cached so
+         * far — see [HistoryViewModel.loadUntilDecided]'s own kdoc for the loop this drives, and
+         * [HistoryViewModel.shouldAutoContinueSearch] for the exact decision behind it.
+         * `HistoryScreen` uses this (together with [sections] being empty) to choose the "Searching
+         * older quakes…" interim copy over the terminal "no matches" one — see that screen's own
+         * `HistoryFooter`/`HistorySearchEmptyState` kdoc for the full state -> copy mapping.
+         * Defaulted `false` so every pre-existing construction of this class (this file's own
+         * [historyContentFrom], and any test that builds a [Content] directly) keeps compiling
+         * unchanged — the field is only ever `true` for the one specific interim shape it exists
+         * for.
+         */
+        val searchingArchive: Boolean = false,
     ) : HistoryUiState
 
     /** The archive is exhausted (or the current filter's year floor was already crossed) and not
@@ -48,11 +62,20 @@ sealed interface HistoryUiState {
      *
      * User review item 3 (history search): [Content] WITH empty `sections` IS now a legitimate,
      * durable published shape distinct from this one — a search text matching zero of an otherwise
-     * non-empty cache (see [HistoryViewModel.renderFromCache]). `HistoryScreen`'s own UI layer
-     * treats the two identically for rendering purposes (both are "nothing to show right now"), the
-     * search-active/inactive check that tells them apart lives there, not in this sealed hierarchy —
-     * adding a THIRD, search-specific state here would just be this exact same "sections is empty"
-     * fact spelled two different ways.
+     * non-empty cache (see [HistoryViewModel.renderFromCache]). Round-3 review MAJOR (M-1) fix:
+     * `HistoryScreen`'s own UI layer used to treat the two identically for rendering purposes
+     * (both "nothing to show right now") REGARDLESS of `Content.endReached` — that was the bug: a
+     * search-caused empty `Content` published mid-walk (`endReached = false`,
+     * [Content.searchingArchive] `true`) got the exact same static, no-further-paging treatment as
+     * this genuinely-exhausted state, even though [HistoryViewModel.loadUntilDecided] might still
+     * find a real match a few pages deeper. `HistoryScreen` now only folds the two together once a
+     * `Content` is ALSO `endReached` — this state remains unconditionally terminal either way (it is
+     * ONLY ever published once the archive-wide walk is over, search aside — see
+     * [HistoryViewModel.loadUntilDecided]'s own `PageResult.End`/`PageResult.Failed` handling), so
+     * nothing about ITS OWN meaning changed, only how `Content`'s emptiness is judged alongside it.
+     * The search-active/inactive check that tells the two apart still lives in `HistoryScreen`, not
+     * in this sealed hierarchy — adding a THIRD, search-specific state here would just be this exact
+     * same "sections is empty" fact spelled two different ways.
      */
     data object Empty : HistoryUiState
 
@@ -149,6 +172,16 @@ class HistoryViewModel(
      * no-op while a load is already in flight, or once [HistoryUiState.Content.endReached] is true
      * — safe to call redundantly (the screen's scroll-position trigger does exactly that), so it
      * costs the caller nothing to over-call this rather than hand-roll its own extra guard.
+     *
+     * Round-3 review MAJOR (M-1) fix: also this class's OTHER entry into [loadUntilDecided]'s walk —
+     * [continueSearchingArchiveIfNeeded] calls this exact function (not a second, parallel copy of
+     * its guards) so a search-triggered continuation and a scroll-triggered one can never race into
+     * two overlapping [loadJob]s; whichever fires first wins, the other one no-ops right here. The
+     * synchronous pre-launch state copy now also stamps [HistoryUiState.Content.searchingArchive]
+     * from whatever [effectiveSearchQuery] reads AT THIS INSTANT — correct whether this call came
+     * from a plain scroll (no search active, stays `false`) or a search hand-off (search active,
+     * `true` from the very first published frame, not just once [loadUntilDecided]'s own loop
+     * publishes its first interim step).
      */
     fun loadMore() {
         val current = _state.value
@@ -158,7 +191,9 @@ class HistoryViewModel(
             HistoryUiState.Empty, is HistoryUiState.Error -> true // nothing to page from — use retry()/setFilter()
         }
         if (blocked || loadJob?.isActive == true) return
-        if (current is HistoryUiState.Content) _state.value = current.copy(loadingMore = true)
+        if (current is HistoryUiState.Content) {
+            _state.value = current.copy(loadingMore = true, searchingArchive = effectiveSearchQuery() != null)
+        }
         loadJob = viewModelScope.launch { loadUntilDecided() }
     }
 
@@ -181,29 +216,63 @@ class HistoryViewModel(
 
     /**
      * User review item 3: [query] is matched, case-insensitively, as a substring of each cached
-     * quake's `place` text — LOCAL only, per the user's own explicit instruction. This NEVER calls
-     * [HistoryPager.loadNext] or otherwise touches the network: it only re-reads whatever is
-     * ALREADY cached for the active [filter], through [QuakeRepository.pageBetween]'s own new
-     * `placeQuery` SQL predicate (see that method's kdoc) — a real DB hit, not a filter over an
-     * already-materialized `List<Quake>` snapshot, so a concurrent background write (Home's poll
-     * loop/live WebSocket share this SAME `quake` table) is picked up immediately rather than only
-     * on this screen's own next unrelated page load.
+     * quake's `place` text, through [QuakeRepository.pageBetween]'s own `placeQuery` SQL predicate
+     * (see that method's kdoc) — a real DB hit, not a filter over an already-materialized
+     * `List<Quake>` snapshot, so a concurrent background write (Home's poll loop/live WebSocket
+     * share this SAME `quake` table) is picked up immediately rather than only on this screen's own
+     * next unrelated page load.
      *
      * Composes as AND with [filter]'s own minMag/year (unchanged) — both predicates narrow the SAME
      * underlying cached range, never independently or as an either-or.
      *
-     * Deliberately does NOT cancel/restart [loadJob]: an archive fetch already in flight (e.g. the
-     * user had scrolled to the bottom just before typing) keeps running exactly as it would with no
-     * search active — see [visibleAndUnsearched]'s own kdoc for why that fetch's own "did this page
-     * add anything real" decision must stay search-oblivious, and [historyContentFrom]/
-     * [effectiveSearchQuery] for how its eventual publish still ends up correctly search-filtered
-     * anyway, since both read [_searchQuery] fresh at publish time rather than at fetch-start time.
+     * Round-3 review MAJOR (M-1) fix, behavior change from this function's own pre-fix self:
+     * [renderFromCache] alone is still exactly what runs first — a pure LOCAL re-read of whatever is
+     * ALREADY cached, no network — but it no longer gets the last word. [continueSearchingArchiveIfNeeded]
+     * runs right after it and, ONLY when that local re-read came up empty with more archive left to
+     * check, hands off to [loadMore] to keep walking the archive for a match. This is a deliberate
+     * reversal of this function's own former "NEVER calls [HistoryPager.loadNext] or otherwise
+     * touches the network" contract — that was the round-3 review's own MAJOR finding: a search term
+     * absent from whatever happened to be cached so far had no way to ever reach a real, deeper
+     * match, even though [HistoryUiState.Content.endReached] was still `false` and the rest of the
+     * archive had never actually been asked. See [loadUntilDecided]'s own kdoc for the walk itself.
+     *
+     * Still deliberately does NOT cancel/restart [loadJob] directly: an archive fetch already in
+     * flight when this is called (e.g. the user had scrolled to the bottom just before typing, or an
+     * earlier keystroke's own [continueSearchingArchiveIfNeeded] is already mid-walk) keeps running
+     * exactly as it would with no search active — [loadMore]'s own `loadJob?.isActive == true` guard
+     * is what actually prevents a second, overlapping walk from this call, not an explicit cancel
+     * here. That existing walk is never stale against the NEW [query] either:
+     * [loadUntilDecided]'s loop re-reads [effectiveSearchQuery] fresh before every page decision, so
+     * the very next page it evaluates already judges itself against whatever was JUST typed — this
+     * is also what makes clearing the search mid-walk self-correcting with no cancellation needed
+     * (see [shouldAutoContinueSearch]'s own kdoc).
      */
     fun setSearchQuery(query: String) {
         if (query == _searchQuery.value) return
         _searchQuery.value = query
         searchJob?.cancel()
-        searchJob = viewModelScope.launch { renderFromCache() }
+        searchJob = viewModelScope.launch {
+            renderFromCache()
+            continueSearchingArchiveIfNeeded()
+        }
+    }
+
+    /**
+     * Round-3 review MAJOR (M-1) fix: [renderFromCache] only ever re-reads what THIS filter has
+     * ALREADY cached — a freshly-typed search with no match yet in that cached window has nothing
+     * further to gain from another local-only re-render. If the state [renderFromCache] just
+     * published is exactly that shape (a search-caused empty [HistoryUiState.Content] with more
+     * archive left to check), this hands off to [loadMore] — the EXACT SAME entry point
+     * scroll-triggered pagination already uses, with the exact same guards (a no-op if a fetch is
+     * already in flight, or if [HistoryUiState.Content.endReached] is already true) — so
+     * [loadUntilDecided]'s own loop does the actual walking, publishing its own interim "still
+     * looking" state as it goes rather than this function driving any of that itself.
+     */
+    private fun continueSearchingArchiveIfNeeded() {
+        val current = _state.value
+        if (current is HistoryUiState.Content && current.sections.isEmpty() && effectiveSearchQuery() != null) {
+            loadMore()
+        }
     }
 
     /** [HistoryUiState.Error]'s retry CTA re-attempts the first load; a [HistoryUiState.Content]
@@ -226,13 +295,28 @@ class HistoryViewModel(
     /**
      * The one loop every load path ([loadFirstPage]/[loadMore]) funnels through. Keeps calling
      * [HistoryPager.loadNext] until it has something definitive to show: a [PageResult.Loaded] page
-     * that actually produced at least one VISIBLE row, SEARCH-OBLIVIOUS (see
-     * [visibleAndUnsearched]'s own kdoc for why — a year filter's page can legitimately add zero
-     * visible rows if this page's whole batch spilled outside the requested year, in which case
-     * this keeps walking rather than surfacing a false [HistoryUiState.Empty] while more pages
-     * remain untried; a search matching zero of a page's rows must NOT be mistaken for the same
-     * "keep walking" signal — search is local-only and must never itself drive a further fetch), or
-     * a terminal [PageResult.End]/[PageResult.Failed].
+     * that actually produced at least one VISIBLE (search-applied) row, or a terminal
+     * [PageResult.End]/[PageResult.Failed].
+     *
+     * Round-3 review MAJOR (M-1) fix, superseding this function's own prior design: a year filter's
+     * page can legitimately add zero visible rows if this page's whole batch spilled outside the
+     * requested year, in which case this always kept walking rather than surfacing a false
+     * [HistoryUiState.Empty] while more pages remain untried — that part was always correct and is
+     * unchanged. What WAS wrong: a search matching zero of a page's rows used to be treated as
+     * definitive too, the instant that page had ANY real (just not search-matching) content —
+     * dead-ending the search right there even with [PageResult.End] nowhere in sight. Fixed via
+     * [shouldAutoContinueSearch]: when a search is active and this page's own search-applied
+     * [visibleItems] read is still empty, this publishes the interim "still looking"
+     * [HistoryUiState.Content] (`sections` empty, [HistoryUiState.Content.searchingArchive] `true`)
+     * and does NOT return — falls through to this same `while`, which calls [HistoryPager.loadNext]
+     * again for the NEXT page, and this same check re-decides fresh against IT. The loop only
+     * actually stops, for a search, once a page's [visibleItems] read comes back non-empty (a real
+     * match — the `visible.isNotEmpty()` branch below) or a [PageResult.End]/[PageResult.Failed]
+     * arrives (this function's other two `when` arms, both unchanged: still gated on
+     * [visibleAndUnsearched]'s SEARCH-OBLIVIOUS `unsearchedVisible` half, so a search that never
+     * matches anything still correctly lands on [HistoryUiState.Content] with `endReached = true`
+     * — or genuine archive-wide [HistoryUiState.Empty] if not even the plain filter, search aside,
+     * ever matched anything — rather than a network-retriable [HistoryUiState.Error]).
      *
      * Belt-and-suspenders filter check: [setFilter] already cancels [loadJob] before starting a new
      * one, so an in-flight call here should never outlive a filter change (coroutine cancellation is
@@ -245,12 +329,29 @@ class HistoryViewModel(
         while (_filter.value == filter) {
             when (val result = pager.loadNext(filter)) {
                 is PageResult.Loaded -> {
-                    val (visible, unsearchedVisible) = visibleAndUnsearched(filter)
-                    if (unsearchedVisible.isNotEmpty()) {
+                    val searchQuery = effectiveSearchQuery()
+                    val visible = visibleItems(filter, searchQuery)
+                    if (visible.isNotEmpty()) {
+                        // A genuine match — present whether or not a search is active. With no
+                        // search active this is also this branch's exact pre-fix behavior
+                        // reproduced byte-for-byte: `visibleItems(filter, null)` IS
+                        // `visibleAndUnsearched(filter)`'s own `unsearchedVisible` half (see that
+                        // function's kdoc), so "visible is non-empty" and the old "unsearchedVisible
+                        // is non-empty" checks agree completely once there is nothing to search for.
                         publish(filter, historyContentFrom(visible, endReached = false, loadMoreFailed = false))
                         return
                     }
-                    // Nothing in this page fell inside the filter's year window — keep walking.
+                    if (shouldAutoContinueSearch(searchActive = searchQuery != null, visibleEmpty = true)) {
+                        publish(
+                            filter,
+                            historyContentFrom(
+                                visible, endReached = false, loadMoreFailed = false,
+                                loadingMore = true, searchingArchive = true,
+                            ),
+                        )
+                    }
+                    // Otherwise: not searching, and nothing in this page fell inside the filter's
+                    // year window — keep walking silently, exactly as before this fix.
                 }
                 PageResult.End -> {
                     val (visible, unsearchedVisible) = visibleAndUnsearched(filter)
@@ -298,12 +399,20 @@ class HistoryViewModel(
      * cached either (only [retry] can recover from that state). [HistoryUiState.Content]'s own
      * `loadingMore` is preserved verbatim (not forced back to `false` the way a genuine page-load
      * publish always does) — a search re-render is not a page settling, so it must not make an
-     * actually-still-in-flight [loadMore] spinner disappear early.
+     * actually-still-in-flight [loadMore] spinner disappear early. [HistoryUiState.Content.searchingArchive]
+     * is preserved the same verbatim way, for the same reason: round-3 review MAJOR (M-1) fix — this
+     * function is also the FIRST thing every keystroke runs (see [setSearchQuery]), so if an earlier
+     * keystroke's own [continueSearchingArchiveIfNeeded] already has [loadJob] mid-walk when this one
+     * fires, that walk's own `searchingArchive = true` must not be clobbered back to `false` here
+     * just because this particular local re-render found nothing — [continueSearchingArchiveIfNeeded]
+     * (called right after this, from [setSearchQuery]) is what decides whether a NEW walk needs to
+     * start, never this function.
      */
     private suspend fun renderFromCache() {
         val filter = _filter.value
         val current = _state.value
         val loadingMore = (current as? HistoryUiState.Content)?.loadingMore ?: false
+        val searchingArchive = (current as? HistoryUiState.Content)?.searchingArchive ?: false
         val endReached = when (current) {
             is HistoryUiState.Content -> current.endReached
             HistoryUiState.Empty -> true
@@ -318,6 +427,7 @@ class HistoryViewModel(
                 loadingMore = loadingMore,
                 endReached = endReached,
                 loadMoreFailed = loadMoreFailed,
+                searchingArchive = searchingArchive,
             ),
         )
     }
@@ -376,14 +486,18 @@ class HistoryViewModel(
 
     /**
      * User review item 3: returns BOTH the search-applied display rows ([Pair.first]) and the
-     * search-OBLIVIOUS rows [loadUntilDecided]'s own "did this page/end/failure actually have
-     * anything real to show" decision must keep using ([Pair.second]) — a search matching zero
-     * cached rows must never look like "the archive has nothing here, keep fetching" (that would
-     * violate the user's own explicit "LOCAL, never triggers a network fetch" instruction for
-     * search). When no search is active ([effectiveSearchQuery] is `null`) the two halves are the
-     * exact SAME single DB read, reused — this function costs nothing extra over the pre-search
-     * version of this class for the common case (nobody has touched the search box); only a
-     * genuinely active search pays for the second, still-local (no network) read.
+     * search-OBLIVIOUS rows [loadUntilDecided]'s own [PageResult.End]/[PageResult.Failed] handling
+     * uses to tell "the plain filter itself never matched anything, archive-wide" apart from "the
+     * filter matched something, just not this active search" — still needed there (unchanged by the
+     * round-3 M-1 fix: only [loadUntilDecided]'s [PageResult.Loaded] arm stopped needing this pair,
+     * since [shouldAutoContinueSearch] decides that one off [effectiveSearchQuery] and `visible`
+     * alone — see that function's own kdoc). This function itself still never touches the network
+     * either way (a plain local DB read, same as [visibleItems] alone); it's [loadMore]/
+     * [continueSearchingArchiveIfNeeded] that may go on to actually fetch more, not this. When no
+     * search is active ([effectiveSearchQuery] is `null`) the two halves are the exact SAME single DB
+     * read, reused — this function costs nothing extra over the pre-search version of this class for
+     * the common case (nobody has touched the search box); only a genuinely active search pays for
+     * the second, still-local (no network) read.
      */
     private suspend fun visibleAndUnsearched(filter: HistoryFilter): Pair<List<Quake>, List<Quake>> {
         val query = effectiveSearchQuery()
@@ -392,11 +506,41 @@ class HistoryViewModel(
         return visible to unsearchedVisible
     }
 
-    private fun historyContentFrom(visible: List<Quake>, endReached: Boolean, loadMoreFailed: Boolean) =
-        HistoryUiState.Content(
-            sections = groupByMonth(visible, currentTimeMillis()),
-            loadingMore = false,
-            endReached = endReached,
-            loadMoreFailed = loadMoreFailed,
-        )
+    private fun historyContentFrom(
+        visible: List<Quake>,
+        endReached: Boolean,
+        loadMoreFailed: Boolean,
+        loadingMore: Boolean = false,
+        searchingArchive: Boolean = false,
+    ) = HistoryUiState.Content(
+        sections = groupByMonth(visible, currentTimeMillis()),
+        loadingMore = loadingMore,
+        endReached = endReached,
+        loadMoreFailed = loadMoreFailed,
+        searchingArchive = searchingArchive,
+    )
 }
+
+/**
+ * Round-3 review MAJOR (M-1)'s fix, reduced to its own pure decision — pulled out of
+ * [HistoryViewModel.loadUntilDecided] specifically so it is directly unit-testable with no
+ * ViewModel/MockEngine/coroutine harness. Mirrors the review's own framing of the fix ("auto-continue
+ * paging while `searchActive && visibleEmpty && !endReached && !inFlight`") for the two conjuncts
+ * that are genuine per-call unknowns; the other two hold structurally at [HistoryViewModel.loadUntilDecided]'s
+ * one call site and need no runtime check here:
+ * - `!endReached` — this is only ever consulted from the [PageResult.Loaded] arm of that function's
+ *   `when`; [PageResult.End] is a separate arm entirely, never reachable at the same time.
+ * - `!inFlight` — [HistoryViewModel.loadUntilDecided] runs its ENTIRE walk on one sequential
+ *   coroutine; [HistoryPager.loadNext] is awaited to completion before this predicate is ever
+ *   consulted, so there is never a second, overlapping fetch for this call to race against.
+ *
+ * `searchActive` is read fresh (via [HistoryViewModel.effectiveSearchQuery]) before every single page
+ * decision, never captured once at the top of the walk — which is also what makes clearing the search
+ * mid-walk self-correcting with no explicit cancellation needed: the very next page this predicate is
+ * consulted for already sees `searchActive = false`, so [HistoryViewModel.loadUntilDecided]'s loop
+ * naturally stops treating a real, non-search-matching page as "keep walking" and instead publishes it
+ * as the genuine match it now is (see [HistoryViewModel.loadUntilDecided]'s own `visible.isNotEmpty()`
+ * branch).
+ */
+internal fun shouldAutoContinueSearch(searchActive: Boolean, visibleEmpty: Boolean): Boolean =
+    searchActive && visibleEmpty

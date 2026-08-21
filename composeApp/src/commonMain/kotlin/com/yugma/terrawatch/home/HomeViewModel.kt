@@ -57,6 +57,16 @@ private const val RETENTION_WINDOW_MILLIS = 30L * 24 * 60 * 60 * 1000 // 30 days
 // (unlike nearbyRadiusKm/minMag above, which ARE user-settable Settings values) — this is a fixed
 // product decision about what the summary itself claims, independent of whatever alert threshold
 // the user has separately configured for notifications.
+//
+// Round-3 review MINOR (N-1), correcting RESULTS.md's own prior overclaim that this was already
+// cross-referenced: distinct from com.yugma.terrawatch.data.FeedFilterStore.DEFAULT_MIN_MAG (also
+// 4.0) — that constant scopes the dashboard FEED SHEET's user-adjustable, persisted list filter
+// (changeable via the filter chips); this one scopes ONLY the since-last-visit summary banner's own
+// fixed count, is never read from or written to FeedFilterStore's meta row, and cannot be changed by
+// the user. Two independent constants that happen to share a value and a "4.0 is the default floor"
+// rationale, arrived at separately (one a hardcoded product decision, one a first-run default with
+// its own persisted override) — not one drifting copy of the other. See FeedFilterStore.kt's own
+// DEFAULT_MIN_MAG kdoc for its half of this same note.
 private const val VISIT_SUMMARY_MIN_MAG = 4.0
 
 sealed interface HomeUiState {

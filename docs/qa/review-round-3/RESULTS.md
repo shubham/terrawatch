@@ -586,3 +586,224 @@ out as the cause of that transient hiccup.
 - Crash sweep (`adb logcat -d -b crash`) was not explicitly re-run this pass, unlike the two sections
   above — this change touches no lifecycle/async/permission code, only typography, so judged
   lower-risk; no crash-tagged logcat output was observed incidentally during the session either way.
+
+---
+
+# Fix round — adversarial review findings (`.superpowers/sdd/review-round-3-findings.md`) — RESULTS
+
+Fixes the adversarial re-review's own findings against round 3 (`c6a70bd..HEAD` at the time of that
+review): one MAJOR (history search dead-end), three MINOR (kdoc cross-reference, stale comment,
+undersized buffer), one NIT (kdoc overclaim). Font-loading measurement (I-2) explicitly out of scope
+per this task. Device verification: OnePlus 9R `98bc1cd8`, attached and used for the MAJOR fix.
+
+## Item → verdict
+
+| Finding | Item | Verdict |
+|---|------|---------|
+| M-1 | History search dead-ends when the filtered view empties before the archive is exhausted | **FIXED**, device-verified |
+| N-1 | `RESULTS.md` claimed a bidirectional kdoc cross-reference that only existed in one direction | **FIXED** |
+| N-2 | `HistoryPager.stableKey()` comment still described the retired `null`/`4.5`/`6.0` chip set | **FIXED** (already applied when this session started; verified correct) |
+| N-3 | `insertedQuakeIds` buffer (16) undersized against a 100-300-event cold-start burst | **FIXED** (already applied when this session started; kdoc completed this pass) |
+| I-1 | `InMemoryQuakeStore`'s place-search kdoc overclaimed exact parity with SQL `LIKE` | **FIXED** (already applied when this session started; verified correct) |
+| I-2 | Font-loading jank measurement | **SKIPPED**, explicit scope exclusion for this fix round |
+
+## M-1 — History search auto-continues past a non-matching page instead of dead-ending
+
+**Root cause, confirmed by re-reading `HistoryViewModel.loadUntilDecided()` before touching it**: the
+`PageResult.Loaded` branch published-and-returned the instant `visibleAndUnsearched()`'s
+SEARCH-OBLIVIOUS half (`unsearchedVisible`) was non-empty — correct when no search is active
+(`unsearchedVisible` IS the search-applied `visible` in that case), but wrong the moment a search
+narrowed `visible` to empty while `unsearchedVisible` still had real rows: the loop stopped and
+published `Content(sections = emptyList())` even though `endReached` was still `false` and deeper
+pages were never asked for. `HistoryScreen.kt`'s own `effectivelyEmpty` check then swapped the entire
+`HistoryList` (and its `listState`, the only thing `LoadMoreOnScrollEnd` can drive) out for a static
+`HistorySearchEmptyState` with no `LazyColumn` at all — once that swap happened, scrolling could never
+trigger another page, regardless of how much archive remained.
+
+**Fix, two cooperating halves**:
+
+1. **The loop itself** (`HistoryViewModel.loadUntilDecided`, `PageResult.Loaded` arm): a genuine match
+   (`visible.isNotEmpty()`) still stops immediately, unchanged. Otherwise, a new pure predicate —
+   `shouldAutoContinueSearch(searchActive, visibleEmpty)` = `searchActive && visibleEmpty` — decides
+   whether to publish the new interim `Content(sections = emptyList(), loadingMore = true,
+   searchingArchive = true)` shape and fall through (no `return`) so the loop's own `while` calls
+   `HistoryPager.loadNext` again for the next page. `!endReached`/`!inFlight` (the other two conjuncts
+   in the review's own framing) hold structurally at this one call site and need no runtime check —
+   see the predicate's own kdoc. `PageResult.End`/`PageResult.Failed` are UNCHANGED: still gated on
+   `visibleAndUnsearched()`'s search-oblivious half, so a search that never matches still correctly
+   lands on `Content(endReached = true)` (or genuine `HistoryUiState.Empty` if the plain filter itself
+   never matched anything) rather than looping forever or misreporting `Error`.
+2. **The trigger that reaches pages not yet fetched at all**: `setSearchQuery` (fired on every
+   keystroke) still runs `renderFromCache()` first — a pure local re-read, no network, unchanged
+   behavior for the common case where the cache already has a match. New: immediately after,
+   `continueSearchingArchiveIfNeeded()` checks whether that local render came up empty while a search
+   is active, and if so calls `loadMore()` — the EXACT SAME entry point (and guards: no-op if a load
+   is already in flight, or `endReached` is already true) scroll-triggered pagination already used, so
+   there is no second, parallel concurrency story to get wrong. `loadMore()` itself now also stamps
+   `searchingArchive` on its synchronous pre-launch state copy, so the "still searching" signal is
+   correct from the very first published frame, not just once the loop's own first interim publish
+   lands.
+
+**Design choice — auto-continue lives entirely in the ViewModel, Compose only renders resulting
+state**: `HistoryScreen` was restructured to ask a narrower question — a search-caused empty `Content`
+now renders through the ordinary `HistoryList` path (keeping `listState`/`LoadMoreOnScrollEnd` mounted
+and wired) for as long as `endReached == false`; the static `HistorySearchEmptyState` treatment is now
+gated on genuine finality (`Content.endReached == true`, or the already-always-terminal
+`HistoryUiState.Empty`). `HistoryFooter` picks the interim "Searching older quakes…" copy (with the
+existing `CircularProgressIndicator` loading affordance) specifically when `sections.isEmpty() &&
+searchingArchive` — checked before the generic `loadingMore` spinner so an unrelated scroll-triggered
+load-more on an already-populated searched list never gets mislabeled. The terminal copy changed from
+"No quakes match 'x'" to **"No quakes match "x" in the loaded archive"**, since by the time it can show
+at all now, the ViewModel has genuinely walked the whole archive for that filter, not just whatever
+happened to be cached when the user finished typing.
+
+**TDD** (`composeApp/.../history/HistoryViewModelTest.kt`, jvmTest, real `HistoryPager` + `MockEngine`,
+`UnconfinedTestDispatcher`, same harness the file already used):
+- `ShouldAutoContinueSearchTest` (new class, 4 cases): the extracted predicate's full truth table in
+  isolation — no ViewModel/MockEngine/coroutine harness needed.
+- `search auto-pages past non-matching pages and stops the instant a deeper match is found` (new):
+  page 1 and 2 miss, page 3 matches — asserts the match surfaces, `endReached`/`searchingArchive` both
+  `false`, and exactly 3 network calls happened (proves it doesn't over-fetch past a found match).
+- `a search matching nothing auto-pages until the archive is genuinely exhausted, not stuck on the
+  first miss` (rewrite of the pre-existing `a search matching nothing shows an empty Content, not a
+  network refetch` test, which asserted the OPPOSITE of the fix — "search must never trigger another
+  archive fetch" was the bug itself): now asserts the walk reaches the real `PageResult.End` and
+  settles on `Content(endReached = true)`, not a premature dead-end.
+- `a page fetch failure while auto-paging for a search stops the hunt and surfaces the existing retry
+  affordance` (new): page 2 (mid-hunt) fails — asserts the loop stops (no further fetches), publishes
+  `loadMoreFailed = true`, and `retry()` (the pre-existing recovery path, unmodified) still works.
+- `clearing the search mid-hunt cancels the archive walk and restores the real cached content` (new):
+  starts a hunt for a never-matching term, clears the search mid-flight — asserts the flow settles on
+  the real, unsearched cached rows with `searchingArchive = false`, not stuck waiting on the cleared
+  term. (No explicit `Job.cancel()` needed for this — `effectiveSearchQuery()` is read fresh on every
+  page decision, so the very next iteration already sees the cleared search; see the predicate's own
+  kdoc.)
+- All 4 pre-existing search tests (`setSearchQuery filters...`, `clearing search restores...`, `search
+  composes with the magnitude filter as AND...`, `a page loaded while a search is already active is
+  search-filtered too`) pass UNCHANGED — none of them have an empty-cache-miss case, so none exercise
+  the new auto-continue path; confirms no regression to the already-covered "match already cached"
+  case.
+
+## N-1 — bidirectional kdoc cross-reference
+
+`HomeViewModel.kt`'s `VISIT_SUMMARY_MIN_MAG` kdoc already carried its half (present in the working tree
+before this session started). Read `FeedFilterStore.kt`'s `DEFAULT_MIN_MAG` kdoc directly to check the
+other half: it did not mention `VISIT_SUMMARY_MIN_MAG` at all — the exact gap the review's own N-1
+finding described (`RESULTS.md` claimed both sides existed; only one did). Added the missing half to
+`FeedFilterStore.DEFAULT_MIN_MAG`'s kdoc: same distinct-constants/distinct-meanings/why-not-unified
+argument as the `HomeViewModel` side, phrased from this constant's own point of view (persisted,
+user-adjustable list-filter default vs. the summary banner's fixed, never-stored floor).
+
+## N-2, N-3, I-1 — already applied, verified correct against source
+
+These three were already present, uncommitted, in the working tree when this session started (a prior
+setup/session had applied them). Read each against the review's exact finding before trusting it:
+
+- **N-2** (`HistoryPager.kt` `stableKey()` comment): confirmed the comment now reads `null`/`4.0`/`5.0`/
+  `6.0` and correctly attributes the change to `67480c5`'s chip migration — cross-checked against
+  `MAGNITUDE_FILTER_CHIPS`' actual literal values (`filter/MagnitudeFilter.kt`), an exact match.
+- **N-3** (`QuakeRepository.kt` buffer): confirmed `extraBufferCapacity` is `256` with a kdoc citing
+  the 100-300-event cold-start burst. One gap found and closed: the review's own N-3 finding also
+  attributed the risk to the collector being newly slowed by a per-arrival `repository.byId(id)` call
+  (`HomeViewModel.kt`'s `insertedQuakeIds.collect`), and the task explicitly asked for that reasoning
+  in the kdoc — the existing comment had the burst-size half but not the drain-rate half. Added it.
+- **I-1** (`InMemoryQuakeStore.kt` `matchesPlaceQuery` kdoc): confirmed the corrected kdoc accurately
+  describes the `String.contains` vs. SQL `LIKE` wildcard divergence and correctly scopes itself to
+  this app's Android-only verified target (cross-checked the class's own kdoc, which does say this
+  class backs wasmJs in production) — no further change needed.
+
+## Tests / compiles
+
+- `./gradlew jvmTest --rerun-tasks --max-workers=4` (all 8 modules, forced fresh) — **BUILD SUCCESSFUL
+  in 18s**. Independently aggregated the freshly-written JUnit XML per module rather than trusting
+  console text:
+
+  | Module | tests | failures | errors | skipped |
+  |---|---|---|---|---|
+  | composeApp | 280 | 0 | 0 | 0 |
+  | core:data | 187 | 0 | 0 | 0 |
+  | core:database | 138 | 0 | 0 | 0 |
+  | core:network | 50 | 0 | 0 | 0 |
+  | core:ui | 61 | 0 | 0 | 0 |
+  | core:model | 25 | 0 | 0 | 0 |
+  | core:monetization | 9 | 0 | 0 | 0 |
+  | core:ads | 12 | 0 | 0 | 0 |
+  | **Total** | **762** | **0** | **0** | **0** |
+
+  Up from the pre-fix-round baseline of 755 by exactly +7 in `composeApp` (280 vs. 273): 1 test
+  rewritten in place (net 0) + 3 new `HistoryViewModelTest` scenario cases + 4 new
+  `ShouldAutoContinueSearchTest` predicate cases = 7.
+- `./gradlew allTests --max-workers=4` (every KMP target incl. `wasmJsBrowserTest`) — **BUILD
+  SUCCESSFUL in 16s**.
+- `./gradlew :composeApp:compileDebugKotlinAndroid :composeApp:compileKotlinJvm
+  :composeApp:compileKotlinWasmJs --max-workers=4` — all 3 targets green.
+- `./gradlew :composeApp:assembleDebug --max-workers=4` — green.
+
+## Device verify (98bc1cd8, OnePlus 9R, live app data, 2026-08-21)
+
+Attached at session start; used specifically to verify the MAJOR (M-1) fix against the device's own
+real, already-substantially-cached archive (not a fresh install — preserved existing app data via
+`adb install -r -d` so the test would exercise a realistic "some months already cached, more still
+unfetched" scenario rather than an empty DB).
+
+1. **Auto-page to a match in an un-cached month** —
+   `fixround-history-search-chile-before-5.0plus.png` (before: History, 5.0+ filter, no search, only
+   AUGUST 2026 rows cached/visible — Pacific-Antarctic Ridge, Ende ×3, Papua New Guinea, Peru; no
+   Chile anywhere in view) → typed "chile" →
+   `fixround-history-search-chile-autopaged-found-july2026.png` (after: settled on two real JULY 2026
+   Chile rows — "76 km W of Coquimbo, Chile" and "82 km SSW of San Pedro de Atacama, Chile" — plus an
+   "End of archive" footer). The matches are from a MONTH SECTION that was not present in the
+   before-screenshot's cached range at all, which is only possible if the auto-continue mechanism
+   actually walked the archive backward from August into July looking for the search term — the
+   dead-end bug (pre-fix) would have stopped at the very first empty render and never reached them.
+2. **Honest exhausted state when no match exists** —
+   `fixround-history-search-chile-autopaged-exhausted-6.0plus.png`: switched to the 6.0+ filter (a
+   fresh, never-before-paged cursor for that exact filter value) and searched "chile" again. The walk
+   advanced the 6.0+ cursor all the way to the real end of that filter's archive (independently
+   confirmed: a follow-up screenshot with the search cleared showed the SAME filter's list now ending
+   in "End of archive" at a July 24 Vanuatu quake, where it had started at a same-day Peru quake before
+   the search) and settled on **"No quakes match "chile" in the loaded archive"** — the new,
+   `endReached`-gated copy — rather than a premature dead-end.
+3. Both auto-continue walks resolved in well under a second of real, live network + DB round trips
+   each — too fast to reliably catch the transient `searchingArchive = true` / "Searching older
+   quakes…" interim frame in a screenshot on this device's archive depth (a handful of pages per
+   filter); the ViewModel-level `HistoryViewModelTest` suite pins that interim shape directly instead
+   (asserting on `searchingArchive`/`sections` mid-walk), which does not depend on real network timing.
+4. Crash sweep: `adb logcat -d -b crash` showed only an unrelated, pre-existing `init` process abort
+   timestamped from a prior date, no `com.yugma.terrawatch` entries; a `--pid`-scoped logcat filter for
+   `fatal|exception|crash` against the app's own process was empty for the entire session.
+5. App left in a clean default state afterward (search cleared, filter reset to 4.0+).
+
+**Honesty note (mid-session tap-timing hiccups, disclosed rather than omitted)**: early in this pass,
+several `adb shell input tap` coordinates were computed from a misjudged bottom-nav-bar position and
+landed on the wrong UI (briefly opening the system notification shade/Quick Settings once, and
+separately toggling the device's system-wide Dark Mode off once). Neither was intentional, no
+notification content was read or acted on beyond dismissing the shade, and Dark Mode was confirmed via
+`cmd uimode night` and restored to its prior `yes` state immediately once noticed. Recomputing the
+bottom-nav coordinates precisely (via a pixel crop of an actual screenshot rather than eyeballing the
+scaled preview) fixed the mistap issue for the remainder of the pass.
+
+## Commits
+
+Single commit, this fix round, message references M-1/N-1/N-3 by finding id; pushed to
+`origin/feat/review-round-3`.
+
+## Concerns
+
+- **No cap on auto-continue page count.** A search term absent from a VERY deep archive will walk it
+  entirely, sequentially, one network+DB round trip per page, before giving up — matches this task's
+  own explicit design ask ("sequential pages until first match or archive exhausted"), not a bug, but
+  worth a future circuit-breaker (e.g. a max-pages-per-search cap with its own "keep searching?"
+  affordance) if real archives turn out to be much deeper than this device's own cache currently is.
+- **`searchingArchive` interim state is real but not device-screenshot-verified** — both on-device
+  auto-continue walks in this pass resolved too fast (sub-second, shallow archive depth for the
+  filters tried) to catch the transient interim frame in a screenshot; it IS pinned at the
+  ViewModel-state level (`HistoryViewModelTest`'s new cases assert on it directly mid-walk), just not
+  independently confirmed rendering on a real device the way the before/after states were.
+- **Device tap-coordinate mishaps** (notification shade, Dark Mode toggle) during this session's
+  device-verify pass, disclosed above — both were transient, neither touched app data or private
+  content beyond a shade being visible for one screenshot, and Dark Mode was restored; still worth
+  flagging as this task's own honest gap given the "shared device across concurrently-running agent
+  sessions" risk this branch's own prior round already documented.
+- **I-2 (font-loading jank measurement) deliberately not touched** — explicit exclusion in this fix
+  round's own scope, not an oversight.

@@ -504,29 +504,139 @@ class HistoryViewModelTest {
         }
     }
 
-    @Test fun `a search matching nothing shows an empty Content, not a network refetch`() = runTest {
+    // Round-3 review MAJOR (M-1) fix: this test used to assert the OPPOSITE of what's now correct —
+    // that a local search miss must NEVER trigger a further archive fetch. That assumption WAS the
+    // bug: a search term absent from whatever happens to be cached so far must not dead-end there
+    // while more archive remains unchecked (endReached == false) — see
+    // HistoryViewModel.loadUntilDecided's own kdoc for the corrected design. Renamed and rewritten to
+    // pin the corrected behavior (this doubles as this fix's required "exhausted" TDD case): the
+    // search auto-continues fetching until it either finds a match or genuinely exhausts the archive,
+    // never stopping early just because SOME non-matching page came back.
+    @Test fun `a search matching nothing auto-pages until the archive is genuinely exhausted, not stuck on the first miss`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         var callCount = 0
         val engine = MockEngine {
             callCount++
-            geojson(featureCollection(featureJson("a", 9_000_000, place = "Jakarta, Indonesia")))
+            if (callCount == 1) geojson(featureCollection(featureJson("a", 9_000_000, place = "Jakarta, Indonesia")))
+            else geojson(featureCollection()) // archive ends on page 2 — "nonexistent-place-xyz" never appears anywhere
         }
         val vm = createVm(engine)
         vm.state.test(timeout = 30.seconds) {
             var s = awaitItem()
             while (s is HistoryUiState.LoadingFirst) s = awaitItem()
             assertEquals(1, assertIs<HistoryUiState.Content>(s).totalQuakes())
-            val callsBeforeSearch = callCount
 
             vm.setSearchQuery("nonexistent-place-xyz")
             var s2 = awaitItem()
-            while (s2 is HistoryUiState.Content && s2.totalQuakes() > 0) s2 = awaitItem()
-            val content = assertIs<HistoryUiState.Content>(s2, "a local search miss must still be Content(sections=empty), never Error/Empty")
+            while (s2 is HistoryUiState.Content && !s2.endReached) s2 = awaitItem()
+            val content = assertIs<HistoryUiState.Content>(s2, "a search miss with more archive to check must keep walking, never Error/Empty")
             assertEquals(0, content.totalQuakes())
-            assertEquals(
-                callsBeforeSearch, callCount,
-                "search is LOCAL — it must never trigger another archive fetch looking for a match",
-            )
+            assertTrue(content.endReached, "must walk all the way to the real end of the archive before giving up")
+            assertFalse(content.searchingArchive, "must not still claim to be searching once settled on the terminal state")
+            assertEquals(2, callCount, "must actually walk the archive looking for a match (not stay stuck on page 1), and stop exactly at End (not over-fetch past it)")
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    // ---- Round-3 review MAJOR (M-1): "History search dead-ends once the filtered view is empty,
+    // even when the archive isn't exhausted." HistoryViewModel now auto-continues paging while a
+    // search is active and has no visible match yet — see loadUntilDecided's own kdoc for the loop,
+    // shouldAutoContinueSearch for the pure decision, and HistoryUiState.Content.searchingArchive for
+    // the interim-state field HistoryScreen renders through. The exhausted case is pinned above
+    // (the rewritten "auto-pages until genuinely exhausted" test); the other three required cases
+    // follow.
+
+    @Test fun `search auto-pages past non-matching pages and stops the instant a deeper match is found`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        var callCount = 0
+        val engine = MockEngine {
+            callCount++
+            when (callCount) {
+                1 -> geojson(featureCollection(featureJson("a", 9_000_000, place = "Tokyo, Japan")))
+                2 -> geojson(featureCollection(featureJson("b", 8_000_000, place = "Osaka, Japan")))
+                3 -> geojson(featureCollection(featureJson("c", 7_000_000, place = "Jakarta, Indonesia")))
+                else -> geojson(featureCollection())
+            }
+        }
+        val vm = createVm(engine)
+        vm.state.test(timeout = 30.seconds) {
+            var s = awaitItem()
+            while (s is HistoryUiState.LoadingFirst) s = awaitItem()
+            assertEquals(1, assertIs<HistoryUiState.Content>(s).totalQuakes())
+
+            vm.setSearchQuery("jakarta") // not on page 1 or 2 — must auto-page to page 3 to find it
+            var s2 = awaitItem()
+            while (s2 is HistoryUiState.Content && s2.totalQuakes() == 0) s2 = awaitItem()
+            val content = assertIs<HistoryUiState.Content>(s2)
+            assertEquals(listOf("c"), content.sections.single().quakes.map { it.id })
+            assertFalse(content.endReached, "a match found before End must not falsely claim the archive is exhausted")
+            assertFalse(content.searchingArchive, "must stop claiming to search once it has actually found a match")
+            assertEquals(3, callCount, "must stop fetching the instant a match is found, not keep walking toward End")
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `a page fetch failure while auto-paging for a search stops the hunt and surfaces the existing retry affordance`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        var callCount = 0
+        val engine = MockEngine {
+            callCount++
+            when (callCount) {
+                1 -> geojson(featureCollection(featureJson("a", 9_000_000, place = "Tokyo, Japan")))
+                2 -> respond("boom", HttpStatusCode.InternalServerError)
+                else -> geojson(featureCollection(featureJson("z", 1_000_000, place = "Jakarta, Indonesia")))
+            }
+        }
+        val vm = createVm(engine)
+        vm.state.test(timeout = 30.seconds) {
+            var s = awaitItem()
+            while (s is HistoryUiState.LoadingFirst) s = awaitItem()
+            assertEquals(1, assertIs<HistoryUiState.Content>(s).totalQuakes())
+
+            vm.setSearchQuery("jakarta") // not on page 1 — auto-continues, page 2 fails
+            var s2 = awaitItem()
+            while (s2 is HistoryUiState.Content && !s2.loadMoreFailed) s2 = awaitItem()
+            val content = assertIs<HistoryUiState.Content>(s2)
+            assertTrue(content.loadMoreFailed, "a page error during auto-continue must surface the existing retry affordance, not loop forever")
+            assertEquals(0, content.totalQuakes())
+            assertFalse(content.searchingArchive, "must not still claim to be searching once stopped on an error")
+            assertEquals(2, callCount, "must stop fetching the instant a page fails, not keep retrying on its own")
+
+            vm.retry() // the existing loadMoreFailed retry path — unchanged by this fix
+            var s3 = awaitItem()
+            while (s3 is HistoryUiState.Content && s3.loadMoreFailed) s3 = awaitItem()
+            val recovered = assertIs<HistoryUiState.Content>(s3)
+            assertEquals(listOf("z"), recovered.sections.single().quakes.map { it.id })
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+
+    @Test fun `clearing the search mid-hunt cancels the archive walk and restores the real cached content`() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        var callCount = 0
+        val engine = MockEngine {
+            callCount++
+            when (callCount) {
+                1 -> geojson(featureCollection(featureJson("a", 9_000_000, place = "Tokyo, Japan")))
+                2 -> geojson(featureCollection(featureJson("b", 8_000_000, place = "Osaka, Japan")))
+                else -> geojson(featureCollection()) // "atlantis" never appears anywhere in this archive
+            }
+        }
+        val vm = createVm(engine)
+        vm.state.test(timeout = 30.seconds) {
+            var s = awaitItem()
+            while (s is HistoryUiState.LoadingFirst) s = awaitItem()
+            assertEquals(1, assertIs<HistoryUiState.Content>(s).totalQuakes())
+
+            vm.setSearchQuery("atlantis") // never matches — starts the archive hunt
+            awaitItem() // let the hunt take at least one step before clearing it
+
+            vm.setSearchQuery("") // cleared mid-hunt — must recover, not stay dead-ended on "atlantis"
+            var s3 = awaitItem()
+            while (s3 is HistoryUiState.Content && (s3.totalQuakes() == 0 || s3.searchingArchive)) s3 = awaitItem()
+            val content = assertIs<HistoryUiState.Content>(s3)
+            assertTrue(content.totalQuakes() >= 1, "clearing the search must restore the real cached rows, not stay stuck on the cleared search's own empty result")
+            assertFalse(content.searchingArchive, "searchingArchive must not still read true once the search that triggered it is gone")
             cancelAndIgnoreRemainingEvents()
         }
     }
@@ -612,5 +722,29 @@ class GroupByMonthTest {
             nowMillis = 0L,
         )
         assertEquals(listOf("AUGUST 2026", "JUNE 2026", "JULY 2026"), sections.map { it.label })
+    }
+}
+
+/**
+ * Round-3 review MAJOR (M-1) fix: [shouldAutoContinueSearch] pulled out of
+ * [HistoryViewModel.loadUntilDecided] specifically so this decision is pinned in isolation, with no
+ * ViewModel/MockEngine/coroutine harness needed — see that function's own kdoc for why its other two
+ * conjuncts (`!endReached`/`!inFlight`) don't need a runtime check at all, let alone a test double.
+ */
+class ShouldAutoContinueSearchTest {
+    @Test fun `keeps paging when a search is active and it has no match yet`() {
+        assertTrue(shouldAutoContinueSearch(searchActive = true, visibleEmpty = true))
+    }
+
+    @Test fun `stops once a search has a match, even though it's still active`() {
+        assertFalse(shouldAutoContinueSearch(searchActive = true, visibleEmpty = false))
+    }
+
+    @Test fun `never auto-continues when no search is active, even with nothing visible`() {
+        assertFalse(shouldAutoContinueSearch(searchActive = false, visibleEmpty = true))
+    }
+
+    @Test fun `never auto-continues when no search is active and something is already visible`() {
+        assertFalse(shouldAutoContinueSearch(searchActive = false, visibleEmpty = false))
     }
 }

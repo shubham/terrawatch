@@ -150,24 +150,33 @@ fun HistoryScreen(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                 )
                 HistoryFilterChips(filter = filter, onFilterChange = viewModel::setFilter)
-                // User review item 3: "effectively empty" folds TWO independent sealed shapes
-                // ([HistoryUiState.Empty] itself, and a [HistoryUiState.Content] whose `sections`
-                // search has narrowed to nothing — see that sealed interface's own kdoc for why the
-                // latter is now a legitimate, durable published shape, not just a transient one)
-                // into ONE "nothing to show right now" question, then [searchQuery] alone decides
-                // which of the two different empty COPIES applies — a search-caused empty gets "No
-                // quakes match 'x'" + a clear-search action; every other empty (including a
-                // search-caused Empty ONCE THE SEARCH IS LATER CLEARED — [state] can by then still
-                // literally be a `Content(sections=emptyList())` left over from that search, not a
-                // fresh [HistoryUiState.Empty]) keeps the screen's own original "widen filters" copy.
-                // Computed once, ahead of the `when` below, so the two can never each independently
-                // (and inconsistently) re-derive it.
-                val effectivelyEmpty = when (val s = state) {
-                    is HistoryUiState.Content -> s.sections.isEmpty()
+                // Round-3 review MAJOR (M-1) fix: this used to ask ONE question — "is there nothing
+                // to show right now" — and let a search-caused empty Content answer it exactly like a
+                // genuinely exhausted one, swapping HistoryList (and its listState, the only thing
+                // LoadMoreOnScrollEnd can ever drive) out for a static, no-LazyColumn empty screen the
+                // MOMENT a search-filtered page came back empty — even while HistoryViewModel's own
+                // endReached was still false and the rest of the archive had never actually been
+                // checked. Renamed to the narrower question this static treatment actually needs:
+                // is this empty AND genuinely FINAL? [HistoryUiState.Empty] always is, by
+                // construction (see that state's own kdoc — it's only ever published once the
+                // archive-wide walk is over). A [HistoryUiState.Content] with empty `sections` is
+                // NOT automatically final anymore — HistoryViewModel may still be auto-paging deeper
+                // looking for a search match (see HistoryViewModel.loadUntilDecided's own kdoc), so
+                // this only counts it as final once `endReached` says so too. A non-final
+                // search-caused empty Content now falls through to the `when` below and renders via
+                // HistoryList exactly like any other Content: `listState`/`LoadMoreOnScrollEnd` stay
+                // mounted and wired for the ENTIRE time HistoryViewModel is auto-paging, not just
+                // before the first search-filtered miss, and HistoryFooter itself picks the interim
+                // "Searching older quakes…" copy over its usual (blank-when-mid-list) footer once
+                // HistoryViewModel starts publishing `searchingArchive = true` (see that composable's
+                // own kdoc). Computed once, ahead of the `when` below, so the two can never each
+                // independently (and inconsistently) re-derive it.
+                val searchDeadEnd = when (val s = state) {
+                    is HistoryUiState.Content -> s.sections.isEmpty() && s.endReached
                     HistoryUiState.Empty -> true
                     HistoryUiState.LoadingFirst, is HistoryUiState.Error -> false
                 }
-                if (effectivelyEmpty && searchQuery.isNotBlank()) {
+                if (searchDeadEnd && searchQuery.isNotBlank()) {
                     HistorySearchEmptyState(
                         query = searchQuery,
                         onClearSearch = { viewModel.setSearchQuery("") },
@@ -377,10 +386,30 @@ private fun MonthHeader(label: String, modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * Round-3 review MAJOR (M-1) fix: the `content.sections.isEmpty() && content.searchingArchive`
+ * branch below is new — this is now the ONLY place that copy renders, and it only ever fires for the
+ * one specific interim shape [HistoryViewModel.loadUntilDecided] publishes while auto-paging for a
+ * search with no match yet (see [HistoryUiState.Content.searchingArchive]'s own kdoc). Checked
+ * BEFORE the generic [HistoryUiState.Content.loadingMore] branch below it because
+ * [HistoryViewModel.loadMore] stamps both fields together on that exact shape — without the
+ * `sections.isEmpty()` guard, a completely ordinary scroll-triggered load-more that happens to fire
+ * while an UNRELATED, already-satisfied search is still active (sections non-empty) would wrongly
+ * show "Searching older quakes…" over a list that already has real rows, instead of the plain
+ * append-spinner every other load-more gets.
+ */
 @Composable
 private fun HistoryFooter(content: HistoryUiState.Content, onRetry: () -> Unit, modifier: Modifier = Modifier) {
     Box(modifier.fillMaxWidth().padding(vertical = 16.dp), contentAlignment = Alignment.Center) {
         when {
+            content.sections.isEmpty() && content.searchingArchive -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    "Searching older quakes…",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                CircularProgressIndicator(modifier = Modifier.padding(top = 8.dp).size(24.dp))
+            }
             content.loadingMore -> CircularProgressIndicator(modifier = Modifier.size(24.dp))
             content.loadMoreFailed -> Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Couldn't load more", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -433,16 +462,26 @@ private fun HistoryEmptyState(onWidenFilters: () -> Unit, modifier: Modifier = M
     }
 }
 
-/** User review item 3 (history search): the search-specific empty-result copy the task's own spec
- * calls for verbatim ("No quakes match 'x'") — a sibling of [HistoryEmptyState], not a reuse of it,
- * since the two need different copy AND a different recovery action (clear the search box here,
- * vs. reset the whole filter there) even though they share the same layout shape. */
+/** User review item 3 (history search): the search-specific empty-result copy — a sibling of
+ * [HistoryEmptyState], not a reuse of it, since the two need different copy AND a different recovery
+ * action (clear the search box here, vs. reset the whole filter there) even though they share the
+ * same layout shape.
+ *
+ * Round-3 review MAJOR (M-1) fix: this screen only ever renders this composable once `state`'s own
+ * `searchDeadEnd` check (this file's `HistoryScreen` composable) is genuinely TERMINAL — see that
+ * val's own kdoc — so by the time this copy shows, HistoryViewModel has actually walked the entire
+ * cached archive for [query] and found nothing, not just the first page it happened to have cached.
+ * Copy updated from the pre-fix "No quakes match 'x'" to spell that out ("...in the loaded
+ * archive") rather than reading as a blanket, X-doesn't-exist-anywhere verdict it was never actually
+ * in a position to make pre-fix (a search that dead-ended after one page could easily have a real
+ * match a few pages deeper — this copy now can't be shown until that's no longer possible).
+ */
 @Composable
 private fun HistorySearchEmptyState(query: String, onClearSearch: () -> Unit, modifier: Modifier = Modifier) {
     Box(modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
-                "No quakes match \"$query\"",
+                "No quakes match \"$query\" in the loaded archive",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface,
                 textAlign = TextAlign.Center,

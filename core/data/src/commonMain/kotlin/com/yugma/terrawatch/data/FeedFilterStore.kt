@@ -81,7 +81,21 @@ class FeedFilterStore(private val dao: QuakeStore) {
         /** The user's own explicit, binding instruction: "in the list default should be 4.0 and
          * above" — a fresh install (or any device that has never touched this filter) opens the
          * feed sheet already scoped to M4.0+, not the unfiltered "All" a naive absent-row read
-         * might otherwise suggest. */
+         * might otherwise suggest.
+         *
+         * Round-3 review MINOR (N-1), the other half of the cross-reference `RESULTS.md` claimed
+         * already existed but didn't (see [com.yugma.terrawatch.home.HomeViewModel]'s own
+         * `VISIT_SUMMARY_MIN_MAG` kdoc for that constant's half of this same note, and for the fuller
+         * writeup): distinct from that constant (also `4.0`) — this one is this store's own
+         * user-adjustable, persisted DEFAULT for the dashboard feed sheet's list filter (overridable
+         * any time via the filter chips, then remembered); `VISIT_SUMMARY_MIN_MAG` is a fixed,
+         * never-stored, not-user-configurable floor scoping only the since-last-visit summary
+         * banner's own count. Two independent constants that happen to share a value and a "4.0 is
+         * the default floor" rationale, arrived at separately for two different UI surfaces — not
+         * one drifting copy of the other, and not unified into one shared constant precisely because
+         * unifying them would wrongly couple two independently-changeable product decisions (raising
+         * this store's user-facing default should not silently move the summary banner's own fixed
+         * count, and vice versa). */
         const val DEFAULT_MIN_MAG = 4.0
 
         private const val KEY = "feed_filter_minmag"
