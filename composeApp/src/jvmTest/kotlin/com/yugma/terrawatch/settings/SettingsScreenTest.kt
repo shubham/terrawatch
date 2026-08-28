@@ -43,8 +43,12 @@ class SettingsScreenTest {
         assertEquals(4.0, snapToHalfMagnitude(4.24))
     }
 
+    // Three places carry the released version and MUST move together on every bump: this pin,
+    // `SettingsScreen.kt`'s own APP_VERSION (what the Settings footer renders), and
+    // `composeApp/build.gradle.kts`' versionName. Commit 97be40e (the 1.0.0 bump) moved the latter
+    // two and missed this one, which is what turned CI red from 2026-08-21 onward.
     @Test fun `app version constant pins the released version string`() {
-        assertEquals("0.9.0", APP_VERSION)
+        assertEquals("1.0.0", APP_VERSION)
     }
 
     // --- Task 3 (Plan 4): the ALERTS section's permission/worker-state row -----------------------
