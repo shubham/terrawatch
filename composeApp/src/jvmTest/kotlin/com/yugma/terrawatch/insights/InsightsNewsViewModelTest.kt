@@ -26,6 +26,7 @@ import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -40,6 +41,15 @@ private const val THREE_ARTICLES = """
       {"title":"A","url":"https://a.com/1","domain":"a.com","seendate":"20260815T041500Z"},
       {"title":"B","url":"https://b.com/1","domain":"b.com","seendate":"20260815T041500Z"},
       {"title":"C","url":"https://c.com/1","domain":"c.com","seendate":"20260815T041500Z"}
+    ]}
+"""
+
+// A second, deliberately DIFFERENT GDELT payload, used only by the re-fetch test below: its whole
+// job is to make the second fetch's settled state distinguishable from the first's. See that test's
+// own comment for why an identical payload made the assertion untestable (and CI-flaky).
+private const val ONE_OTHER_ARTICLE = """
+    {"articles":[
+      {"title":"Z","url":"https://z.com/1","domain":"z.com","seendate":"20260815T041500Z"}
     ]}
 """
 
@@ -93,6 +103,33 @@ class InsightsNewsViewModelTest {
         val gdeltClient = GdeltClient(HttpClient(MockEngine { respond(gdeltResponse, gdeltStatus) }))
         return InsightsNewsViewModel(repository(dao), gdeltClient, clock = { nowMillis }, newsEnabled = newsEnabled)
             .also { createdViewModels += it }
+    }
+
+    /** [createVm]'s sibling for the one test that needs the SECOND gdelt fetch to answer
+     * differently from the first: serves [responses] in call order (the last entry repeats if the
+     * VM fetches more times than there are entries) and counts real requests in [requests], so a
+     * test can assert a re-fetch actually happened instead of inferring it from state shape.
+     * [java.util.concurrent.atomic.AtomicInteger], not a plain `var`: MockEngine's handler runs on
+     * ktor's own engine dispatcher, a different thread from the assertions below. */
+    private fun createVmServing(
+        dao: QuakeDao,
+        responses: List<String>,
+        requests: AtomicInteger,
+        nowMillis: Long = 100 * DAY,
+    ): InsightsNewsViewModel {
+        val engine = MockEngine {
+            val index = requests.getAndIncrement()
+            respond(responses[minOf(index, responses.lastIndex)], HttpStatusCode.OK)
+        }
+        // `newsEnabled = true` EXPLICITLY, same as [createVm]'s own default and for the same reason:
+        // the production default (`NewsFeature.ENABLED`) is false, so leaving it out makes this VM
+        // settle on Hidden and never fetch at all.
+        return InsightsNewsViewModel(
+            repository(dao),
+            GdeltClient(HttpClient(engine)),
+            clock = { nowMillis },
+            newsEnabled = true,
+        ).also { createdViewModels += it }
     }
 
     private fun quake(id: String, timeMillis: Long, mag: Double?, place: String = "Test $id") = Quake(
@@ -235,18 +272,33 @@ class InsightsNewsViewModelTest {
         }
     }
 
+    // Flake fix (2026-08-28): this test was CI-red from 2026-08-21 (TurbineTimeoutCancellation at
+    // awaitSettled) while passing locally. Cause was NOT a starved runner — it was the assertion
+    // itself. Both fetches used to be served the same THREE_ARTICLES body, so the second settled
+    // state was `Content(sameArticles)`, VALUE-EQUAL to the first. `_newsState` is a StateFlow:
+    // `fetch()` writes Loading then Content back-to-back, and a StateFlow both conflates (a slow
+    // collector only ever sees the latest value) and suppresses equal consecutive values — so
+    // whenever the collector didn't happen to resume between those two writes, the re-fetch emitted
+    // NOTHING at all and `awaitSettled()` waited out its full 30s. Serving a DIFFERENT second body
+    // makes the post-re-fetch state distinguishable, which removes the dependence on that interleave
+    // entirely, and lets this test finally assert the thing its name claims: that a second fetch
+    // really was issued (request count) and its result really did replace the first.
     @Test fun `a NEW stronger M6+ candidate replaces the previous one and re-fetches`() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher())
         val dao = freshDao()
         val now = 100 * DAY
         dao.upsert(quake("first", timeMillis = now, mag = 6.2))
-        val vm = createVm(dao, nowMillis = now)
+        val requests = AtomicInteger(0)
+        val vm = createVmServing(dao, listOf(THREE_ARTICLES, ONE_OTHER_ARTICLE), requests, nowMillis = now)
         vm.newsState.test(timeout = 30.seconds) {
-            assertIs<NewsUiState.Content>(awaitSettled())
+            val first = assertIs<NewsUiState.Content>(awaitSettled())
+            assertEquals(listOf("A", "B", "C"), first.articles.map { it.title })
 
             dao.upsert(quake("stronger", timeMillis = now, mag = 7.5))
 
-            assertIs<NewsUiState.Content>(awaitSettled())
+            val second = assertIs<NewsUiState.Content>(awaitSettled())
+            assertEquals(listOf("Z"), second.articles.map { it.title })
+            assertEquals(2, requests.get())
             cancelAndIgnoreRemainingEvents()
         }
     }
