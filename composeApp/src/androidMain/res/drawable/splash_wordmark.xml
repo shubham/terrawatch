@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Splash wordmark fix (2026-08-28): replaces the 5 raster drawable-{m,h,x,xx,xxx}dpi/
+  splash_branding.png files the "Add splash screen app name" commit (f0ef79d, feat/feed-visit-ux)
+  introduced. Those PNGs were Pillow-rendered "TerraWatch" in Arial Bold at ~93x17dp (see that
+  commit's own message) - wrong brand font (not Inter) AND, per direct user report, visibly
+  pixelated/jaggy on a real device once the OS scales a small raster bitmap for
+  windowSplashScreenBrandingImage. A VectorDrawable sidesteps both: Android rasterizes path data
+  fresh at whatever exact pixel size the splash-screen branding slot needs, at every density, so
+  there is no upscale-a-small-bitmap step left to go jaggy, and this is real Inter SemiBold glyph
+  geometry rather than a font-substitution guess.
+
+  HOW THIS WAS GENERATED - not hand-drawn, not traced: the string "TerraWatch" was laid out and
+  its outlines extracted programmatically from this repo's own
+  core/ui/src/commonMain/composeResources/font/inter_semibold.ttf via fontTools (glyf outlines
+  per character, walked left-to-right using each glyph's own hmtx advance width - no GPOS kerning
+  applied; Inter's default spacing reads fine at this length, same call the task brief made).
+  Each glyph's outline was emitted through fontTools' SVGPathPen behind a single TransformPen
+  carrying (a,b,c,d,e,f) = (1,0,0,-1, x_cursor-min_x, max_y) - this both flips the font's Y-up/
+  baseline-origin coordinate space into the Y-down/top-left-origin space pathData below uses, AND
+  shifts every glyph into its left-to-right position, in one affine step, so nothing downstream
+  needed a <group> transform. The ten glyphs' path strings are simply concatenated (each is its
+  own M...Z subpath(s); android:fillType defaults to nonZero, which is what a TrueType font's own
+  contour winding is designed to satisfy for the counters in "e"/"a"/"c"/"h" etc). viewportWidth/
+  Height below are the EXACT tight bounding box of the composed word in the font's native
+  2048-units-per-em space (no rounding) - verified against a from-scratch decode of the first
+  glyph's own path ("T": crossbar 1186x225 sitting on a 267-wide stem down to baseline at
+  y=1490, both exactly where a capital T's real metrics should put them) before trusting the rest.
+
+  Fill: core/ui's Tokens.kt TerraColors.Ink (#17222E) - same "hex copied here deliberately, plain
+  XML can't reference the Kotlin object" precedent this app's other splash/launcher assets already
+  use (see values/themes.xml and ic_launcher_foreground.xml's own header comments).
+
+  Size: android:width/height (184x24dp) keep the SAME aspect ratio as the extracted glyph geometry
+  (11579x1513 native units, ratio 7.653; 184/24 = 7.667, a 0.2% mismatch from rounding to whole
+  dp - imperceptible). 24dp is a deliberate, modest bump from the old PNGs' ~17dp (mdpi) height,
+  not a redesign - Inter's proportions differ slightly from the old Arial-Bold render and needed
+  *some* adjustment, but the brief was to fix pixelation/font, not resize the brand mark, so this
+  stayed close to the original visual weight rather than maximizing toward the platform's
+  documented ~200x80dp windowSplashScreenBrandingImage cap (184dp width still clears that cap with
+  16dp/8% margin either way).
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="184dp"
+    android:height="24dp"
+    android:viewportWidth="11579"
+    android:viewportHeight="1513">
+    <path
+        android:fillColor="#FF17222E"
+        android:pathData="M0.0 225V0H1186.0V225H727.0V1490H460.0V225Z M1901.0 1513Q1732.0 1513 1610.5 1442.0Q1489.0 1371 1423.5 1242.0Q1358.0 1113 1358.0 938Q1358.0 766 1422.5 635.5Q1487.0 505 1605.5 431.5Q1724.0 358 1884.0 358Q2020.0 358 2136.5 417.5Q2253.0 477 2324.0 601.5Q2395.0 726 2395.0 922V1004H1617.0Q1622.0 1153 1700.5 1231.0Q1779.0 1309 1904.0 1309Q1990.0 1309 2051.5 1272.0Q2113.0 1235 2139.0 1164L2378.0 1213Q2338.0 1348 2212.5 1430.5Q2087.0 1513 1901.0 1513ZM1618.0 827H2142.0Q2130.0 707 2065.5 634.5Q2001.0 562 1885.0 562Q1766.0 562 1696.5 638.5Q1627.0 715 1618.0 827Z M2618.0 1490V372H2870.0V559H2882.0Q2912.0 462 2987.0 409.5Q3062.0 357 3158.0 357Q3208.0 357 3253.0 364V603Q3237.0 599 3201.0 594.5Q3165.0 590 3130.0 590Q3021.0 590 2949.5 657.5Q2878.0 725 2878.0 832V1490Z M3431.0 1490V372H3683.0V559H3695.0Q3725.0 462 3800.0 409.5Q3875.0 357 3971.0 357Q4021.0 357 4066.0 364V603Q4050.0 599 4014.0 594.5Q3978.0 590 3943.0 590Q3834.0 590 3762.5 657.5Q3691.0 725 3691.0 832V1490Z M4556.0 1513Q4450.0 1513 4365.0 1474.5Q4280.0 1436 4231.0 1361.0Q4182.0 1286 4182.0 1176Q4182.0 1050 4243.5 980.5Q4305.0 911 4402.5 879.5Q4500.0 848 4608.0 837Q4754.0 821 4819.0 807.5Q4884.0 794 4884.0 736V731Q4884.0 649 4834.0 603.5Q4784.0 558 4689.0 558Q4591.0 558 4533.0 601.0Q4475.0 644 4455.0 699L4214.0 650Q4263.0 502 4391.5 430.0Q4520.0 358 4688.0 358Q4767.0 358 4847.5 376.5Q4928.0 395 4995.0 438.5Q5062.0 482 5103.0 556.5Q5144.0 631 5144.0 743V1490H4895.0V1336H4885.0Q4848.0 1408 4767.0 1460.5Q4686.0 1513 4556.0 1513ZM4623.0 1320Q4743.0 1320 4814.5 1251.0Q4886.0 1182 4886.0 1089V957Q4868.0 971 4822.0 981.5Q4776.0 992 4724.5 999.5Q4673.0 1007 4639.0 1012Q4551.0 1024 4492.5 1060.0Q4434.0 1096 4434.0 1173Q4434.0 1245 4487.0 1282.5Q4540.0 1320 4623.0 1320Z M5734.0 1490 5332.0 0H5619.0L5813.0 793Q5836.0 894 5856.0 1006.5Q5876.0 1119 5895.0 1230Q5915.0 1119 5936.5 1006.5Q5958.0 894 5983.0 793L6185.0 0H6468.0L6669.0 793Q6694.0 893 6715.5 1004.0Q6737.0 1115 6757.0 1225Q6776.0 1115 6796.5 1004.0Q6817.0 893 6840.0 793L7033.0 0H7321.0L6918.0 1490H6612.0L6395.0 667Q6375.0 589 6358.0 501.0Q6341.0 413 6325.0 317Q6310.0 410 6294.5 497.0Q6279.0 584 6257.0 667L6040.0 1490Z M7821.0 1513Q7715.0 1513 7630.0 1474.5Q7545.0 1436 7496.0 1361.0Q7447.0 1286 7447.0 1176Q7447.0 1050 7508.5 980.5Q7570.0 911 7667.5 879.5Q7765.0 848 7873.0 837Q8019.0 821 8084.0 807.5Q8149.0 794 8149.0 736V731Q8149.0 649 8099.0 603.5Q8049.0 558 7954.0 558Q7856.0 558 7798.0 601.0Q7740.0 644 7720.0 699L7479.0 650Q7528.0 502 7656.5 430.0Q7785.0 358 7953.0 358Q8032.0 358 8112.5 376.5Q8193.0 395 8260.0 438.5Q8327.0 482 8368.0 556.5Q8409.0 631 8409.0 743V1490H8160.0V1336H8150.0Q8113.0 1408 8032.0 1460.5Q7951.0 1513 7821.0 1513ZM7888.0 1320Q8008.0 1320 8079.5 1251.0Q8151.0 1182 8151.0 1089V957Q8133.0 971 8087.0 981.5Q8041.0 992 7989.5 999.5Q7938.0 1007 7904.0 1012Q7816.0 1024 7757.5 1060.0Q7699.0 1096 7699.0 1173Q7699.0 1245 7752.0 1282.5Q7805.0 1320 7888.0 1320Z M9202.0 372V576H8986.0V1175Q8986.0 1236 9011.5 1264.5Q9037.0 1293 9097.0 1293Q9115.0 1293 9144.0 1288.5Q9173.0 1284 9192.0 1280L9233.0 1481Q9190.0 1494 9145.0 1499.5Q9100.0 1505 9059.0 1505Q8898.0 1505 8812.0 1425.0Q8726.0 1345 8726.0 1197V576H8567.0V372H8726.0V106H8986.0V372Z M9893.0 1513Q9730.0 1513 9610.0 1440.5Q9490.0 1368 9424.5 1238.5Q9359.0 1109 9359.0 937Q9359.0 763 9424.5 632.5Q9490.0 502 9610.0 430.0Q9730.0 358 9893.0 358Q10080.0 358 10209.5 451.5Q10339.0 545 10375.0 709L10132.0 760Q10111.0 673 10050.0 621.0Q9989.0 569 9895.0 569Q9759.0 569 9691.5 674.0Q9624.0 779 9624.0 936Q9624.0 1039 9654.0 1122.0Q9684.0 1205 9744.0 1253.5Q9804.0 1302 9895.0 1302Q9991.0 1302 10052.5 1247.5Q10114.0 1193 10135.0 1103L10378.0 1154Q10342.0 1321 10212.0 1417.0Q10082.0 1513 9893.0 1513Z M10861.0 835V1490H10601.0V0H10857.0V579Q10959.0 358 11196.0 358Q11369.0 358 11474.0 468.0Q11579.0 578 11579.0 779V1490H11318.0V819Q11318.0 707 11260.0 643.0Q11202.0 579 11100.0 579Q10996.0 579 10928.5 646.0Q10861.0 713 10861.0 835Z" />
+</vector>

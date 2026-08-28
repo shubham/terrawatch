@@ -45,12 +45,18 @@
              this app's minSdk is 26, so on a real API 26-30 device the wordmark will not render at
              all - that device falls back to the same icon-only splash this app already shipped
              before this commit (not a crash, not a regression, just the enhancement not reaching
-             that OS range). The "TerraWatch" wordmark (drawable-*dpi/splash_branding.png,
-             generated via Pillow - see that file's own sibling generation script for the method)
-             is the actual point of this commit: Android 12+'s own default splash shows only the
-             icon, this adds the app name via the OS's bottom-center branding slot wherever the
-             platform attr is honored. -->
-        <item name="android:windowSplashScreenBrandingImage">@drawable/splash_branding</item>
+             that OS range).
+
+             Splash wordmark fix (2026-08-28): points at drawable/splash_wordmark.xml now, not the
+             original drawable-*dpi/splash_branding.png rasters this commit first shipped. Those
+             PNGs were Pillow-rendered Arial Bold at ~93x17dp - wrong brand font, and confirmed
+             pixelated/jaggy on a real device once the OS scaled the small bitmap. The replacement
+             is a VectorDrawable built from this app's own real Inter SemiBold glyph outlines (see
+             splash_wordmark.xml's own header for the fontTools extraction method) - resolution
+             independent by construction, so there is no small-bitmap-scaled-up step left to go
+             jaggy at any density. The 5 raster PNGs were deleted outright, not left as dead
+             weight. -->
+        <item name="android:windowSplashScreenBrandingImage">@drawable/splash_wordmark</item>
         <!-- Swap back to the app's one real theme the instant the splash screen dismisses -
              unchanged from what AndroidManifest.xml pointed at directly before this commit. -->
         <item name="postSplashScreenTheme">@android:style/Theme.Material.Light.NoActionBar</item>
