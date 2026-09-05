@@ -22,6 +22,9 @@ import com.yugma.terrawatch.data.OnboardingStore
 import com.yugma.terrawatch.data.VisitStore
 import com.yugma.terrawatch.di.ensureKoinStarted
 import com.yugma.terrawatch.location.LocationProvider
+import com.yugma.terrawatch.monetization.EntitlementsProvider
+import com.yugma.terrawatch.monetization.PlusPurchases
+import com.yugma.terrawatch.monetization.attemptSilentRestore
 import com.yugma.terrawatch.location.bindLocationPermissionController
 import com.yugma.terrawatch.location.computeLocationPermissionCondition
 import com.yugma.terrawatch.location.currentLocationPermissionRationale
@@ -34,9 +37,14 @@ import com.yugma.terrawatch.notifications.markNotificationPermissionAsked
 import com.yugma.terrawatch.notifications.openNotificationSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
 import org.koin.core.context.GlobalContext
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
+
+/** Process-scoped, not activity-scoped: `onCreate` runs again on every configuration change, and
+ * the silent restore attempt must happen once per process rather than once per Activity. */
+private val silentRestoreAttempted = AtomicBoolean(false)
 
 class MainActivity : ComponentActivity() {
     // Built once per Activity instance (not per onCreate/Koin-guard branch — applicationContext is
@@ -208,6 +216,23 @@ class MainActivity : ComponentActivity() {
         // for "has bootstrap happened," located inside the idempotent function itself — is strictly
         // more robust than duplicating that condition out here a second time.
         ensureKoinStarted(applicationContext, locationProvider)
+
+        // One quiet restore per PROCESS -- the flag lives outside this class deliberately, because
+        // onCreate runs again on every configuration change and this must not repeat then. A
+        // dedicated flag rather than a reuse of ensureKoinStarted's own guard: "has Koin started"
+        // and "have we tried a restore yet" are genuinely different questions, and the same
+        // conflation already bit this file once (see the Fix Round 1 comment above).
+        //
+        // Fire-and-forget on Dispatchers.Default: nothing on screen waits for this, and its only
+        // visible effect is the ad banner never appearing for someone who already paid.
+        // attemptSilentRestore swallows everything, so this cannot crash a cold start.
+        if (silentRestoreAttempted.compareAndSet(false, true)) {
+            lifecycleScope.launch(Dispatchers.Default) {
+                val purchases: PlusPurchases = GlobalContext.get().get()
+                val entitlements: EntitlementsProvider = GlobalContext.get().get()
+                attemptSilentRestore(purchases, entitlements.isPlusActive.value)
+            }
+        }
         pendingQuakeId = intent?.getStringExtra(AlertDigestWorker.EXTRA_QUAKE_ID)
         setContent {
             App(
