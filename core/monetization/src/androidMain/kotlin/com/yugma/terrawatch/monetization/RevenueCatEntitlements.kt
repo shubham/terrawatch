@@ -2,8 +2,13 @@ package com.yugma.terrawatch.monetization
 
 import com.revenuecat.purchases.kmp.LogLevel
 import com.revenuecat.purchases.kmp.Purchases
+import com.revenuecat.purchases.kmp.PurchasesDelegate
 import com.revenuecat.purchases.kmp.configure
 import com.revenuecat.purchases.kmp.ktx.awaitCustomerInfo
+import com.revenuecat.purchases.kmp.models.CustomerInfo
+import com.revenuecat.purchases.kmp.models.PurchasesError
+import com.revenuecat.purchases.kmp.models.StoreProduct
+import com.revenuecat.purchases.kmp.models.StoreTransaction
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -53,11 +58,12 @@ internal const val PLUS_ENTITLEMENT_IDENTIFIER = "plus"
  * id is exactly what an account-less app wants).
  *
  * [isPlusActive] seeds from one [Purchases.sharedInstance] `awaitCustomerInfo()` call at
- * construction time. A live-updating listener (so a purchase completing WHILE this app is already
- * running flips this StateFlow with no restart needed) is real, valuable follow-up work,
- * deliberately deferred to Task 8 alongside the rest of the real purchase flow: there is no
- * dashboard/product to test such a listener against yet, and this class cannot be exercised
- * end-to-end regardless until one exists.
+ * construction AND stays live via a [PurchasesDelegate]: `onCustomerInfoUpdated` fires whenever
+ * RevenueCat's view of the customer changes, the moment a purchase completes included. Without it
+ * the anchored banner would survive the purchase until the next cold start -- the worst possible
+ * moment for this app to look broken, immediately after taking someone's money. Every consumer
+ * (`adSlotVisible`, Settings' Plus row, `canAddFavorite`) already observes this StateFlow, so
+ * nothing downstream needed changing to benefit.
  *
  * Defensive `runCatching` around the fetch: this is real network + real SDK-state code that has
  * never run against a real backend in this repo — any failure (bad key format, no network, an SDK
@@ -75,6 +81,32 @@ class RevenueCatEntitlements(apiKey: String) : EntitlementsProvider {
     init {
         Purchases.logLevel = LogLevel.WARN
         Purchases.configure(apiKey = apiKey) {}
+
+        // Live updates. `delegate` is a SINGLE SLOT (setDelegate, not an addListener list): this
+        // class owns it, and nothing else in this app may set it or it would silently unregister
+        // this one and take live entitlement updates down with it.
+        Purchases.sharedInstance.delegate = object : PurchasesDelegate {
+            override fun onCustomerInfoUpdated(customerInfo: CustomerInfo) {
+                _isPlusActive.value =
+                    customerInfo.entitlements[PLUS_ENTITLEMENT_IDENTIFIER]?.isActive == true
+            }
+
+            /**
+             * Play Store promotional purchases — ones started from the store listing rather than
+             * from inside the app. TerraWatch configures none, so this cannot fire today. Not
+             * starting the purchase is the correct handling for an offer this app never made; if
+             * one is ever configured, [onCustomerInfoUpdated] above still reports whatever
+             * entitlement change results, so Plus would activate either way.
+             */
+            override fun onPurchasePromoProduct(
+                product: StoreProduct,
+                startPurchase: (
+                    onError: (PurchasesError, Boolean) -> Unit,
+                    onSuccess: (StoreTransaction, CustomerInfo) -> Unit,
+                ) -> Unit,
+            ) = Unit
+        }
+
         scope.launch {
             runCatching { Purchases.sharedInstance.awaitCustomerInfo() }
                 .onSuccess { customerInfo ->
