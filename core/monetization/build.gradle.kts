@@ -17,6 +17,10 @@ kotlin {
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
+            // PlusPurchases' functions all suspend, so this module's tests now need runTest — the
+            // same dependency core:data/core:network/core:database already pull for their own
+            // suspend surfaces, on the shared kotlinxCoroutines version.
+            implementation(libs.kotlinx.coroutines.test)
         }
         // Plan 4 Task 6: RevenueCat's purchases-kmp-core, ANDROID-GATED per this task's own brief —
         // jvm/wasmJs never construct RevenueCatEntitlements at all (both stay on
