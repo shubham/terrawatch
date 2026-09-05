@@ -11,7 +11,10 @@ import com.yugma.terrawatch.database.createDatabase
 import com.yugma.terrawatch.location.LocationProvider
 import com.yugma.terrawatch.monetization.AlwaysFreeEntitlements
 import com.yugma.terrawatch.monetization.EntitlementsProvider
+import com.yugma.terrawatch.monetization.PlusPurchases
 import com.yugma.terrawatch.monetization.RevenueCatEntitlements
+import com.yugma.terrawatch.monetization.RevenueCatPlusPurchases
+import com.yugma.terrawatch.monetization.UnavailablePlusPurchases
 import com.yugma.terrawatch.monetization.revenueCatKeyIsConfigured
 import com.yugma.terrawatch.share.initShareContext
 import io.ktor.client.HttpClient
@@ -58,6 +61,24 @@ private fun readRevenueCatApiKey(context: Context): String? {
 private fun buildEntitlementsProvider(context: Context): EntitlementsProvider {
     val apiKey = readRevenueCatApiKey(context)
     return if (revenueCatKeyIsConfigured(apiKey)) RevenueCatEntitlements(apiKey!!) else AlwaysFreeEntitlements
+}
+
+/**
+ * The [PlusPurchases] counterpart to [buildEntitlementsProvider], deliberately reading the SAME key
+ * through the SAME [revenueCatKeyIsConfigured] gate rather than a second check of its own. Two
+ * providers, one decision: gated independently they could drift apart, and the failure would be
+ * quiet and expensive in both directions -- a build that reads entitlements from RevenueCat but
+ * refuses to sell anything, or a paywall that completes a purchase the entitlement side would never
+ * observe, leaving someone charged and still looking at ads.
+ *
+ * MUST be called after [buildEntitlementsProvider] in any single expression: that function is what
+ * runs `Purchases.configure`, and [RevenueCatPlusPurchases] touches `Purchases.sharedInstance`,
+ * which throws when the SDK is unconfigured. Kotlin evaluates arguments left to right, and the
+ * `appModule(...)` call below relies on exactly that -- see its own comment.
+ */
+private fun buildPlusPurchases(context: Context): PlusPurchases {
+    val apiKey = readRevenueCatApiKey(context)
+    return if (revenueCatKeyIsConfigured(apiKey)) RevenueCatPlusPurchases() else UnavailablePlusPurchases
 }
 
 /**
@@ -167,7 +188,22 @@ fun ensureKoinStarted(
                     connectTimeoutMillis = 10_000
                 }
             }
-            startKoin { modules(appModule(http, dao, locationProvider, buildEntitlementsProvider(appContext))) }
+            // Argument ORDER is load-bearing, not cosmetic: buildEntitlementsProvider is what calls
+            // Purchases.configure, and buildPlusPurchases constructs a class that touches
+            // Purchases.sharedInstance, which throws while the SDK is unconfigured. Kotlin evaluates
+            // arguments left to right, so entitlements-before-purchases is what keeps that safe.
+            // Do not reorder these two.
+            startKoin {
+                modules(
+                    appModule(
+                        http,
+                        dao,
+                        locationProvider,
+                        buildEntitlementsProvider(appContext),
+                        buildPlusPurchases(appContext),
+                    )
+                )
+            }
         }
     }
     // Plan 4 Task 6 (this task's own brief: "MobileAds.initialize in ensureKoinStarted (android)"),

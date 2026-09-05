@@ -20,6 +20,7 @@ import com.yugma.terrawatch.insights.InsightsViewModel
 import com.yugma.terrawatch.location.LocationProvider
 import com.yugma.terrawatch.location.LocationRequester
 import com.yugma.terrawatch.monetization.EntitlementsProvider
+import com.yugma.terrawatch.monetization.PlusPurchases
 import com.yugma.terrawatch.network.EmscLiveSource
 import com.yugma.terrawatch.network.GdeltClient
 import com.yugma.terrawatch.network.UsgsApi
@@ -50,6 +51,7 @@ fun appModule(
     dao: QuakeStore,
     locationProvider: LocationProvider,
     entitlementsProvider: EntitlementsProvider,
+    plusPurchases: PlusPurchases,
 ): Module = module {
     single { UsgsApi(http) }
     single { EmscLiveSource(http) }
@@ -99,6 +101,13 @@ fun appModule(
     // Plus" row's mirrored isPlusActive — same "platform entry point builds it, hands in an
     // already-constructed instance" shape locationProvider itself already establishes just above.
     single { entitlementsProvider }
+    // Plus purchase flow: the write side of the same story `entitlementsProvider` above is the read
+    // side of, and deliberately a separate single — the three entitlement consumers never need a
+    // purchase surface, and PaywallViewModel is the only thing that resolves this. Both are built by
+    // the platform entry point and handed in already-constructed, the shape locationProvider
+    // establishes, because android decides between the real and no-op implementations from a
+    // manifest value this shared module cannot read.
+    single { plusPurchases }
     // Task 2 (Plan 3): unlike locationProvider above (built at each platform's entry point and
     // handed in, since android's actual needs a Context the shared expect signature can't carry),
     // LocationRequester's no-arg constructor is uniform across every target — see its own kdoc —
