@@ -25,6 +25,7 @@ import com.yugma.terrawatch.network.EmscLiveSource
 import com.yugma.terrawatch.network.GdeltClient
 import com.yugma.terrawatch.network.UsgsApi
 import com.yugma.terrawatch.notifications.NotificationPermissionRequester
+import com.yugma.terrawatch.paywall.PaywallViewModel
 import com.yugma.terrawatch.settings.SettingsViewModel
 import io.ktor.client.HttpClient
 import org.koin.core.module.Module
@@ -199,4 +200,8 @@ fun appModule(
     // Task 2 (Plan 5): 5th constructor param (FavoritePlaceStore) backs the Places section's own
     // favorites list — get() resolves the SAME single HomeViewModel's own registration above uses.
     viewModel { SettingsViewModel(get(), get(), get(), get(), get()) }
+    // Plus purchase flow: the only consumer of the PlusPurchases single above. Takes the
+    // EntitlementsProvider too so the screen's status line mirrors the same live StateFlow every
+    // other Plus-aware surface reads, rather than keeping a second notion of "is Plus active".
+    viewModel { PaywallViewModel(get(), get()) }
 }

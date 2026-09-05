@@ -19,6 +19,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -32,36 +33,37 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.yugma.terrawatch.monetization.EntitlementsProvider
 import com.yugma.terrawatch.ui.theme.TerraColors
 import com.yugma.terrawatch.ui.theme.TerraRadii
-import org.koin.compose.koinInject
+import org.koin.compose.viewmodel.koinViewModel
 
 /**
- * Task 6 (Plan 4) STUB — spec §8's "TerraWatch Plus" paywall, reached from Settings' new "TerraWatch
- * Plus" row. Real `purchases-kmp-ui` Compose Multiplatform paywall wiring is Task 8's job ("Until
- * accounts exist: full implementation against TEST ids... real ids = config swap task 8" — this
- * task's own dispatch): there is no RevenueCat account/product to power a real paywall against yet
- * (a USER-GATED prerequisite, plan's own Global Constraints), so this screen is a static benefits
- * list + an honestly-disabled buy button rather than a placeholder that pretends to work.
+ * The "TerraWatch Plus" paywall, reached from Settings' Plus row and from the favorite-places gate
+ * when a free-tier user hits the one-favorite limit.
  *
- * [isPlusActive] (mirrored live from [EntitlementsProvider], same "direct StateFlow passthrough"
- * shape `SettingsViewModel`'s own identical field already uses) is the one thing that's genuinely
- * real here — always `false` throughout Task 6 ([com.yugma.terrawatch.monetization.AlwaysFreeEntitlements]
- * is what's actually live), but wired honestly rather than hardcoded, so Task 8's real purchase flow
- * flips this screen's own status line with zero change to this file.
+ * No longer a stub: [PaywallViewModel] backs it with a real offer, a real purchase, and a real
+ * restore. What it renders still depends entirely on whether RevenueCat is configured, and the
+ * unconfigured case is the normal one for local and CI builds — `loadOffer()` returns `null` there
+ * and [paywallButtonLabel]/[paywallButtonEnabled] resolve to a disabled "Purchases unavailable"
+ * button. That is the honest rendering of "there is nothing to sell you right now", and it is
+ * deliberately the same code path as a store outage rather than a special case.
  *
- * Plus-gates themselves (unlimited saved places, custom alert rules — the other two benefits listed
- * below) are NOT enforced anywhere in this app yet, regardless of [isPlusActive]'s value — the free
- * tier keeps everything until Task 8 makes Plus purchasable; this screen only ever describes what
- * Plus WILL unlock, per spec §8's own benefits list.
+ * Both Plus benefits this screen lists are enforced in code today — `adSlotVisible` (core:ads) and
+ * [com.yugma.terrawatch.monetization.canAddFavorite] — which is why the third, unbuilt one was
+ * removed when the button started charging money. See [PLUS_BENEFITS].
+ *
+ * `isPlusActive` is a live passthrough of [com.yugma.terrawatch.monetization.EntitlementsProvider]'s
+ * StateFlow, so the status line and the button both flip the instant
+ * [com.yugma.terrawatch.monetization.RevenueCatEntitlements]' delegate sees a completed purchase —
+ * no restart, and no second notion of Plus state living on this screen.
  */
 @Composable
 fun PaywallScreen(
     onBack: () -> Unit = {},
-    entitlementsProvider: EntitlementsProvider = koinInject(),
+    viewModel: PaywallViewModel = koinViewModel(),
 ) {
-    val isPlusActive by entitlementsProvider.isPlusActive.collectAsState()
+    val isPlusActive by viewModel.isPlusActive.collectAsState()
+    val ui by viewModel.uiState.collectAsState()
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
@@ -90,12 +92,32 @@ fun PaywallScreen(
                 }
             }
             Spacer(Modifier.height(20.dp))
-            // Task 6 STUB: real purchase state (price, product, purchase()/restorePurchases()
-            // callbacks) is Task 8's job — see this file's own kdoc. Disabled per this task's own
-            // dispatch ("disabled buy button when RC key absent") rather than omitted entirely, so
-            // the screen's shape/layout is already final and Task 8 only needs to enable it.
-            Button(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) {
-                Text("Purchases available soon")
+            Button(
+                onClick = viewModel::buy,
+                enabled = paywallButtonEnabled(ui.offer, ui.inFlight, isPlusActive),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(paywallButtonLabel(ui.offer, ui.inFlight, isPlusActive))
+            }
+            Spacer(Modifier.height(4.dp))
+            // Mandatory rather than polish: this is the only way a user recovers Plus when the
+            // silent cold-start attempt did not. The purchase belongs to their Google account, but
+            // the anonymous App User ID that knew about it dies with an uninstall.
+            TextButton(
+                onClick = viewModel::restore,
+                enabled = !ui.inFlight,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Restore purchases")
+            }
+            // `null` renders nothing at all, which is exactly what a cancelled purchase produces.
+            ui.message?.let { message ->
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             Spacer(Modifier.height(24.dp))
         }
