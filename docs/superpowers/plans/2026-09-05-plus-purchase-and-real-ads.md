@@ -33,7 +33,7 @@
 
 ---
 
-### Task 1: Honest Plus benefits + explicit backup declaration
+### Task 1: Honest Plus benefits + explicit backup declaration ✅ DONE (`2d533c2`)
 
 Plus is about to start charging money. Two small correctness fixes must land before that: stop advertising an unbuilt feature, and pin down the backup behavior that spec §2's restore story quietly depends on.
 
@@ -104,20 +104,26 @@ Expected: **PASS**
 
 `android:allowBackup` is currently undeclared, so it is `true` by default — spec §2 relies on that (Android Auto Backup carries RevenueCat's anonymous id across a reinstall, making restore silent in the common case). Write it down so it cannot regress unnoticed. In `AndroidManifest.xml`, add the attribute and a comment to the `<application>` tag:
 
+The comment must sit **before** the opening tag, not between attributes — XML comments cannot appear inside a tag, and the obvious-looking placement will not parse:
+
 ```xml
+    <!-- android:allowBackup is already the platform default (true); it is declared explicitly here
+         because the Plus restore story depends on it rather than merely tolerating it. RevenueCat
+         runs anonymous in this app (no accounts, ever - spec section 3.6), so its App User ID lives
+         in this app's own SharedPreferences and dies with an uninstall. Android Auto Backup
+         carrying that id across a reinstall is what makes a previously-purchased Plus come back
+         silently instead of requiring the user to find the Restore button. A default nobody wrote
+         down is a default that can regress in review without anyone noticing what it cost. -->
     <application
         android:label="TerraWatch"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@style/Theme.App.Starting"
-        android:enableOnBackInvokedCallback="true"
-        <!-- Plus purchase flow: already the platform default, declared explicitly because the
-             restore story depends on it. RevenueCat runs anonymous here (no accounts, spec §3.6),
-             so its App User ID lives in this app's own SharedPreferences. Auto Backup carrying
-             that id across an uninstall/reinstall is what makes Plus come back silently instead of
-             needing a manual Restore tap. An undeclared default can regress without review. -->
-        android:allowBackup="true">
+        android:allowBackup="true"
+        android:enableOnBackInvokedCallback="true">
 ```
+
+Note also that em dashes and curly quotes are avoided inside this comment: the manifest is read by tooling that is not always UTF-8 forgiving, and every existing comment in this file uses plain ASCII punctuation.
 
 - [ ] **Step 6: Verify the manifest still builds**
 
