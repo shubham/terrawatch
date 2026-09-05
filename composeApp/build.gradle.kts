@@ -205,11 +205,11 @@ kotlin {
 
 android {
     namespace = "com.yugma.terrawatch"
-    compileSdk = 36
+    compileSdk = 37
     defaultConfig {
         applicationId = "com.yugma.terrawatch"
         minSdk = 26
-        targetSdk = 36
+        targetSdk = 37
         // Plan 4 Task 1: R8 release hardening milestone. KEEP IN SYNC BY HAND with
         // SettingsScreen.kt's APP_VERSION const (that file's own kdoc carries the same reminder) —
         // no BuildConfig surface reaches commonMain, so these two literals are the only source of
