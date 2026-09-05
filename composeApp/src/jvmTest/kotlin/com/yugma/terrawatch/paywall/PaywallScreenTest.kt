@@ -4,26 +4,30 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 /**
- * Task 6 (Plan 4): [PLUS_BENEFITS] pins spec §8's own 3-item Plus benefits list verbatim ("removes
- * ads, multiple saved places... custom alert rules") — `internal`, same "so a test can pin it"
- * convention `SettingsScreenTest`'s own `APP_VERSION` pin already establishes. This is the one part
- * of the paywall STUB that's plain data rather than Compose UI, so it's the one part covered by a
- * jvmTest here — the rest of the screen is device-verified (screenshots), matching this codebase's
- * established "pure logic gets a unit test, rendered UI gets a device pass" split.
+ * [PLUS_BENEFITS] pins the paywall's benefit copy verbatim — `internal`, the same "so a test can pin
+ * it" convention `SettingsScreenTest`'s own `APP_VERSION` pin already establishes. This is the one
+ * part of the paywall that's plain data rather than Compose UI, so it's the one part covered by a
+ * jvmTest here; the rest of the screen is device-verified, matching this codebase's established
+ * "pure logic gets a unit test, rendered UI gets a device pass" split.
  *
- * Task 2 (Plan 5): "Unlimited favorite places" drops its "(coming soon)" suffix here — the FIRST
- * REAL Plus gate ([com.yugma.terrawatch.monetization.canAddFavorite], wired into Settings' "Add
- * place" row) ships this task, so the item is no longer a promise, it's live. The other two items
- * keep their current honest state verbatim (per this task's own dispatch: "drop '(coming soon)' from
- * that item ONLY") — ad removal was already real (Task 6), custom alert rules are still not built.
+ * **Plus purchase flow (2026-09-05): "Custom alert rules (coming soon)" is REMOVED.** Plan 4 Task 6
+ * shipped that item while Plus was unpurchasable, where naming an unbuilt feature was a roadmap note
+ * sitting under a permanently disabled button. The purchase flow makes that button charge real
+ * money, at which point the same line becomes part of a paid offer for something that does not
+ * exist — a Play policy risk, and a direct breach of the honesty rule this product is built on.
+ * Custom alert rules move to the roadmap as a free future update.
+ *
+ * Both remaining items are real and already enforced in code today, not promises:
+ * `adSlotVisible` (core:ads) hides the banner for Plus users, and
+ * [com.yugma.terrawatch.monetization.canAddFavorite] (core:monetization) is what the free tier's
+ * one-favorite limit actually reads.
  */
 class PaywallScreenTest {
-    @Test fun `PLUS_BENEFITS lists spec section 8's 3 benefits, favorites now real per Plan 5 Task 2`() {
+    @Test fun `PLUS_BENEFITS lists only benefits that actually exist`() {
         assertEquals(
             listOf(
                 "Remove ads",
                 "Unlimited favorite places",
-                "Custom alert rules (coming soon)",
             ),
             PLUS_BENEFITS,
         )

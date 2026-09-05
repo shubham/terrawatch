@@ -143,22 +143,21 @@ private fun BackChevronGlyph(tint: Color, modifier: Modifier = Modifier) {
     }
 }
 
-/** Spec §8's own 3-item Plus benefits list: ad removal (live), favorite places (live as of Task 2,
- * Plan 5 — see below), custom alert rules still under development. `internal` so
+/** The Plus benefits list, reduced to the two that are REAL. Ad removal is enforced by
+ * `adSlotVisible` (core:ads); unlimited favorite places by
+ * [com.yugma.terrawatch.monetization.canAddFavorite] (core:monetization), the free tier's
+ * one-favourite limit. `internal` so
  * [PaywallScreenTest][com.yugma.terrawatch.paywall.PaywallScreenTest] can pin the exact copy
  * without a Compose runtime.
  *
- * Task 2 (Plan 5): "Unlimited saved places (coming soon)" -> "Unlimited favorite places" — the
- * FIRST REAL Plus gate ([com.yugma.terrawatch.monetization.canAddFavorite], wired into Settings'
- * "Add place" row: free tier = home + 1 favorite, Plus = unlimited) ships this task, so this item is
- * no longer a promise. Per this task's own dispatch ("drop '(coming soon)' from that item ONLY"),
- * item 3 keeps its Task 7 fix-round honesty-audit wording verbatim — custom alert rules are still
- * not built.
+ * Plus purchase flow (2026-09-05): "Custom alert rules (coming soon)" was DROPPED. It was honest
+ * while this screen's button was permanently disabled — a roadmap note under an offer nobody could
+ * accept. Once the button charges real money the same line is a paid promise for a feature that
+ * does not exist. See [PaywallScreenTest]'s own kdoc for the full reasoning.
  */
 internal val PLUS_BENEFITS = listOf(
     "Remove ads",
     "Unlimited favorite places",
-    "Custom alert rules (coming soon)",
 )
 
 @Composable

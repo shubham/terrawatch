@@ -39,11 +39,19 @@
          its own postSplashScreenTheme, so the app's real running appearance is byte-for-byte
          unchanged - this only affects the brief pre-content splash window, via
          MainActivity's installSplashScreen() call. -->
+    <!-- android:allowBackup is already the platform default (true); it is declared explicitly here
+         because the Plus restore story depends on it rather than merely tolerating it. RevenueCat
+         runs anonymous in this app (no accounts, ever - spec section 3.6), so its App User ID lives
+         in this app's own SharedPreferences and dies with an uninstall. Android Auto Backup
+         carrying that id across a reinstall is what makes a previously-purchased Plus come back
+         silently instead of requiring the user to find the Restore button. A default nobody wrote
+         down is a default that can regress in review without anyone noticing what it cost. -->
     <application
         android:label="TerraWatch"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@style/Theme.App.Starting"
+        android:allowBackup="true"
         android:enableOnBackInvokedCallback="true">
         <!-- Plan 4 Task 6: OS/SDK-mandated — MobileAds throws at initialize time without this
              exact meta-data name present. Value comes from composeApp/build.gradle.kts's
