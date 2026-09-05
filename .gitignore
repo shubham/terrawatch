@@ -20,6 +20,8 @@ local.properties
 # Secrets — never commit these
 *.keystore
 *.jks
+*.pem
+keystore-credentials*
 google-services.json
 secrets.properties
 # Plan 4 Task 6: RevenueCat + AdMob local config (composeApp/monetization.properties.example is the
