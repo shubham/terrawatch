@@ -1,8 +1,10 @@
 package com.yugma.terrawatch.di
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import com.google.android.gms.ads.MobileAds
+import com.google.android.gms.ads.RequestConfiguration
 import com.yugma.terrawatch.alerts.initAlertDigestSchedulerContext
 import com.yugma.terrawatch.database.DriverFactory
 import com.yugma.terrawatch.database.QuakeDao
@@ -33,6 +35,28 @@ private val koinBootstrapLock = Any()
  * SEPARATE flag from [GlobalContext]'s own started-check inside [ensureKoinStarted], not a re-use of
  * it. See that function's own "Fix round" kdoc paragraph for why. */
 private val mobileAdsInitStarted = AtomicBoolean(false)
+
+/**
+ * Devices that should receive AdMob TEST creatives even when a real ad unit id is configured.
+ *
+ * Each entry is the hashed id AdMob itself prints to logcat on an un-registered device:
+ * `Use RequestConfiguration.Builder.setTestDeviceIds(Arrays.asList("<hash>"))`. The hash is derived
+ * per app install, so it changes on a reinstall -- a stale entry silently stops working, which is
+ * why the logcat line is the source of truth rather than this list.
+ *
+ * Only ever applied to debuggable builds (see the call site), so adding a device here can never
+ * affect what real users are served.
+ */
+private val ADMOB_TEST_DEVICE_IDS: List<String> = listOf(
+    // Pixel 8 (3C161FDJH000H2), the device this app is verified on. Read from its own logcat
+    // line on 2026-09-05, for the .debug applicationId.
+    "AD65382B06917EC84724647F29EB6F05",
+)
+
+/** Mirrors `AlertDigestScheduler.android.kt`'s own private check verbatim, for the same reason it
+ * exists there: a debug-only behaviour that must never be reachable in a release build. */
+private fun isDebuggableBuild(context: Context): Boolean =
+    (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
 
 /** Plan 4 Task 6: this app's own manifest meta-data key for the RevenueCat API key — mirrors
  * `BannerAdSlot.android.kt`'s identical `com.yugma.terrawatch.ADMOB_BANNER_UNIT` key, both sourced
@@ -212,6 +236,28 @@ fun ensureKoinStarted(
     // its own [mobileAdsInitStarted] flag, not by this block's Koin-started check, so it stays
     // exactly-once regardless of how many times either real entry point calls this function.
     if (mobileAdsInitStarted.compareAndSet(false, true)) {
-        Thread({ MobileAds.initialize(appContext) }, "MobileAdsInit").start()
+        Thread({
+            // DEBUG ONLY, and load-bearing for account safety rather than convenience. Once a real
+            // ADMOB_BANNER_UNIT is configured, every debug run serves LIVE ads against the owner's
+            // own account, and a device pass loads that banner repeatedly -- Google's own guidance
+            // is blunt about where that leads: "If you click too many ads without being in test
+            // mode, you risk your account being flagged for invalid activity."
+            // (developers.google.com/admob/android/test-ads). Registering this build's device as a
+            // test device makes the SDK serve test creatives from the REAL unit id, so the wiring is
+            // still genuinely verified end to end while the traffic stays non-billable.
+            //
+            // Gated on FLAG_DEBUGGABLE, mirroring `AlertDigestScheduler.android.kt`'s own
+            // isDebuggableBuild check -- release builds never reach this, which is exactly what
+            // Google's "remove the code that sets these test device IDs before you release" means
+            // in a codebase that would rather guard it than delete and forget it.
+            if (isDebuggableBuild(appContext) && ADMOB_TEST_DEVICE_IDS.isNotEmpty()) {
+                MobileAds.setRequestConfiguration(
+                    RequestConfiguration.Builder()
+                        .setTestDeviceIds(ADMOB_TEST_DEVICE_IDS)
+                        .build()
+                )
+            }
+            MobileAds.initialize(appContext)
+        }, "MobileAdsInit").start()
     }
 }

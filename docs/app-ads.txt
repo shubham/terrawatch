@@ -1,13 +1,11 @@
 # app-ads.txt for TerraWatch
 #
-# Placeholder — populated at Task 8 with the real AdMob publisher id, once a real AdMob account
-# exists (Task 6/8 USER-GATED prerequisite; Task 6 shipped against Google's own TEST ad unit ids
-# only — see composeApp/monetization.properties.example and Task 6's report).
-#
-# Real entry will look like (per Google's AdMob app-ads.txt guide), with the real pub- id from the
-# AdMob account's own app-ads.txt snippet:
-#
-#   google.com, pub-XXXXXXXXXXXXXXXX, DIRECT, f08c47fec0942fa0
+# Real AdMob publisher id, added 2026-09-05 once the AdMob account existed. The relationship is
+# DIRECT (this developer sells its own inventory, no reseller), and f08c47fec0942fa0 is Google's
+# own certification authority id, constant for every publisher.
+
+google.com, pub-2136592315832501, DIRECT, f08c47fec0942fa0
+
 #
 # This file must be reachable at https://<pages-host>/app-ads.txt (this repo's GitHub Pages root,
 # once enabled — see store-assets/listing.md / task-7-report.md for the one-command enable) for

@@ -272,6 +272,23 @@ android {
         }
     }
     buildTypes {
+        debug {
+            // Installs alongside the Play build instead of fighting it. As of 2026-09 this app is
+            // in Google Play closed testing, and the developer's own device carries the tester
+            // install (installer=com.android.vending) -- so a same-applicationId debug build fails
+            // outright with INSTALL_FAILED_UPDATE_INCOMPATIBLE (different signing key), and the
+            // only way through would be uninstalling a real tester install during a 14-day
+            // continuous-tester window. Not a trade worth making for a dev build.
+            //
+            // Consequences worth knowing: debug data is a separate sandbox from the Play install
+            // (deliberate -- device passes no longer disturb real usage), adb commands need the
+            // suffixed id (com.yugma.terrawatch.debug/com.yugma.terrawatch.MainActivity), and
+            // Play-billing purchases CANNOT be tested here at all, because Play only recognises
+            // the exact published applicationId. Sandbox purchase verification therefore has to
+            // happen on a build installed from a Play track, which is the correct way to test IAP
+            // regardless.
+            applicationIdSuffix = ".debug"
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
