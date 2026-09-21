@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -23,36 +24,6 @@ import com.yugma.terrawatch.data.HomeLocationStore
 import com.yugma.terrawatch.model.GeoPoint
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
-
-/** One of [PRESET_CITIES]' entries — a name paired with the coordinates [CityPickerDialog] writes
- * into [HomeLocationStore] when tapped. */
-data class PresetCity(val name: String, val point: GeoPoint)
-
-/**
- * The ten manual-picker options [CityPickerDialog] offers — literal lat/lon per this task's brief,
- * spanning enough of the globe (India, East/Southeast Asia, Europe/Turkey, the Americas) that most
- * users land reasonably close to at least one without an exact match.
- *
- * Fix Round 1 (entangled minor): this kdoc used to cite a fixed "pill's own 500 km alert radius" as
- * why "reasonably close" was a meaningful bar — stale since Task 7 (Plan 3) made the radius
- * user-settable ([com.yugma.terrawatch.data.AlertRuleStore], Settings' 50/100/250/500/1000 km
- * slider, defaulting to 100 km, not a fixed 500). "Reasonably close" is still a real bar across most
- * of that range (100–1000 km), a much tighter one at the narrowest 50 km step — but this list's job
- * is a rough global starting point regardless of whatever radius is currently configured, not a
- * promise tied to any one of its values.
- */
-val PRESET_CITIES: List<PresetCity> = listOf(
-    PresetCity("Bengaluru", GeoPoint(12.9716, 77.5946)),
-    PresetCity("Delhi", GeoPoint(28.6139, 77.2090)),
-    PresetCity("Mumbai", GeoPoint(19.0760, 72.8777)),
-    PresetCity("Tokyo", GeoPoint(35.6762, 139.6503)),
-    PresetCity("Jakarta", GeoPoint(-6.2088, 106.8456)),
-    PresetCity("Istanbul", GeoPoint(41.0082, 28.9784)),
-    PresetCity("Los Angeles", GeoPoint(34.0522, -118.2437)),
-    PresetCity("Mexico City", GeoPoint(19.4326, -99.1332)),
-    PresetCity("Santiago", GeoPoint(-33.4489, -70.6693)),
-    PresetCity("Athens", GeoPoint(37.9838, 23.7275)),
-)
 
 private val CITY_LIST_HEIGHT = 320.dp
 
@@ -148,25 +119,46 @@ fun CityPickerDialog(onDismiss: () -> Unit, onCityPicked: ((PresetCity) -> Unit)
                 if (onCityPicked != null && canRequestLocation()) {
                     UseMyLocationRow(
                         onPicked = { fix ->
-                            onCityPicked(PresetCity(CURRENT_LOCATION_LABEL, fix))
+                            // Not a catalog entry, so there's no country to disambiguate it with —
+                            // this synthesized PresetCity is only ever passed to onCityPicked, never
+                            // rendered through the searchable list below, so a blank country is fine.
+                            onCityPicked(PresetCity(CURRENT_LOCATION_LABEL, "", fix))
                             onDismiss()
                         },
                         modifier = Modifier.padding(bottom = 8.dp),
                     )
                 }
-                LazyColumn(modifier = Modifier.height(CITY_LIST_HEIGHT)) {
-                    items(PRESET_CITIES, key = { it.name }) { city ->
-                        Text(
-                            text = city.name,
-                            style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    if (onCityPicked != null) onCityPicked(city) else store.set(city.point)
-                                    onDismiss()
-                                }
-                                .padding(vertical = 12.dp),
-                        )
+                var query by remember { mutableStateOf("") }
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    singleLine = true,
+                    label = { Text("Search cities") },
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                )
+                val matches = filterCities(query)
+                if (matches.isEmpty()) {
+                    Text(
+                        text = "No cities match \"${query.trim()}\"",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 24.dp),
+                    )
+                } else {
+                    LazyColumn(modifier = Modifier.height(CITY_LIST_HEIGHT)) {
+                        items(matches, key = { "${it.name}, ${it.country}" }) { city ->
+                            Text(
+                                text = "${city.name}, ${city.country}",
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        if (onCityPicked != null) onCityPicked(city) else store.set(city.point)
+                                        onDismiss()
+                                    }
+                                    .padding(vertical = 12.dp),
+                            )
+                        }
                     }
                 }
             }
