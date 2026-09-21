@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -127,19 +128,37 @@ fun CityPickerDialog(onDismiss: () -> Unit, onCityPicked: ((PresetCity) -> Unit)
                         modifier = Modifier.padding(bottom = 8.dp),
                     )
                 }
-                LazyColumn(modifier = Modifier.height(CITY_LIST_HEIGHT)) {
-                    items(PRESET_CITIES, key = { it.name }) { city ->
-                        Text(
-                            text = city.name,
-                            style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    if (onCityPicked != null) onCityPicked(city) else store.set(city.point)
-                                    onDismiss()
-                                }
-                                .padding(vertical = 12.dp),
-                        )
+                var query by remember { mutableStateOf("") }
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    singleLine = true,
+                    label = { Text("Search cities") },
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                )
+                val matches = filterCities(query)
+                if (matches.isEmpty()) {
+                    Text(
+                        text = "No cities match \"${query.trim()}\"",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 24.dp),
+                    )
+                } else {
+                    LazyColumn(modifier = Modifier.height(CITY_LIST_HEIGHT)) {
+                        items(matches, key = { "${it.name}, ${it.country}" }) { city ->
+                            Text(
+                                text = "${city.name}, ${city.country}",
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        if (onCityPicked != null) onCityPicked(city) else store.set(city.point)
+                                        onDismiss()
+                                    }
+                                    .padding(vertical = 12.dp),
+                            )
+                        }
                     }
                 }
             }
