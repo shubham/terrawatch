@@ -14,13 +14,13 @@ import kotlin.test.assertTrue
  * runtime involved" convention [com.yugma.terrawatch.home.LayoutModeTest]/
  * [com.yugma.terrawatch.home.HomeScreenBannerTest] already established for this codebase.
  *
- * This is a DIFFERENT axis from [com.yugma.terrawatch.ads.adSlotVisible] (`core:ads`, untouched by
- * this task — signature and its own 8-case truth table both still exactly as Task 3 left them) —
- * that function answers "given Plus/detail/onboarding state, should an already-eligible ad surface
+ * This is a DIFFERENT axis from [com.yugma.terrawatch.ads.adSlotVisible] (`core:ads` — its own
+ * 4-case truth table since the 2026-09-21 ads-only-monetization plan dropped `isPlusActive`) —
+ * that function answers "given detail/onboarding state, should an already-eligible ad surface
  * be visually showing right now"; this one answers "is the CURRENT ROUTE the kind of place an ad is
- * ever allowed to appear at all," independent of those three inputs. [AppNav]'s real call site ANDs
+ * ever allowed to appear at all," independent of those two inputs. [AppNav]'s real call site ANDs
  * both together into [com.yugma.terrawatch.ads.BannerAdSlot]'s `visible` parameter — see that call
- * site's own comment for why the two stay separate rather than folding a 4th input into
+ * site's own comment for why the two stay separate rather than folding a 3rd input into
  * `adSlotVisible` itself.
  */
 class AppNavAdEligibilityTest {

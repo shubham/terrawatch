@@ -109,13 +109,14 @@ private val AD_ELIGIBLE_ROUTES = TAB_ROUTES
  * "extract the pure fn" convention [com.yugma.terrawatch.home.layoutMode]/
  * [com.yugma.terrawatch.home.shouldShowStalenessBanner] already established for this codebase):
  * pure route → ad-eligibility predicate. Kept OUTSIDE `core:ads`' [com.yugma.terrawatch.ads.
- * adSlotVisible] on purpose — that function's 3-input ad-ethics signature is spec §8 IMMUTABLE
- * (Plan 5 Task 3's own NON-NEGOTIABLE carries forward unchanged here too: no route input is ever
- * added to it). This is a SECOND, independent gate, ANDed with [com.yugma.terrawatch.ads.
- * adSlotVisible]'s result at the [AppNav] call site below — not a 4th input smuggled into that
- * function, and not a reason to weaken what "eligible" already means there: a Plus-free,
- * non-onboarding, detail-closed user on Settings still has `adSlotVisible(...) == true`;
- * [isAdEligibleRoute] is the separate reason the ad still doesn't show there.
+ * adSlotVisible] on purpose — that function's ad-ethics signature (2 inputs since the
+ * 2026-09-21 ads-only-monetization plan dropped isPlusActive) is spec §8 IMMUTABLE (Plan 5 Task
+ * 3's own NON-NEGOTIABLE carries forward unchanged here too: no route input is ever added to it).
+ * This is a SECOND, independent gate, ANDed with [com.yugma.terrawatch.ads.adSlotVisible]'s result
+ * at the [AppNav] call site below — not a 3rd input smuggled into that function, and not a reason
+ * to weaken what "eligible" already means there: a non-onboarding, detail-closed user on Settings
+ * still has `adSlotVisible(...) == true`; [isAdEligibleRoute] is the separate reason the ad still
+ * doesn't show there.
  */
 internal fun isAdEligibleRoute(route: String?): Boolean = route in AD_ELIGIBLE_ROUTES
 
@@ -197,17 +198,18 @@ fun AppNav(
     val currentRoute = backStackEntry?.destination?.route
     val showTabChrome = currentRoute in TAB_ROUTES
 
-    // Plan 4 Task 6: adSlotVisible's 3 inputs. [isOnboarding] is computed generally here (not
-    // hardcoded `false`) because the real call site below (the Settings-nav follow-up: no longer nested inside
+    // Plan 4 Task 6: adSlotVisible's inputs (2, since the 2026-09-21 ads-only-monetization plan
+    // dropped isPlusActive — Plus was withdrawn before it ever sold). [isOnboarding] is computed
+    // generally here (not hardcoded `false`) because the real call site below (the Settings-nav
+    // follow-up: no longer nested inside
     // `if (showTabChrome)` — see AD_ELIGIBLE_ROUTES'/isAdEligibleRoute's own kdoc above) gates its
-    // OWN mount directly on `!isPlusActive && !isOnboarding`, not on TAB_ROUTES membership — this
-    // val is what actually feeds that condition now, not merely a redundant-but-safe echo of an
-    // exclusion TAB_ROUTES happened to already guarantee. [isDetailOpen]/[isPlusActive] are the two
-    // inputs that actually vary while the ad slot stays mounted.
+    // OWN mount directly on `!isOnboarding`, not on TAB_ROUTES membership — this val is what
+    // actually feeds that condition now, not merely a redundant-but-safe echo of an exclusion
+    // TAB_ROUTES happened to already guarantee. [isDetailOpen] is the one input that actually varies
+    // while the ad slot stays mounted.
     val isOnboarding = currentRoute == Routes.ONBOARDING
     val selectedQuake by selectionViewModel.selectedQuake.collectAsState()
     val isDetailOpen = selectedQuake != null
-    val isPlusActive by entitlementsProvider.isPlusActive.collectAsState()
 
     // Plan 4 Task 4 (c): ONE shared source of truth, replacing the former per-call-site
     // BoxWithConstraints measurement this kdoc used to describe disagreeing with HomeScreen's own
@@ -258,33 +260,34 @@ fun AppNav(
                 // Plan 5 Task 3 (user dogfooding: "ads appearing causes glitchy experience"): this
                 // call site does TWO separate things, not one — see BannerAdSlot's own (expect)
                 // kdoc for the full split. (a) This `if` gates whether BannerAdSlot is called AT
-                // ALL: only while `!isPlusActive && !isOnboarding`, i.e. exactly the two axes that
-                // are meant to be a genuine destroy()/recreate (Plus purchase, onboarding
-                // finishing) rather than a frequent, in-session toggle. (b) The full 3-input
-                // adSlotVisible (isDetailOpen included) still feeds `visible` below, interpreted by
-                // BannerAdSlot as "collapse the reserved height + pause," never as "tear the AdView
-                // down" — so isDetailOpen toggling (opening/closing the quake detail sheet) never
+                // ALL: only while `!isOnboarding`, the one axis meant to be a genuine
+                // destroy()/recreate (onboarding finishing) rather than a frequent, in-session
+                // toggle — this used to also check `!isPlusActive`, but the 2026-09-21
+                // ads-only-monetization plan withdrew Plus before it ever sold, leaving onboarding
+                // as the only remaining structural-unmount axis. (b) The full adSlotVisible
+                // (isDetailOpen included) still feeds `visible` below, interpreted by BannerAdSlot
+                // as "collapse the reserved height + pause," never as "tear the AdView down" — so
+                // isDetailOpen toggling (opening/closing the quake detail sheet) never
                 // destroys/reloads the ad.
                 //
                 // The Settings-nav follow-up (user dogfooding follow-up — see AD_ELIGIBLE_ROUTES'/
                 // isAdEligibleRoute's own kdoc above for the full gap this closes, named but
                 // deliberately left unfixed by task-3-report.md section 4): THIS call site is no
-                // longer nested inside `if (showTabChrome)` — that nesting was the bug. Settings/
-                // Paywall navigation no longer tears this composable down and rebuilds a fresh
-                // AdView, because neither route flips `isPlusActive` or `isOnboarding`,  the only
-                // two things gate (a) above still checks. `isAdEligibleRoute(currentRoute)`, ANDed
-                // into `visible` alongside the untouched 3-input adSlotVisible, is what keeps
-                // Settings from ever visually showing an ad despite the AdView staying mounted
-                // underneath it — the same "collapse reserved height + pause + View.GONE" path
-                // adSlotVisible's own isDetailOpen=true case already takes, never a destroy.
-                // AppBottomBar's own `if (showTabChrome)` gate (below) is now a fully independent
-                // `if` — the two only ever rose and fell together before because they were written
-                // inside the same block, not because either one's OWN lifecycle actually depended
-                // on the other; conflating them is exactly what caused this bug.
-                if (!isPlusActive && !isOnboarding) {
+                // longer nested inside `if (showTabChrome)` — that nesting was the bug. Settings
+                // navigation no longer tears this composable down and rebuilds a fresh AdView,
+                // because that route doesn't flip `isOnboarding`, the only thing gate (a) above
+                // still checks. `isAdEligibleRoute(currentRoute)`, ANDed into `visible` alongside
+                // the untouched adSlotVisible, is what keeps Settings from ever visually showing an
+                // ad despite the AdView staying mounted underneath it — the same "collapse reserved
+                // height + pause + View.GONE" path adSlotVisible's own isDetailOpen=true case
+                // already takes, never a destroy. AppBottomBar's own `if (showTabChrome)` gate
+                // (below) is now a fully independent `if` — the two only ever rose and fell
+                // together before because they were written inside the same block, not because
+                // either one's OWN lifecycle actually depended on the other; conflating them is
+                // exactly what caused this bug.
+                if (!isOnboarding) {
                     BannerAdSlot(
                         visible = adSlotVisible(
-                            isPlusActive = isPlusActive,
                             isDetailOpen = isDetailOpen,
                             isOnboarding = isOnboarding,
                         ) && isAdEligibleRoute(currentRoute),
