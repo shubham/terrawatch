@@ -31,3 +31,4 @@ composeApp/monetization.properties
 # Session/agent artifacts
 .superpowers/
 .remember/
+.claude/

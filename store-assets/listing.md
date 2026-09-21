@@ -60,8 +60,9 @@ anywhere — not even to check for nearby quakes (that check runs locally, again
 
 Built on public data: USGS and EMSC for quake feeds, OpenFreeMap/OpenStreetMap for map tiles.
 
-TerraWatch is free, supported by ads (Google AdMob) shown between screens — never over the map,
-and never during onboarding. TerraWatch Plus removes ads. More Plus features are in development.
+TerraWatch is free, supported by a banner ad (Google AdMob) at the bottom of the screen — never
+over the map, never while you are reading a quake's details, and never during onboarding. There
+are no purchases and no subscriptions.
 ```
 
 Every claim above traces to real code, checked while drafting this file (not asserted from
@@ -93,9 +94,12 @@ memory):
 - "ads (Google AdMob) ... never over the map, and never during onboarding": Plan 4 Task 6's
   `adSlotVisible` rule (TDD'd full 2³ truth table) and its own device verification
   (`docs/qa/plan-4-device-matrix/task6-*.png`).
-- "TerraWatch Plus removes ads. More Plus features are in development": matches the paywall's
-  honest `PLUS_BENEFITS` display — "Remove ads", plus items 2–3 marked "(coming soon)" per
-  `PaywallScreenTest` (Task 7 fix round).
+- "There are no purchases and no subscriptions": literally true as of 1.1.0 — the one-time
+  TerraWatch Plus purchase, the paywall and the whole `core/monetization` module were deleted
+  before Plus ever sold. No billing code remains; `grep -ri "paywall\|entitlement"` over the
+  source finds only comments recording the removal.
+- "never while you are reading a quake's details": `adSlotVisible(isDetailOpen, isOnboarding)`,
+  a TDD'd exhaustive truth table in `core/ads`.
 
 ## Category
 
@@ -124,7 +128,7 @@ state is then — flagged below wherever today's answer could change.
 | Gambling (real or simulated) | None | N/A |
 | User-generated content shared with other users | None | No accounts, no chat, no social/sharing-to-other-users feature (the share row shares OUT to WhatsApp/X/Threads via the OS share sheet — that's outbound to apps outside TerraWatch, not user-generated content exchanged between TerraWatch users). |
 | Shares user location with other users | No | Single-user, on-device only; no server sync, no accounts. |
-| Digital purchases | **No purchases are live today** — `PaywallScreen` (Task 6) is a static stub with a disabled "Purchases available soon" button; `purchases-kmp-ui` is deliberately not wired yet (Task 6 report, §"Concerns"). **Reconfirm before submission** — if Task 8 wires a real RevenueCat product before the actual Play Console upload, this answer flips to Yes and the questionnaire + data-safety form both need the IAP disclosure. |
+| Digital purchases | **No** — settled, not provisional. As of 1.1.0 the app contains no billing code whatsoever: the purchase flow, the paywall and the `core/monetization` module were deleted (2026-09-21 ads-only design). ⚠️ **OWNER ACTION: the Play listing's "In-app purchases" declaration must be switched OFF.** It was set while Plus was planned; leaving it on now is a false declaration. |
 | Ads | **Yes** | Real `play-services-ads` (Google AdMob) SDK is live today, currently on Google's official TEST ad unit IDs (Task 6, device-verified real TEST creatives + logcat GMS ad-service bind). This is true regardless of test-vs-real unit IDs — the SDK itself runs and this answer doesn't change at Task 8's real-ID swap. |
 
 ## Data safety form — draft answers

@@ -225,8 +225,8 @@ android {
         // truth and must be bumped together.
         // CI releases (release.yml) pass -PciVersionCode so every Play upload gets a unique,
         // monotonically-increasing code without a commit; local builds keep the literal.
-        versionCode = (project.findProperty("ciVersionCode") as String?)?.toIntOrNull() ?: 3
-        versionName = "1.0.0"
+        versionCode = (project.findProperty("ciVersionCode") as String?)?.toIntOrNull() ?: 4
+        versionName = "1.1.0"
         // Task 13: required for connectedDebugAndroidTest to resolve a runner at all — AGP's
         // default is the deprecated android.test.InstrumentationTestRunner otherwise.
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
