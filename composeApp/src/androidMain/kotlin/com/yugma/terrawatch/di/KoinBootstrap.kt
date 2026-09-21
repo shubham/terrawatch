@@ -5,19 +5,15 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import com.google.android.gms.ads.MobileAds
 import com.google.android.gms.ads.RequestConfiguration
+import com.revenuecat.purchases.kmp.LogLevel
+import com.revenuecat.purchases.kmp.Purchases
+import com.revenuecat.purchases.kmp.configure
 import com.yugma.terrawatch.alerts.initAlertDigestSchedulerContext
 import com.yugma.terrawatch.database.DriverFactory
 import com.yugma.terrawatch.database.QuakeDao
 import com.yugma.terrawatch.database.QuakeStore
 import com.yugma.terrawatch.database.createDatabase
 import com.yugma.terrawatch.location.LocationProvider
-import com.yugma.terrawatch.monetization.AlwaysFreeEntitlements
-import com.yugma.terrawatch.monetization.EntitlementsProvider
-import com.yugma.terrawatch.monetization.PlusPurchases
-import com.yugma.terrawatch.monetization.RevenueCatEntitlements
-import com.yugma.terrawatch.monetization.RevenueCatPlusPurchases
-import com.yugma.terrawatch.monetization.UnavailablePlusPurchases
-import com.yugma.terrawatch.monetization.revenueCatKeyIsConfigured
 import com.yugma.terrawatch.share.initShareContext
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
@@ -73,36 +69,29 @@ private fun readRevenueCatApiKey(context: Context): String? {
 }
 
 /**
- * Task 6 (Plan 4): the real android [EntitlementsProvider] gate — [revenueCatKeyIsConfigured] (the
- * pure, TDD'd rule, `core:monetization`) decides between [RevenueCatEntitlements] and
- * [AlwaysFreeEntitlements]; this function is the thin, obviously-correct wiring around it (same
- * "push the decision to a pure fn, keep the platform glue thin" split this codebase already applies
- * everywhere else — e.g. `alertsRowStatusText`/`AlertsPermissionRow`). Always resolves to
- * [AlwaysFreeEntitlements] throughout Task 6: no RevenueCat account exists yet, so
- * `composeApp/monetization.properties`'s `REVENUECAT_API_KEY` is absent/blank on every build this
- * task ships (a USER-GATED prerequisite, plan's own Global Constraints).
- */
-private fun buildEntitlementsProvider(context: Context): EntitlementsProvider {
-    val apiKey = readRevenueCatApiKey(context)
-    return if (revenueCatKeyIsConfigured(apiKey)) RevenueCatEntitlements(apiKey!!) else AlwaysFreeEntitlements
-}
-
-/**
- * The [PlusPurchases] counterpart to [buildEntitlementsProvider], deliberately reading the SAME key
- * through the SAME [revenueCatKeyIsConfigured] gate rather than a second check of its own. Two
- * providers, one decision: gated independently they could drift apart, and the failure would be
- * quiet and expensive in both directions -- a build that reads entitlements from RevenueCat but
- * refuses to sell anything, or a paywall that completes a purchase the entitlement side would never
- * observe, leaving someone charged and still looking at ads.
+ * Configures RevenueCat, whose only remaining job is recording ad revenue (see
+ * `core/ads/AdRevenueTracker.kt`). Purchases were removed in 1.1.0 (2026-09-21
+ * ads-only-monetization plan) — this replaces `buildEntitlementsProvider`/`buildPlusPurchases`,
+ * which used to construct `EntitlementsProvider`/`PlusPurchases` instances as a side effect of
+ * running this same configure call; neither type exists any more (both lived in the deleted
+ * `core:monetization` module), so this function's only job is the configure call itself.
  *
- * MUST be called after [buildEntitlementsProvider] in any single expression: that function is what
- * runs `Purchases.configure`, and [RevenueCatPlusPurchases] touches `Purchases.sharedInstance`,
- * which throws when the SDK is unconfigured. Kotlin evaluates arguments left to right, and the
- * `appModule(...)` call below relies on exactly that -- see its own comment.
+ * A blank key is the normal, supported state: we simply never configure, and
+ * `AdRevenueTracker`'s own `Purchases.isConfigured` guard turns revenue tracking into a silent
+ * no-op. The app is fully functional — ads included — with no RevenueCat account at all.
+ *
+ * Uses the same `configure(apiKey) { }` extension the deleted `RevenueCatEntitlements.kt`'s own
+ * init block used, not a `PurchasesConfiguration.Builder(context, key).build()` shape: no such
+ * builder type exists anywhere in this codebase or on `feat/plus-purchase-parked` (grep-verified
+ * for `PurchasesConfiguration` on both). Context is captured internally via AndroidX App Startup
+ * per RevenueCat's own KMP docs, so no `Context` parameter is threaded past [context] itself,
+ * which is only here to reach [readRevenueCatApiKey].
  */
-private fun buildPlusPurchases(context: Context): PlusPurchases {
+private fun configureRevenueCatForAdRevenue(context: Context) {
     val apiKey = readRevenueCatApiKey(context)
-    return if (revenueCatKeyIsConfigured(apiKey)) RevenueCatPlusPurchases() else UnavailablePlusPurchases
+    if (apiKey.isNullOrBlank()) return
+    Purchases.logLevel = LogLevel.WARN
+    Purchases.configure(apiKey = apiKey) {}
 }
 
 /**
@@ -203,6 +192,13 @@ fun ensureKoinStarted(
         if (GlobalContext.getOrNull() == null) {
             initShareContext(appContext)
             initAlertDigestSchedulerContext(appContext)
+            // 2026-09-21 ads-only-monetization plan (Task 3): configuring RevenueCat used to be a
+            // side effect of buildEntitlementsProvider(appContext), one of appModule(...)'s own
+            // arguments below — Kotlin's left-to-right argument evaluation is what made
+            // entitlements-before-purchases load-bearing there (commit 415e76c). Both parameters
+            // are gone now, so that ordering hazard at this call site is gone with them; this call
+            // is simply made before startKoin instead, as its own explicit step.
+            configureRevenueCatForAdRevenue(appContext)
             val dao = storeOverride
                 ?: QuakeDao(createDatabase(DriverFactory(appContext)), clock = { Clock.System.now().toEpochMilliseconds() })
             val http = httpClientOverride ?: HttpClient(OkHttp) {
@@ -212,19 +208,12 @@ fun ensureKoinStarted(
                     connectTimeoutMillis = 10_000
                 }
             }
-            // Argument ORDER is load-bearing, not cosmetic: buildEntitlementsProvider is what calls
-            // Purchases.configure, and buildPlusPurchases constructs a class that touches
-            // Purchases.sharedInstance, which throws while the SDK is unconfigured. Kotlin evaluates
-            // arguments left to right, so entitlements-before-purchases is what keeps that safe.
-            // Do not reorder these two.
             startKoin {
                 modules(
                     appModule(
                         http,
                         dao,
                         locationProvider,
-                        buildEntitlementsProvider(appContext),
-                        buildPlusPurchases(appContext),
                     )
                 )
             }

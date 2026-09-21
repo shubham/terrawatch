@@ -19,13 +19,10 @@ import com.yugma.terrawatch.insights.InsightsNewsViewModel
 import com.yugma.terrawatch.insights.InsightsViewModel
 import com.yugma.terrawatch.location.LocationProvider
 import com.yugma.terrawatch.location.LocationRequester
-import com.yugma.terrawatch.monetization.EntitlementsProvider
-import com.yugma.terrawatch.monetization.PlusPurchases
 import com.yugma.terrawatch.network.EmscLiveSource
 import com.yugma.terrawatch.network.GdeltClient
 import com.yugma.terrawatch.network.UsgsApi
 import com.yugma.terrawatch.notifications.NotificationPermissionRequester
-import com.yugma.terrawatch.paywall.PaywallViewModel
 import com.yugma.terrawatch.settings.SettingsViewModel
 import io.ktor.client.HttpClient
 import org.koin.core.module.Module
@@ -36,12 +33,15 @@ import kotlin.time.ExperimentalTime
 
 // Platform entry points supply: HttpClient (engine differs), a QuakeStore (android/jvm hand in a
 // real QuakeDao over their own DriverFactory; wasmJs hands in an InMemoryQuakeStore — Task 9, Plan
-// 3, see QuakeStore's own kdoc for why), LocationProvider (android needs a Context, jvm/wasmJs
+// 3, see QuakeStore's own kdoc for why), and LocationProvider (android needs a Context, jvm/wasmJs
 // need nothing — see LocationProvider.kt's no-declared-constructor rationale, mirroring
-// DriverFactory), and (Plan 4 Task 6) an EntitlementsProvider — android's `KoinBootstrap.android.kt`
-// resolves the real gate (RevenueCatEntitlements when a key is configured, AlwaysFreeEntitlements
-// otherwise — this repo's actual state throughout Task 6, no RC account yet); jvm/wasmJs's own
-// main()s always pass AlwaysFreeEntitlements directly (Android-only runtime scope directive).
+// DriverFactory). This function used to also take an EntitlementsProvider and a PlusPurchases —
+// both dropped by the 2026-09-21 ads-only-monetization plan (Task 3), which deleted
+// core:monetization outright. Per that plan's own Global Constraints: argument order among the
+// parameters that DO remain is still load-bearing in principle (Kotlin evaluates call-site
+// arguments left to right, commit 415e76c) even though the two removed parameters were the only
+// ones whose construction ever had a real evaluation-order hazard — http/dao/locationProvider keep
+// their original relative order here regardless.
 // kotlinx.datetime.Clock is now a deprecated typealias for kotlin.time.Clock (Kotlin 2.1+, still
 // @ExperimentalTime as of Kotlin 2.2) — same migration as kotlinx.datetime.Instant elsewhere in
 // this codebase (see EmscParser.kt). Importing the stdlib type directly avoids a typealias
@@ -51,8 +51,6 @@ fun appModule(
     http: HttpClient,
     dao: QuakeStore,
     locationProvider: LocationProvider,
-    entitlementsProvider: EntitlementsProvider,
-    plusPurchases: PlusPurchases,
 ): Module = module {
     single { UsgsApi(http) }
     single { EmscLiveSource(http) }
@@ -96,19 +94,6 @@ fun appModule(
     // — nothing else in this graph needs it.
     single { OnboardingStore(get()) }
     single { locationProvider }
-    // Plan 4 Task 6: resolved via koinInject<EntitlementsProvider>() at AppNav's composition root
-    // (same non-ViewModel "plain single, plain koinInject()" shape OnboardingStore above already
-    // uses) for the ad-slot gate, AND through SettingsViewModel's constructor for the "TerraWatch
-    // Plus" row's mirrored isPlusActive — same "platform entry point builds it, hands in an
-    // already-constructed instance" shape locationProvider itself already establishes just above.
-    single { entitlementsProvider }
-    // Plus purchase flow: the write side of the same story `entitlementsProvider` above is the read
-    // side of, and deliberately a separate single — the three entitlement consumers never need a
-    // purchase surface, and PaywallViewModel is the only thing that resolves this. Both are built by
-    // the platform entry point and handed in already-constructed, the shape locationProvider
-    // establishes, because android decides between the real and no-op implementations from a
-    // manifest value this shared module cannot read.
-    single { plusPurchases }
     // Task 2 (Plan 3): unlike locationProvider above (built at each platform's entry point and
     // handed in, since android's actual needs a Context the shared expect signature can't carry),
     // LocationRequester's no-arg constructor is uniform across every target — see its own kdoc —
@@ -195,13 +180,10 @@ fun appModule(
     viewModel { InsightsNewsViewModel(get(), get(), clock = { Clock.System.now().toEpochMilliseconds() }) }
     // Task 7 (Plan 3): Settings' own tab-scoped ViewModel — resolved via SettingsScreen's own
     // defaulted `= koinViewModel()` param, same shape as HistoryViewModel/InsightsViewModel above.
-    // Plan 4 Task 6: 4th constructor param (EntitlementsProvider) backs the new "TerraWatch Plus"
-    // row's mirrored isPlusActive — get() resolves the SAME single registered just above.
-    // Task 2 (Plan 5): 5th constructor param (FavoritePlaceStore) backs the Places section's own
+    // Task 2 (Plan 5): 4th constructor param (FavoritePlaceStore) backs the Places section's own
     // favorites list — get() resolves the SAME single HomeViewModel's own registration above uses.
-    viewModel { SettingsViewModel(get(), get(), get(), get(), get()) }
-    // Plus purchase flow: the only consumer of the PlusPurchases single above. Takes the
-    // EntitlementsProvider too so the screen's status line mirrors the same live StateFlow every
-    // other Plus-aware surface reads, rather than keeping a second notion of "is Plus active".
-    viewModel { PaywallViewModel(get(), get()) }
+    // The EntitlementsProvider constructor param this used to also take (for the "TerraWatch Plus"
+    // row's mirrored isPlusActive) is gone — deleted along with the row itself, the paywall, and
+    // core:monetization by the 2026-09-21 ads-only-monetization plan (Tasks 3/4).
+    viewModel { SettingsViewModel(get(), get(), get(), get()) }
 }

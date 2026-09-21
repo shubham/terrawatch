@@ -41,20 +41,20 @@ import com.yugma.terrawatch.home.LayoutMode
 import com.yugma.terrawatch.home.QuakeSelectionViewModel
 import com.yugma.terrawatch.home.layoutMode
 import com.yugma.terrawatch.insights.InsightsScreen
-import com.yugma.terrawatch.monetization.EntitlementsProvider
 import com.yugma.terrawatch.motion.LocalReducedMotion
 import com.yugma.terrawatch.onboarding.OnboardingScreen
-import com.yugma.terrawatch.paywall.PaywallScreen
 import com.yugma.terrawatch.settings.SettingsScreen
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 
 /**
  * Task 4 (Plan 3): the app's nav destinations. [HOME]/[HISTORY]/[INSIGHTS] are the 3 persistent
- * tabs (bottom [NavigationBar] on phone, [NavigationRail] on desktop — see [AppNav]); [SETTINGS],
- * [ONBOARDING], and (Plan 4 Task 6) [PAYWALL] are stack-only routes reached from a tab (Home's gear
- * chip, the app's own conditional start destination, and Settings' "TerraWatch Plus" row,
- * respectively) rather than tabs of their own — none shows in the tab bar/rail (see [TAB_ROUTES]).
+ * tabs (bottom [NavigationBar] on phone, [NavigationRail] on desktop — see [AppNav]); [SETTINGS]
+ * and [ONBOARDING] are stack-only routes reached from a tab (Home's gear chip and the app's own
+ * conditional start destination, respectively) rather than tabs of their own — none shows in the
+ * tab bar/rail (see [TAB_ROUTES]). A third stack-only route, `PAYWALL` (Plan 4 Task 6, reached from
+ * Settings' "TerraWatch Plus" row), was deleted by the 2026-09-21 ads-only-monetization plan along
+ * with that row and the paywall screen itself.
  *
  * Plain `String` constants, not `@Serializable` type-safe route classes (Navigation Compose
  * 2.9's other supported style): every screen here resolves its own ViewModel/state via Koin, not
@@ -70,7 +70,6 @@ object Routes {
     const val INSIGHTS = "insights"
     const val SETTINGS = "settings"
     const val ONBOARDING = "onboarding"
-    const val PAYWALL = "paywall"
 }
 
 /** The 3 routes that show bottom-nav/rail chrome — [Routes.SETTINGS]/[Routes.ONBOARDING] render
@@ -167,10 +166,11 @@ internal const val NAV_INSIGHTS_TAG = "nav-insights"
  * (androidInstrumentedTest) passes a directly-constructed, Koin-free `OnboardingStore` instead, so
  * pinning "fresh install -> onboarding shown, onboarded -> home" needs no `startKoin{}` at all.
  *
- * Plan 4 Task 6: [entitlementsProvider] is the SAME "defaulted `koinInject()`" shape as
- * [onboardingStore] just above, for the identical reason — it feeds [adSlotVisible] below (spec §8,
- * IMMUTABLE) — one of the two ANDed conditions (the Settings-nav follow-up added [isAdEligibleRoute], the
- * route-based other half) that decide whether [BannerAdSlot] shows anything at all.
+ * Plan 4 Task 6 used to also take an `entitlementsProvider` param here, the SAME defaulted
+ * `koinInject()` shape [onboardingStore] just below still uses, feeding [adSlotVisible]'s now-
+ * removed `isPlusActive` input (spec §8). The 2026-09-21 ads-only-monetization plan (Task 3)
+ * dropped that parameter along with the rest of `core:monetization` — [adSlotVisible] below is
+ * called with only [isDetailOpen]/[isOnboarding] now (see that call site's own comment).
  */
 @Composable
 fun AppNav(
@@ -181,7 +181,6 @@ fun AppNav(
     // call sites - none of which pass this - keep compiling unchanged).
     detailNewsViewModel: DetailNewsViewModel = koinViewModel(),
     onboardingStore: OnboardingStore = koinInject(),
-    entitlementsProvider: EntitlementsProvider = koinInject(),
 ) {
     // One-shot, read exactly once for this composable's whole lifetime (remember, no key) --
     // deliberately NOT re-read on every recomposition: "onboarded" only ever flips false -> true
@@ -396,9 +395,10 @@ private fun AppNavHost(
     val reducedMotion = LocalReducedMotion.current
     NavHost(navController = navController, startDestination = startDestination, modifier = modifier) {
         // Only the 4 routes the doc's own Part 3 table names (Home/History/Insights/Settings) get
-        // the crossfade - Paywall/Onboarding keep whatever default Navigation Compose already
-        // applies, deliberately out of this item's named scope (a first-run-only pager and a rare
-        // purchase-flow push read differently from a "switching sibling tabs" crossfade).
+        // the crossfade - Onboarding keeps whatever default Navigation Compose already applies,
+        // deliberately out of this item's named scope (a first-run-only pager reads differently
+        // from a "switching sibling tabs" crossfade). The former PAYWALL route was the other
+        // out-of-scope example here; it was deleted by the 2026-09-21 ads-only-monetization plan.
         // popEnterTransition/popExitTransition default to enterTransition/exitTransition when not
         // set explicitly, so back-direction (e.g. a Settings->Home system-back) gets the identical
         // fade, not a directional asymmetry.
@@ -449,22 +449,16 @@ private fun AppNavHost(
         // NavBackStackEntry (same shape History/Insights already use for their own ViewModels).
         // onBack pops this stack-only route — see SettingsScreen's own kdoc for why it needs one at
         // all (unlike HOME/HISTORY/INSIGHTS, this isn't a tab with its own back-stack root).
-        // Plan 4 Task 6: onPlusClick pushes the new PAYWALL route — same "stack-only route reached
-        // from a tab, popped via onBack" shape.
+        // Plan 4 Task 6 used to also wire onPlusClick here to push a PAYWALL route; both the route
+        // and the paywall screen it led to were deleted by the 2026-09-21 ads-only-monetization
+        // plan (Tasks 3/4).
         composable(
             Routes.SETTINGS,
             enterTransition = { tabEnterTransition(reducedMotion) },
             exitTransition = { tabExitTransition(reducedMotion) },
         ) {
-            SettingsScreen(
-                onBack = { navController.popBackStack() },
-                onPlusClick = { navController.navigate(Routes.PAYWALL) },
-            )
+            SettingsScreen(onBack = { navController.popBackStack() })
         }
-        // Plan 4 Task 6: the "TerraWatch Plus" paywall STUB (real purchases-kmp-ui wiring is Task
-        // 8, once a RevenueCat account/product exists — see PaywallScreen's own kdoc). Stack-only,
-        // same "reached from a tab, own onBack pops it" shape as SETTINGS/ONBOARDING above.
-        composable(Routes.PAYWALL) { PaywallScreen(onBack = { navController.popBackStack() }) }
         // Task 8 (Plan 3): the real 3-step pager replaces the OnboardingPlaceholder this route
         // used to render (Task 4's own scaffolding, deleted below — see OnboardingScreen.kt's own
         // kdoc for the 3 steps). onFinish fires from EITHER the pager's own "Done" (final step) or

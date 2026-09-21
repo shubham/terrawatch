@@ -181,7 +181,6 @@ fun SettingsScreen(
     val minMag by viewModel.minMag.collectAsState()
     val theme by viewModel.theme.collectAsState()
     val homeLocation by viewModel.homeLocation.collectAsState()
-    val isPlusActive by viewModel.isPlusActive.collectAsState()
     // Task 2 (Plan 5): the Places section's own favorites list.
     val favorites by viewModel.favorites.collectAsState()
     // Fix (post-Plan-5 tail, RESULTS.md round2 concern #6): the ALERTS row's live-refresh pair —
@@ -260,7 +259,10 @@ fun SettingsScreen(
                 }
                 SettingsCard {
                     SettingsSectionLabel("PLUS")
-                    PlusRow(isPlusActive = isPlusActive, onClick = onPlusClick)
+                    // Task 3 compile-fix stopgap (2026-09-21 ads-only-monetization plan):
+                    // SettingsViewModel.isPlusActive was deleted this task; PlusRow itself and this
+                    // whole card are deleted next, by Task 4 — see that task's own commit.
+                    PlusRow(isPlusActive = false, onClick = onPlusClick)
                 }
                 SettingsCard {
                     SettingsSectionLabel("THEME")

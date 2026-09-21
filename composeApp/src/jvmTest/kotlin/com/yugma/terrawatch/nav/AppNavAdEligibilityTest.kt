@@ -54,15 +54,9 @@ class AppNavAdEligibilityTest {
         assertFalse(isAdEligibleRoute(Routes.ONBOARDING))
     }
 
-    @Test
-    fun `paywall is NOT ad-eligible`() {
-        // Showing an ad on the screen whose whole purpose is selling ad-removal would be an odd
-        // product call, and this was already true before this task (Paywall was never a TAB_ROUTES
-        // member either) -- this case pins that this fix's refactor doesn't change that, even though
-        // Paywall now ALSO keeps its AdView mounted-but-hidden rather than destroyed (a side effect
-        // of this fix, not something newly requested — see the report's own notes).
-        assertFalse(isAdEligibleRoute(Routes.PAYWALL))
-    }
+    // A `paywall is NOT ad-eligible` case used to sit here, pinning Routes.PAYWALL out of
+    // AD_ELIGIBLE_ROUTES. The route (and the paywall screen it led to) was deleted by the
+    // 2026-09-21 ads-only-monetization plan (Task 3), so there is nothing left to pin.
 
     @Test
     fun `null route (back stack not yet settled) is NOT ad-eligible`() {
