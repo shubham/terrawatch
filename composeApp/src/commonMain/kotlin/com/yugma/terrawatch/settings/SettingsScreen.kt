@@ -62,6 +62,7 @@ import com.yugma.terrawatch.location.rememberLocationCondition
 import com.yugma.terrawatch.model.FavoriteAlertType
 import com.yugma.terrawatch.model.FavoritePlace
 import com.yugma.terrawatch.model.GeoPoint
+import com.yugma.terrawatch.model.MAX_FAVORITE_PLACES
 import com.yugma.terrawatch.notifications.NotificationAlertsUiState
 import com.yugma.terrawatch.notifications.NotificationPermissionRequester
 import com.yugma.terrawatch.ui.format.formatCoordinates
@@ -135,12 +136,8 @@ internal const val APP_VERSION = "1.0.0"
  * elsewhere in this codebase. */
 internal const val SETTINGS_BACK_TAG = "settings-back"
 
-/** Plan 4 Task 6: `testTag` for the PLUS section's "TerraWatch Plus" row — same "internal, so a
- * test/device-verification pass can pin it" convention as [SETTINGS_BACK_TAG] just above. */
-internal const val SETTINGS_PLUS_ROW_TAG = "settings-plus-row"
-
 /** Task 2 (Plan 5): `testTag` for the Places section's "Add place" row — same "internal, so a
- * device-verification pass can pin it" convention as [SETTINGS_PLUS_ROW_TAG] just above. Per-favorite
+ * device-verification pass can pin it" convention as [SETTINGS_BACK_TAG] just above. Per-favorite
  * remove buttons use [favoriteRemoveTag] instead (their own id-keyed tag) since there can be more
  * than one, unlike this single fixed row. */
 internal const val SETTINGS_ADD_PLACE_TAG = "settings-add-place"
@@ -167,14 +164,14 @@ internal const val SETTINGS_ADD_PLACE_TAG = "settings-add-place"
  * back-chevron/title (top, under the status bar) and the final bottom `Spacer` (under the
  * navigation bar) in one change, rather than patching each edge separately.
  *
- * Plan 4 Task 6: [onPlusClick] backs the new PLUS section's "TerraWatch Plus" row — a defaulted
- * no-op, same "so this composable stays callable without a NavController in scope" shape [onBack]
- * already uses; `AppNav.kt`'s real call site overrides it to `navController.navigate(Routes.PAYWALL)`.
+ * Plan 4 Task 6 used to also take an [onPlusClick] param here, backing the PLUS section's
+ * "TerraWatch Plus" row. Both the row and the paywall it routed to were deleted by the 2026-09-21
+ * ads-only-monetization plan (Task 4) — see [AddPlaceRow]'s own kdoc for what replaced the one
+ * behaviour that row's routing served (the favourites-cap-blocked path).
  */
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit = {},
-    onPlusClick: () -> Unit = {},
     viewModel: SettingsViewModel = koinViewModel(),
 ) {
     val nearbyRadiusKm by viewModel.nearbyRadiusKm.collectAsState()
@@ -246,23 +243,9 @@ fun SettingsScreen(
                     }
                     Spacer(Modifier.height(12.dp))
                     AddPlaceRow(
-                        onClick = {
-                            // Task 2 (Plan 5), FIRST REAL PLUS GATE: checked at the moment of the
-                            // tap, against THIS instant's own favorites count — see
-                            // SettingsViewModel.canAddFavorite's own kdoc. Blocked -> the paywall
-                            // (the existing Plan 4 Task 6 Plus row/paywall wiring, reused verbatim
-                            // via the SAME onPlusClick callback the PLUS row below already calls),
-                            // never the picker.
-                            if (viewModel.canAddFavorite()) showAddFavoritePicker = true else onPlusClick()
-                        },
+                        enabled = favorites.size < MAX_FAVORITE_PLACES,
+                        onClick = { showAddFavoritePicker = true },
                     )
-                }
-                SettingsCard {
-                    SettingsSectionLabel("PLUS")
-                    // Task 3 compile-fix stopgap (2026-09-21 ads-only-monetization plan):
-                    // SettingsViewModel.isPlusActive was deleted this task; PlusRow itself and this
-                    // whole card are deleted next, by Task 4 — see that task's own commit.
-                    PlusRow(isPlusActive = false, onClick = onPlusClick)
                 }
                 SettingsCard {
                     SettingsSectionLabel("THEME")
@@ -598,58 +581,42 @@ private fun FavoriteAlertType.displayName(): String = when (this) {
 internal fun favoriteRemoveTag(id: Long): String = "settings-favorite-remove-$id"
 
 /**
- * Task 2 (Plan 5): the Places section's own "Add place" action — [onClick] is the gate-check-then-
- * route decision (`SettingsScreen`'s own call site: canAddFavorite() -> open the picker, else ->
- * the paywall), never decided here — this row is purely presentational, same "dumb row, smart
- * caller" split every other action row on this screen (`PlusRow`, `PlaceRow`'s own "Change" button)
- * already follows.
+ * The "Add place" action row. [enabled] is the caller's `canAddFavorite()` result: at
+ * [MAX_FAVORITE_PLACES] the row goes visibly disabled and says so, rather than staying tappable and
+ * doing nothing. It used to route to the paywall when blocked; that screen no longer exists, and a
+ * tap that silently does nothing is worse than a row that explains itself before it is tapped.
+ *
+ * Still purely presentational — the decision is the caller's, same "dumb row, smart caller" split
+ * the other action rows on this screen follow.
  */
 @Composable
-private fun AddPlaceRow(onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun AddPlaceRow(enabled: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Row(
         modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .testTag(SETTINGS_ADD_PLACE_TAG),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = "Add place",
-            style = MaterialTheme.typography.bodyLarge,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.primary,
-        )
-    }
-}
-
-/**
- * Task 6 (Plan 4): the "TerraWatch Plus" row — [onClick] pushes `AppNav.kt`'s new `Routes.PAYWALL`
- * stub (see `PaywallScreen`'s own kdoc for why it's a stub, not a real `purchases-kmp-ui` paywall,
- * this task). Status text mirrors `PlaceRow`'s own "value + chevron-like affordance" shape —
- * "Active"/"Free" rather than a bare label, so this row is honest about current state at a glance,
- * same as `AlertsPermissionRow`'s own "On"/"Off" trailing text.
- */
-@Composable
-private fun PlusRow(isPlusActive: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Row(
-        modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .testTag(SETTINGS_PLUS_ROW_TAG),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = "TerraWatch Plus",
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.weight(1f),
-        )
-        Text(
-            text = if (isPlusActive) "Active" else "Free",
-            style = MaterialTheme.typography.bodyLarge,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = "Add place",
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = if (enabled) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+            if (!enabled) {
+                Text(
+                    text = "Maximum $MAX_FAVORITE_PLACES places",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
 }
 
