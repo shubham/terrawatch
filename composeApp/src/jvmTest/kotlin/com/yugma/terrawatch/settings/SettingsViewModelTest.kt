@@ -14,14 +14,10 @@ import com.yugma.terrawatch.database.QuakeDao
 import com.yugma.terrawatch.database.TerraWatchDb
 import com.yugma.terrawatch.model.FavoriteAlertType
 import com.yugma.terrawatch.model.GeoPoint
-import com.yugma.terrawatch.monetization.AlwaysFreeEntitlements
-import com.yugma.terrawatch.monetization.EntitlementsProvider
 import com.yugma.terrawatch.notifications.NotificationAlertsUiState
 import com.yugma.terrawatch.notifications.NotificationPermissionCondition
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.job
 import kotlinx.coroutines.runBlocking
@@ -43,8 +39,10 @@ class SettingsViewModelTest {
     // HomeViewModelTest's own kdoc for the original Task-13/commit-5e9e922 precedent this ports):
     // NOT every StateFlow this class exposes needs a timeout margin -- `nearbyRadiusKm`/`minMag`
     // (AlertRuleStore) and `theme` (ThemeStore) are both a synchronous `dao.metaGet` read behind an
-    // in-memory SharedFlow, and `isPlusActive` is a plain passthrough StateFlow -- none of them ever
-    // leave Main, so those tests are left untouched. `homeLocation` and `favorites` are different:
+    // in-memory SharedFlow -- none of them ever leave Main, so those tests are left untouched.
+    // (The 2026-09-21 ads-only-monetization plan deleted `isPlusActive`, the passthrough StateFlow
+    // this comment used to also name here, along with the EntitlementsProvider it mirrored.)
+    // `homeLocation` and `favorites` are different:
     // `init`'s `viewModelScope.launch(Dispatchers.Default) { _homeLocation.value =
     // homeLocationStore.get() }` is a hard-coded, un-pinnable cross-pool hop (mirrors
     // HomeViewModel's own identical block), and `favoritePlaceStore.favorites` is
@@ -66,12 +64,11 @@ class SettingsViewModelTest {
         alertRuleStore: AlertRuleStore = AlertRuleStore(freshDao()),
         themeStore: ThemeStore = ThemeStore(freshDao()),
         homeLocationStore: HomeLocationStore = HomeLocationStore(freshDao()),
-        // Plan 4 Task 6: defaulted so every pre-existing test below (none of which care about
-        // entitlements) keeps compiling and passing unchanged — same "add a new store, default it"
-        // shape this helper's own 3 pre-existing params already established.
-        entitlementsProvider: EntitlementsProvider = AlwaysFreeEntitlements,
-        // Task 2 (Plan 5): same "add a new store, default it" shape as entitlementsProvider just
-        // above, for the new favorites section.
+        // Task 2 (Plan 5): same "add a new store, default it" shape this helper's own pre-existing
+        // params already established, for the favorites section. (This helper used to also take an
+        // `entitlementsProvider` param, defaulted the identical way — deleted along with
+        // SettingsViewModel's own constructor parameter by the 2026-09-21 ads-only-monetization
+        // plan, Task 3.)
         favoritePlaceStore: FavoritePlaceStore = FavoritePlaceStore(freshDao()),
         // Flake-hardening pass (2026-08-16): matches HomeViewModelTest's own createVm() pin style --
         // defaulted to the real Dispatchers.Default (compile-safe), every test below passes its own
@@ -88,7 +85,6 @@ class SettingsViewModelTest {
             alertRuleStore,
             themeStore,
             homeLocationStore,
-            entitlementsProvider,
             favoritePlaceStore,
             ioDispatcher,
             readNotificationCondition,
@@ -214,43 +210,12 @@ class SettingsViewModelTest {
         }
     }
 
-    // --- Plan 4 Task 6: isPlusActive mirrors the injected EntitlementsProvider directly ----------
+    // Plan 4 Task 6 used to have an "isPlusActive mirrors the injected EntitlementsProvider
+    // directly" section here — two tests plus a local FakeEntitlementsProvider fake. Deleted along
+    // with SettingsViewModel.isPlusActive and EntitlementsProvider itself by the 2026-09-21
+    // ads-only-monetization plan (Task 3): there is no longer an entitlement to mirror.
 
-    @Test fun `isPlusActive reflects AlwaysFreeEntitlements' constant false by default`() = runTest {
-        val testDispatcher = UnconfinedTestDispatcher()
-        Dispatchers.setMain(testDispatcher)
-        val vm = createVm(ioDispatcher = testDispatcher)
-        vm.isPlusActive.test {
-            assertEquals(false, awaitItem())
-            cancelAndIgnoreRemainingEvents()
-        }
-    }
-
-    @Test fun `isPlusActive is a direct passthrough, not a snapshot copy - a live provider flip is reflected`() = runTest {
-        val testDispatcher = UnconfinedTestDispatcher()
-        Dispatchers.setMain(testDispatcher)
-        val fakeProvider = FakeEntitlementsProvider()
-        val vm = createVm(entitlementsProvider = fakeProvider, ioDispatcher = testDispatcher)
-        vm.isPlusActive.test {
-            assertEquals(false, awaitItem())
-            fakeProvider.setPlusActive(true)
-            assertEquals(true, awaitItem())
-            cancelAndIgnoreRemainingEvents()
-        }
-    }
-
-    /** A directly-controllable [EntitlementsProvider] fake — [AlwaysFreeEntitlements] itself is a
-     * constant `false` by design and can't exercise the "live flip" half of the passthrough claim
-     * above. */
-    private class FakeEntitlementsProvider : EntitlementsProvider {
-        private val _isPlusActive = MutableStateFlow(false)
-        override val isPlusActive: StateFlow<Boolean> = _isPlusActive
-        fun setPlusActive(value: Boolean) {
-            _isPlusActive.value = value
-        }
-    }
-
-    // --- Task 2 (Plan 5): favorites CRUD + the FIRST REAL Plus gate -------------------------------
+    // --- Task 2 (Plan 5): favorites CRUD -----------------------------------------------------------
 
     @Test fun `favorites starts empty when the store has none`() = runTest {
         val testDispatcher = UnconfinedTestDispatcher()
@@ -316,7 +281,7 @@ class SettingsViewModelTest {
         }
     }
 
-    @Test fun `canAddFavorite is true on the free tier with zero favorites`() = runTest {
+    @Test fun `canAddFavorite is true with zero favorites`() = runTest {
         val testDispatcher = UnconfinedTestDispatcher()
         Dispatchers.setMain(testDispatcher)
         val vm = createVm(ioDispatcher = testDispatcher)
@@ -327,31 +292,42 @@ class SettingsViewModelTest {
         assertEquals(true, vm.canAddFavorite())
     }
 
-    @Test fun `canAddFavorite is false on the free tier once one favorite already exists`() = runTest {
+    // 2026-09-21 ads-only-monetization plan (Task 3): replaces the old free-tier "cap is 1" test
+    // (`canAddFavorite is false on the free tier once one favorite already exists`) and the
+    // Plus-bypasses-the-cap test that sat beside it — the cap is now a flat 5 for everyone, so
+    // there is no tier left to vary.
+
+    @Test fun `canAddFavorite is true below five favorites`() = runTest {
         val testDispatcher = UnconfinedTestDispatcher()
         Dispatchers.setMain(testDispatcher)
         val vm = createVm(ioDispatcher = testDispatcher)
         vm.favorites.test(timeout = 30.seconds) {
             awaitItem()
-            vm.addFavorite("Mumbai", GeoPoint(19.0760, 72.8777))
+            repeat(4) { i -> vm.addFavorite("Place $i", GeoPoint(0.0, 0.0)) }
+            // Same "await until the count we're after, not a fixed number of emissions" idiom
+            // `homeLocation loads the previously stored point` uses just above -- the underlying
+            // QuakeDao.favoritePlaces() query listener can conflate rapid-fire writes into fewer
+            // emissions than writes, so counting emissions 1:1 with addFavorite calls is flaky.
+            var latest = awaitItem()
+            while (latest.size < 4) latest = awaitItem()
+            cancelAndIgnoreRemainingEvents()
+        }
+        assertEquals(true, vm.canAddFavorite())
+    }
+
+    @Test fun `canAddFavorite is false once five favorites exist`() = runTest {
+        val testDispatcher = UnconfinedTestDispatcher()
+        Dispatchers.setMain(testDispatcher)
+        val vm = createVm(ioDispatcher = testDispatcher)
+        vm.favorites.test(timeout = 30.seconds) {
             awaitItem()
+            repeat(5) { i -> vm.addFavorite("Place $i", GeoPoint(0.0, 0.0)) }
+            // See the conflation note in the test just above.
+            var latest = awaitItem()
+            while (latest.size < 5) latest = awaitItem()
             cancelAndIgnoreRemainingEvents()
         }
         assertEquals(false, vm.canAddFavorite())
-    }
-
-    @Test fun `canAddFavorite is true regardless of count when Plus is active`() = runTest {
-        val testDispatcher = UnconfinedTestDispatcher()
-        Dispatchers.setMain(testDispatcher)
-        val fakeProvider = FakeEntitlementsProvider().apply { setPlusActive(true) }
-        val vm = createVm(entitlementsProvider = fakeProvider, ioDispatcher = testDispatcher)
-        vm.favorites.test(timeout = 30.seconds) {
-            awaitItem()
-            vm.addFavorite("Mumbai", GeoPoint(19.0760, 72.8777))
-            awaitItem()
-            cancelAndIgnoreRemainingEvents()
-        }
-        assertEquals(true, vm.canAddFavorite())
     }
 
     // --- Fix (post-Plan-5 tail, RESULTS.md round2 concern #6): ALERTS row live refresh -------------

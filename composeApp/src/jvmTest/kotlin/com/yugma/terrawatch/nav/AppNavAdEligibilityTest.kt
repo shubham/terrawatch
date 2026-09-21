@@ -14,13 +14,13 @@ import kotlin.test.assertTrue
  * runtime involved" convention [com.yugma.terrawatch.home.LayoutModeTest]/
  * [com.yugma.terrawatch.home.HomeScreenBannerTest] already established for this codebase.
  *
- * This is a DIFFERENT axis from [com.yugma.terrawatch.ads.adSlotVisible] (`core:ads`, untouched by
- * this task — signature and its own 8-case truth table both still exactly as Task 3 left them) —
- * that function answers "given Plus/detail/onboarding state, should an already-eligible ad surface
+ * This is a DIFFERENT axis from [com.yugma.terrawatch.ads.adSlotVisible] (`core:ads` — its own
+ * 4-case truth table since the 2026-09-21 ads-only-monetization plan dropped `isPlusActive`) —
+ * that function answers "given detail/onboarding state, should an already-eligible ad surface
  * be visually showing right now"; this one answers "is the CURRENT ROUTE the kind of place an ad is
- * ever allowed to appear at all," independent of those three inputs. [AppNav]'s real call site ANDs
+ * ever allowed to appear at all," independent of those two inputs. [AppNav]'s real call site ANDs
  * both together into [com.yugma.terrawatch.ads.BannerAdSlot]'s `visible` parameter — see that call
- * site's own comment for why the two stay separate rather than folding a 4th input into
+ * site's own comment for why the two stay separate rather than folding a 3rd input into
  * `adSlotVisible` itself.
  */
 class AppNavAdEligibilityTest {
@@ -54,15 +54,9 @@ class AppNavAdEligibilityTest {
         assertFalse(isAdEligibleRoute(Routes.ONBOARDING))
     }
 
-    @Test
-    fun `paywall is NOT ad-eligible`() {
-        // Showing an ad on the screen whose whole purpose is selling ad-removal would be an odd
-        // product call, and this was already true before this task (Paywall was never a TAB_ROUTES
-        // member either) -- this case pins that this fix's refactor doesn't change that, even though
-        // Paywall now ALSO keeps its AdView mounted-but-hidden rather than destroyed (a side effect
-        // of this fix, not something newly requested — see the report's own notes).
-        assertFalse(isAdEligibleRoute(Routes.PAYWALL))
-    }
+    // A `paywall is NOT ad-eligible` case used to sit here, pinning Routes.PAYWALL out of
+    // AD_ELIGIBLE_ROUTES. The route (and the paywall screen it led to) was deleted by the
+    // 2026-09-21 ads-only-monetization plan (Task 3), so there is nothing left to pin.
 
     @Test
     fun `null route (back stack not yet settled) is NOT ad-eligible`() {

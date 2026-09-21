@@ -39,13 +39,15 @@
          its own postSplashScreenTheme, so the app's real running appearance is byte-for-byte
          unchanged - this only affects the brief pre-content splash window, via
          MainActivity's installSplashScreen() call. -->
-    <!-- android:allowBackup is already the platform default (true); it is declared explicitly here
-         because the Plus restore story depends on it rather than merely tolerating it. RevenueCat
-         runs anonymous in this app (no accounts, ever - spec section 3.6), so its App User ID lives
-         in this app's own SharedPreferences and dies with an uninstall. Android Auto Backup
-         carrying that id across a reinstall is what makes a previously-purchased Plus come back
-         silently instead of requiring the user to find the Restore button. A default nobody wrote
-         down is a default that can regress in review without anyone noticing what it cost. -->
+    <!-- android:allowBackup is already the platform default (true); left explicit rather than
+         removed even though the purchase/restore story it used to serve is gone. It used to be
+         declared here because the Plus restore story depended on it rather than merely tolerating
+         it - RevenueCat's anonymous App User ID (no accounts, ever - spec section 3.6) lived in
+         this app's own SharedPreferences, and Android Auto Backup carrying it across a reinstall
+         was what made a previously-purchased Plus come back silently. The 2026-09-21
+         ads-only-monetization plan withdrew Plus before it ever sold, so there is no restore story
+         left to protect; this flag stays only as the ordinary "declare the default explicitly
+         rather than rely on it silently" discipline, not for a specific dependent feature. -->
     <application
         android:label="TerraWatch"
         android:icon="@mipmap/ic_launcher"
