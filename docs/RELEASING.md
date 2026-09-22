@@ -81,22 +81,43 @@ git tag v1.1.0 && git push origin v1.1.0
 ## 2. Removing the in-app purchase from Play
 
 The "In-app purchases" badge on a store listing is **not a checkbox**. Play derives it from whether
-the app has *active* in-app products. Deactivate the product and the badge follows.
+the app has *active* one-time products. Remove the product and the badge follows.
 
-### 2.1 Deactivate the product
+### 2.1 Check for the product
 
-1. **Play Console** → app → **Monetize with Play** → **Products** → **In-app products**
-2. Find `terrawatch_plus`
-3. **Deactivate** — not delete. Deactivating preserves history and is reversible if the parked
-   purchase work on `feat/plus-purchase-parked` is ever revived.
-4. Confirm **Subscriptions** is empty.
+**Play Console** → app → **Monetise with Play** → **Products** → **One-time products**.
+(Google renamed "in-app products" to "one-time products"; older docs and the Billing API still say
+in-app products.)
+
+**Checked 2026-09-22: this list was empty — "No results".** `terrawatch_plus` was never created as
+a Play product, so there has never been anything to deactivate. That independently confirms, from
+Play's own side, the premise the whole ads-only change rests on: the purchase was never sellable,
+so there are no purchasers to refund or grandfather. The code-side evidence was a permanently blank
+`REVENUECAT_API_KEY`; this is the other half of the proof.
+
+If a product ever does exist here, **deactivate** rather than delete — deactivating preserves
+history and is reversible if the parked work on `feat/plus-purchase-parked` is revived.
+
+Also confirm **Subscriptions** is empty.
 
 ### 2.2 Update the questionnaires — they do not update themselves
 
-1. **App content** → **Data safety** → **Financial info**: confirm purchase history is not collected
-2. **App content** → **Content rating** → re-open the questionnaire → answer **No** to digital
-   purchases → resubmit. The rating itself is unlikely to change.
-3. **App content** → **Ads** → must remain **Yes, my app contains ads**
+These are declarations you made separately; an empty product list does **not** clear them. If one
+still claims the app has purchases, that is the thing actually wrong on the listing.
+
+**Where "App content" lives:** left sidebar, in the **Policy and programmes** group — below
+"Monetise with Play", so you will likely need to collapse that and scroll. Direct URL:
+
+```
+https://play.google.com/console/u/<n>/developers/<developerId>/app/<appId>/app-content
+```
+
+Then:
+
+1. **Data safety** → **Financial info**: confirm purchase history is **not** collected
+2. **Content ratings** → reopen the questionnaire → answer **No** to digital purchases → resubmit.
+   The rating itself is unlikely to change.
+3. **Ads** → must remain **Yes, my app contains ads**
 
 ### 2.3 Verify
 
