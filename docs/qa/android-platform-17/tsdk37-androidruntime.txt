@@ -1,0 +1,13 @@
+# Runtime-error sweep, targetSdk 37 on Pixel 8 / Android 17 (API 37).
+# Filter: FATAL EXCEPTION, 'E AndroidRuntime', or any ERROR line naming terrawatch.
+# An empty result below the header is the clean outcome, not a capture failure.
+#
+# NOTE: a plain 'AndroidRuntime' tag grep is NOT a useful filter here -- the uiautomator
+# dump tool used to verify these screenshots logs benign startup lines under that same tag
+# (uid 2000, com.android.commands.uiautomator.Launcher). Those are tooling, not the app.
+---
+09-06 01:14:45.199  1553  1714 E WindowOrganizerController: Attempting to externally change a non-organized container: Task{eee0440 #93 type=standard A=10312:com.yugma.terrawatch.debug}={handlePackageUpdate:false,} playercount=2 taskorg=android.window.ITaskOrganizer$Stub$Proxy@ad6264e
+09-06 01:15:01.466  9564  9978 E FilePhenotypeFlags: Config package com.google.android.gms.clearcut_client#com.yugma.terrawatch.debug cannot use FILE backing without declarative registration. See go/phenotype-android-integration#phenotype for more information. This will lead to stale flags.
+09-06 01:15:01.522  9564  9978 E FilePhenotypeFlags: Config package com.google.android.gms.clearcut_client#com.yugma.terrawatch.debug cannot use FILE backing without declarative registration. See go/phenotype-android-integration#phenotype for more information. This will lead to stale flags.
+09-06 01:15:01.523  9564  9978 E FilePhenotypeFlags: Config package com.google.android.gms.clearcut_client#com.yugma.terrawatch.debug cannot use FILE backing without declarative registration. See go/phenotype-android-integration#phenotype for more information. This will lead to stale flags.
+09-06 01:15:46.452  1553  1713 E WindowOrganizerController: Attempting to externally change a non-organized container: Task{82dfd09 #94 type=standard A=10312:com.yugma.terrawatch.debug}={handlePackageUpdate:false,} playercount=2 taskorg=android.window.ITaskOrganizer$Stub$Proxy@ad6264e

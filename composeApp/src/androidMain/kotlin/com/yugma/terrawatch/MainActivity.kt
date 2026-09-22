@@ -208,6 +208,10 @@ class MainActivity : ComponentActivity() {
         // for "has bootstrap happened," located inside the idempotent function itself — is strictly
         // more robust than duplicating that condition out here a second time.
         ensureKoinStarted(applicationContext, locationProvider)
+
+        // The one-quiet-restore-per-process silent restore hook that used to run here
+        // (attemptSilentRestore, core:monetization) was deleted along with the Plus purchase flow
+        // by the 2026-09-21 ads-only-monetization plan — there is nothing left to restore.
         pendingQuakeId = intent?.getStringExtra(AlertDigestWorker.EXTRA_QUAKE_ID)
         setContent {
             App(

@@ -26,10 +26,13 @@ private val monetizationProperties = Properties().apply {
 // blank/invalid string: MobileAds throws at initialize time without a well-formed app id, and this
 // substitution happens once, at BUILD time, specifically so that can never happen. REVENUECAT_API_KEY
 // and ADMOB_BANNER_UNIT are deliberately NOT defaulted here — both stay raw/possibly-blank strings
-// read at RUNTIME instead (`KoinBootstrap.android.kt` / `BannerAdSlot.android.kt`), because their
-// absent/blank-vs-configured DECISION is a pure, TDD'd function
-// (`revenueCatKeyIsConfigured`/`TEST_BANNER_AD_UNIT_ID`'s own fallback), not something this build
-// script should bake in ahead of time.
+// read at RUNTIME instead (`KoinBootstrap.kt`'s own `configureRevenueCatForAdRevenue` /
+// `BannerAdSlot.android.kt`'s own `TEST_BANNER_AD_UNIT_ID` fallback), because their
+// absent/blank-vs-configured decision belongs at the call site that actually needs it, not
+// something this build script should bake in ahead of time. (`revenueCatKeyIsConfigured`, the pure
+// function this comment used to name for the RevenueCat half, was deleted along with
+// core:monetization by the 2026-09-21 ads-only-monetization plan — the equivalent blank check now
+// lives inline in `configureRevenueCatForAdRevenue` itself.)
 private val TEST_ADMOB_APP_ID = "ca-app-pub-3940256099942544~3347511713"
 
 kotlin {
@@ -61,11 +64,10 @@ kotlin {
             // Task 8: HomeScreen wraps in TerraTheme and QuakeMap's Android actual sources pin
             // colors from magnitudeColor(band) — both live in core:ui.
             implementation(projects.core.ui)
-            // Plan 4 Task 6: EntitlementsProvider/AlwaysFreeEntitlements (AppModule.kt's DI wiring,
-            // SettingsViewModel's mirrored isPlusActive) and BannerAdSlot/adSlotVisible (AppNav.kt's
-            // ad-slot gate) — both compile on all 3 targets (androidTarget/jvm/wasmJs), matching
-            // every other core:* module this app already depends on from commonMain.
-            implementation(projects.core.monetization)
+            // Plan 4 Task 6: BannerAdSlot/adSlotVisible (AppNav.kt's ad-slot gate) — compiles on
+            // all 3 targets (androidTarget/jvm/wasmJs), matching every other core:* module this
+            // app already depends on from commonMain. core:monetization (EntitlementsProvider/
+            // AlwaysFreeEntitlements) was deleted by the 2026-09-21 ads-only-monetization plan.
             implementation(projects.core.ads)
             implementation(libs.koin.core)
             implementation(libs.koin.compose.viewmodel)
@@ -134,6 +136,13 @@ kotlin {
                 exclude(group = "androidx.privacysandbox.ads", module = "ads-adservices-java")
                 exclude(group = "androidx.privacysandbox.ads", module = "ads-adservices")
             }
+            // 2026-09-21 ads-only-monetization plan (Task 3): KoinBootstrap.kt now calls
+            // Purchases.configure(...) directly, so this module needs purchases-kmp-core on its
+            // own classpath — the previous Purchases.configure call lived inside
+            // core:monetization's own androidMain (RevenueCatEntitlements.kt), which composeApp
+            // only ever saw as an opaque constructor call (`implementation`, not `api`, so its
+            // dependency never leaked transitively either), never needing this artifact directly.
+            implementation(libs.revenuecat.purchases.kmp.core)
         }
         jvmMain.dependencies {
             implementation(compose.desktop.currentOs)
@@ -205,19 +214,19 @@ kotlin {
 
 android {
     namespace = "com.yugma.terrawatch"
-    compileSdk = 36
+    compileSdk = 37
     defaultConfig {
         applicationId = "com.yugma.terrawatch"
         minSdk = 26
-        targetSdk = 36
+        targetSdk = 37
         // Plan 4 Task 1: R8 release hardening milestone. KEEP IN SYNC BY HAND with
         // SettingsScreen.kt's APP_VERSION const (that file's own kdoc carries the same reminder) —
         // no BuildConfig surface reaches commonMain, so these two literals are the only source of
         // truth and must be bumped together.
         // CI releases (release.yml) pass -PciVersionCode so every Play upload gets a unique,
         // monotonically-increasing code without a commit; local builds keep the literal.
-        versionCode = (project.findProperty("ciVersionCode") as String?)?.toIntOrNull() ?: 3
-        versionName = "1.0.0"
+        versionCode = (project.findProperty("ciVersionCode") as String?)?.toIntOrNull() ?: 4
+        versionName = "1.1.0"
         // Task 13: required for connectedDebugAndroidTest to resolve a runner at all — AGP's
         // default is the deprecated android.test.InstrumentationTestRunner otherwise.
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -225,12 +234,12 @@ android {
         // `monetizationProperties` above. `admobAppId` always resolves to a well-formed value (real
         // or TEST) — see TEST_ADMOB_APP_ID's own kdoc for why that one specifically can't be left
         // blank. `revenueCatApiKey`/`admobBannerUnit` are left as their raw (possibly-blank) config
-        // value on purpose — `RevenueCatEntitlements`'s gate and `BannerAdSlot`'s TEST-id fallback
-        // both read them at RUNTIME via manifest metadata (not BuildConfig — this project enables
-        // no `buildFeatures.buildConfig` anywhere, see `QuakeMap.android.kt`'s own kdoc for that
-        // established precedent, and Task 6 doesn't need to break it: manifest meta-data reaches
-        // BOTH this module's own androidMain AND core:ads/core:monetization's separate androidMain
-        // source sets via the same merged-manifest mechanism, where a per-module BuildConfig class
+        // value on purpose — `AdRevenueTracker`'s `Purchases.isConfigured` guard and `BannerAdSlot`'s
+        // TEST-id fallback both read them at RUNTIME via manifest metadata (not BuildConfig — this
+        // project enables no `buildFeatures.buildConfig` anywhere, see `QuakeMap.android.kt`'s own
+        // kdoc for that established precedent, and Task 6 doesn't need to break it: manifest
+        // meta-data reaches BOTH this module's own androidMain AND core:ads's separate androidMain
+        // source set via the same merged-manifest mechanism, where a per-module BuildConfig class
         // would only ever be visible inside the one module that generated it).
         manifestPlaceholders["admobAppId"] =
             monetizationProperties.getProperty("ADMOB_APP_ID")?.takeIf { it.isNotBlank() } ?: TEST_ADMOB_APP_ID
@@ -272,6 +281,22 @@ android {
         }
     }
     buildTypes {
+        debug {
+            // Installs alongside the Play build instead of fighting it. As of 2026-09 this app is
+            // in Google Play closed testing, and the developer's own device carries the tester
+            // install (installer=com.android.vending) -- so a same-applicationId debug build fails
+            // outright with INSTALL_FAILED_UPDATE_INCOMPATIBLE (different signing key), and the
+            // only way through would be uninstalling a real tester install during a 14-day
+            // continuous-tester window. Not a trade worth making for a dev build.
+            //
+            // Consequences worth knowing: debug data is a separate sandbox from the Play install
+            // (deliberate -- device passes no longer disturb real usage), and adb commands need the
+            // suffixed id (com.yugma.terrawatch.debug/com.yugma.terrawatch.MainActivity). (This
+            // comment used to also warn that Play-billing purchases can't be tested under this
+            // suffixed id, because Play only recognises the exact published applicationId -- moot
+            // since the 2026-09-21 ads-only-monetization plan removed IAP from this app entirely.)
+            applicationIdSuffix = ".debug"
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true

@@ -5,7 +5,7 @@ digest alerts (never "early warning"), history archive, insights, and a nearby-r
 built on a **Kotlin Multiplatform + Compose Multiplatform** stack with zero paid infrastructure.
 Entry for **RevenueCat Shipaton 2026** (submission window closes **Sep 30, 2026**).
 
-- **Package:** `com.yugma.terrawatch` · **Version:** 1.0.0 (versionCode 3)
+- **Package:** `com.yugma.terrawatch` · **Version:** 1.1.0 (versionCode 4)
 - **Runtime target:** Android only (jvm/wasm targets are compile-only, for CI health)
 - **Status:** feature-complete for 1.0; in Google Play **closed testing**; monetization keys pending
 
@@ -51,8 +51,8 @@ core:network                Ktor clients: USGS feed/archive, EMSC WebSocket, GDE
 core:database               SQLDelight (.sq + .sqm migrations), QuakeDao, stores
 core:data                   QuakeRepository, dedupe, alert engine, AlertDigestWorker, feature stores
 core:ui                     Design system (TerraTheme, Inter font, tokens), shared components
-core:monetization           EntitlementsProvider (Plus gate) — android=RevenueCat, jvm/wasm=always-free
-core:ads                    BannerAd expect/actual — android=AdMob, adSlotVisible ethics truth table
+core:ads                    BannerAd expect/actual — android=AdMob, adSlotVisible ethics truth table,
+                            AdRevenueTracker (ad revenue -> RevenueCat)
 ```
 
 ## Stack

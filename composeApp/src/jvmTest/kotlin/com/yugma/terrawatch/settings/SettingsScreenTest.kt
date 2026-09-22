@@ -48,7 +48,7 @@ class SettingsScreenTest {
     // `composeApp/build.gradle.kts`' versionName. Commit 97be40e (the 1.0.0 bump) moved the latter
     // two and missed this one, which is what turned CI red from 2026-08-21 onward.
     @Test fun `app version constant pins the released version string`() {
-        assertEquals("1.0.0", APP_VERSION)
+        assertEquals("1.1.0", APP_VERSION)
     }
 
     // --- Task 3 (Plan 4): the ALERTS section's permission/worker-state row -----------------------

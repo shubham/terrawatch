@@ -64,9 +64,10 @@ private const val AD_FADE_IN_DURATION_MS = 300
  * plumbing leaks into this module's public API. Blank/absent (this repo's real state throughout
  * Task 6) falls back to [TEST_BANNER_AD_UNIT_ID].
  *
- * [AdRevenueTracker]'s `onAdImpression` hook below is a documented no-op stub, not yet wired to
- * RevenueCat's own `purchases-android` `AdTracker`/`loadAndTrack` ad-monetization surface — that
- * integration needs a configured RevenueCat account (Task 8); see that object's own kdoc.
+ * [AdRevenueTracker] below is wired for real now, off `setOnPaidEventListener` rather than
+ * `AdListener.onAdImpression()`: RevenueCat's `AdRevenueData` needs the revenue amount, currency and
+ * precision, and only the paid-event callback carries them. It no-ops harmlessly on any build
+ * without a configured RevenueCat key — see that object's own kdoc.
  *
  * **Plan 5 Task 3 rewrite (user dogfooding: "ads appearing causes glitchy experience") — replaces
  * BOTH the Task 6 fix round's pause/resume wiring AND its own "accepted v1 simplification" note.**
@@ -160,12 +161,23 @@ actual fun BannerAdSlot(visible: Boolean, reducedMotion: Boolean, modifier: Modi
             setAdSize(AdSize.getCurrentOrientationAnchoredAdaptiveBannerAdSize(context, adWidthDp))
             adUnitId = bannerUnitId
             adListener = object : AdListener() {
-                override fun onAdImpression() {
-                    AdRevenueTracker.onAdImpression(bannerUnitId)
-                }
                 override fun onAdLoaded() {
                     hasLoadedOnce = true
                 }
+            }
+            // Ad REVENUE, not impressions. AdRevenueData needs amount/currency/precision, and
+            // AdListener.onAdImpression() carries none of them -- this callback is the only place
+            // they exist. `responseInfo` is read here rather than captured earlier because it is
+            // only populated once an ad has actually loaded.
+            setOnPaidEventListener { adValue ->
+                AdRevenueTracker.onAdPaid(
+                    adUnitId = bannerUnitId,
+                    valueMicros = adValue.valueMicros,
+                    currencyCode = adValue.currencyCode,
+                    precisionType = adValue.precisionType,
+                    impressionId = responseInfo?.responseId,
+                    networkName = responseInfo?.mediationAdapterClassName,
+                )
             }
             loadAd(AdRequest.Builder().build())
         }

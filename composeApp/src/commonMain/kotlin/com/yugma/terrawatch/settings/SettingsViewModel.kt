@@ -11,8 +11,7 @@ import com.yugma.terrawatch.data.ThemeStore
 import com.yugma.terrawatch.model.FavoriteAlertType
 import com.yugma.terrawatch.model.FavoritePlace
 import com.yugma.terrawatch.model.GeoPoint
-import com.yugma.terrawatch.monetization.EntitlementsProvider
-import com.yugma.terrawatch.monetization.canAddFavorite
+import com.yugma.terrawatch.model.canAddFavorite
 import com.yugma.terrawatch.notifications.NotificationAlertsUiState
 import com.yugma.terrawatch.notifications.NotificationPermissionCondition
 import com.yugma.terrawatch.notifications.NotificationPermissionRequester
@@ -39,13 +38,6 @@ import kotlinx.coroutines.launch
  * pick from THIS screen's own "Change" button (or a location grant landing while Settings happens
  * to be open) updates the saved-place row immediately, no navigation-away-and-back needed.
  *
- * Plan 4 Task 6: [isPlusActive] backs the new "TerraWatch Plus" row/status text — unlike
- * [nearbyRadiusKm]/[minMag]/[theme]/[homeLocation] above, it needs no separate `viewModelScope`
- * mirroring collector at all: [EntitlementsProvider.isPlusActive] is ALREADY a live `StateFlow`
- * (not a suspend-`get()`-plus-`Flow`-`updates` split the way the store classes are), so exposing it
- * directly is both simpler and more correct than reinventing that mirroring ceremony for a value
- * that's already exactly the right shape.
- *
  * Fix (post-Plan-5 tail, RESULTS.md round2 concern #6): [alertsUiState]/[alertsEnqueued]/
  * [refreshAlertsState] are a deliberate exception to this class's own "thin mirror, no logic of its
  * own" framing above — see [refreshAlertsState]'s own kdoc for the device-verified bug that forced
@@ -66,7 +58,6 @@ class SettingsViewModel(
     private val alertRuleStore: AlertRuleStore,
     private val themeStore: ThemeStore,
     private val homeLocationStore: HomeLocationStore,
-    entitlementsProvider: EntitlementsProvider,
     // Task 2 (Plan 5): the Places section's own favorites list — same "constructor param, thin
     // mirroring in init{}" shape every other store dependency on this class already uses.
     private val favoritePlaceStore: FavoritePlaceStore,
@@ -87,10 +78,10 @@ class SettingsViewModel(
     // themselves: neither class's jvm actual can be substituted with a controllable jvmTest fake
     // that "flips between calls" (`NotificationPermissionRequester.jvm.kt` hardcodes
     // [NotificationPermissionCondition.PRE_33]; `AlertDigestScheduler.jvm.kt` hardcodes
-    // isEnqueued=false/triggerNow/ensureEnqueued=no-op — see each file's own kdoc), the same
-    // fakeability gap [EntitlementsProvider] (already an interface) exists to close for
-    // [isPlusActive] below (`SettingsViewModelTest`'s own `FakeEntitlementsProvider`). A function
-    // type buys the identical seam with no new interface/actual/Koin registration needed — each
+    // isEnqueued=false/triggerNow/ensureEnqueued=no-op — see each file's own kdoc; deleted
+    // `EntitlementsProvider` used to be this same "fakeability gap closed by an interface" shape
+    // for the now-also-deleted isPlusActive). A function type buys the identical seam with no new
+    // interface/actual/Koin registration needed — each
     // default just calls straight through to the real, Koin-registered class's own method; both
     // classes' real behavior lives in a module-level global (`controller`/`appContext`), not
     // per-instance state, so a freshly-constructed instance here behaves identically to Koin's own
@@ -112,8 +103,6 @@ class SettingsViewModel(
 
     private val _homeLocation = MutableStateFlow<GeoPoint?>(null)
     val homeLocation: StateFlow<GeoPoint?> = _homeLocation
-
-    val isPlusActive: StateFlow<Boolean> = entitlementsProvider.isPlusActive
 
     // Task 2 (Plan 5): the Places section's favorites list — same "MutableStateFlow seeded empty,
     // mirrored live in init{}" shape [HomeViewModel.favorites] already establishes for the identical
@@ -177,17 +166,20 @@ class SettingsViewModel(
 
     fun setTheme(setting: ThemeSetting) = themeStore.setTheme(setting)
 
-    // --- Task 2 (Plan 5): the Places section's favorites CRUD + the FIRST REAL Plus gate ---------
+    // --- Task 2 (Plan 5): the Places section's favorites CRUD --------------------------------------
 
     /**
-     * Whether "Add place" can open the city picker right now — [com.yugma.terrawatch.monetization.
-     * canAddFavorite]'s pure decision, applied to THIS instant's own [favorites] count and
-     * [isPlusActive] value. `SettingsScreen`'s own "Add place" row calls this synchronously at tap
-     * time (both [favorites]/[isPlusActive] are [StateFlow]s, so `.value` is always current, no
-     * suspension needed) to decide between opening [com.yugma.terrawatch.location.CityPickerDialog]
-     * and routing to the paywall instead — see that screen's own kdoc for the gate-blocked path.
+     * Whether "Add place" can open the city picker right now — [com.yugma.terrawatch.model.
+     * canAddFavorite]'s pure decision, applied to THIS instant's own [favorites] count.
+     * `SettingsScreen`'s own "Add place" row calls this synchronously at tap time ([favorites] is a
+     * [StateFlow], so `.value` is always current, no suspension needed).
+     *
+     * Used to also take an `isPlus` value and gate a route to the paywall when blocked. TerraWatch
+     * Plus (and the paywall it led to) was withdrawn by the 2026-09-21 ads-only-monetization plan —
+     * the cap now applies identically to everyone, and `SettingsScreen`'s "Add place" row renders
+     * itself disabled at the limit instead of routing anywhere (see that row's own kdoc).
      */
-    fun canAddFavorite(): Boolean = canAddFavorite(currentCount = _favorites.value.size, isPlus = isPlusActive.value)
+    fun canAddFavorite(): Boolean = canAddFavorite(currentCount = _favorites.value.size)
 
     /** Same "off Main" treatment [setNearbyRadius]/[setMinMag] already give their own store writes
      * above, for the identical reason (a SQLite write triggered from a Compose click handler). */

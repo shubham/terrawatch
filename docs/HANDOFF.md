@@ -46,7 +46,7 @@ GitHub Actions secrets — never in git.
 
 | Thing | What it is | Where it is | Needed for |
 |---|---|---|---|
-| **`terrawatch-upload.jks`** + its passwords | The Play **upload signing key** (generated 2026-08-21, alias `terrawatch-upload`, CN=YugMa). | Owner has the file + `keystore-credentials.txt`. **Ask for them.** | Signing any AAB that updates the Play app. Lose it → recover via Play (Google holds the real app-signing key). |
+| **`terrawatch-upload.jks`** + its passwords | The Play **upload signing key**. The original (generated 2026-08-21, alias `terrawatch-upload`, CN=YugMa, SHA1 `6E:2E:B2:28:6D:2E:67:28:30:1E:C2:9C:A5:ED:A6:25:43:AA:FD:38`) was **misplaced 2026-09-05**. A replacement was generated the same day at `~/keys/terrawatch/` (outside the repo, alias unchanged, SHA1 `B0:F9:47:13:D7:2A:62:4C:07:BD:A7:64:2B:EA:D2:E5:A1:3D:34:81`) and became valid once Google **approved the upload key reset** (approved; owner-confirmed 2026-09-21). | `~/keys/terrawatch/` on the owner's machine + password manager. | Signing any AAB that updates the Play app. Losing it is recoverable and never locks you out: Play App Signing has been mandatory for new apps since Aug 2021, so Google holds the real app-signing key. Reset via Play Console → Play Store protection → Manage Play app signing → Request upload key reset (upload `upload_certificate.pem`; 1-2 business days). Existing testers keep their installs throughout — only new uploads are blocked. |
 | **`composeApp/monetization.properties`** | `REVENUECAT_API_KEY`, `ADMOB_APP_ID`, `ADMOB_BANNER_UNIT`. | Does **not exist yet** — owner is creating the accounts. Template: `composeApp/monetization.properties.example`. | Real ads + real Plus subscription. App builds & runs fine WITHOUT it (test ad IDs, free-only). |
 | **Play service-account JSON** | Google Play API key for automated uploads. | Owner creates in Play Console → Setup → API access. | CI auto-deploy (release.yml) + RevenueCat linking. |
 | **GitHub Actions secrets** | 8 secrets the release workflow reads. | Repo → Settings → Secrets. See the CI plan doc. | `release.yml` tag-driven Play deploys. |
@@ -77,10 +77,17 @@ is intentional and correct for development and for the closed test.
 ## 4. Current state (as of this handoff)
 
 - **Branch `main` @ latest**, fully pushed, CI green. Everything below is merged.
-- **Version 1.0.0 / versionCode 3.** A **signed release AAB exists** (built with the upload key)
-  and has been handed to the owner to upload as the **first** Play release (Play requires the very
-  first upload to be manual; the API can't create an app's first release).
-- **~760 unit tests**, all green. R8/minify on release. Migration guard in CI.
+- **Version 1.1.0 / versionCode 4.** The app is **live on Google Play**. The first release (1.0.0)
+  was uploaded manually, as Play requires for any app's first release. The upload key misplaced on
+  2026-09-05 has since been resolved: **Google approved the upload-key reset** (owner-confirmed
+  2026-09-21), so the replacement at `~/keys/terrawatch/terrawatch-upload-new.jks` signs valid
+  uploads.
+- **Monetization is ads-only as of 1.1.0.** The TerraWatch Plus one-time purchase, the paywall and
+  the entire `core/monetization` module were deleted before Plus ever sold — `REVENUECAT_API_KEY`
+  was never set, so no shipped build could transact. The withdrawn implementation is preserved on
+  branch **`feat/plus-purchase-parked`**. RevenueCat now only records ad revenue, and a blank key
+  stays a fully supported state. Favourite places are capped at 5 for everyone.
+- **765 unit tests**, all green. R8/minify on release. Migration guard in CI.
 - **CI:** `.github/workflows/ci.yml` runs tests + 3-target compiles + migration verify on
   pushes to `main`/`feat/**`/`fix/**`/`docs/**`. `.github/workflows/release.yml` is the
   tag-driven Play deployer (dormant until the 8 secrets are set — see §2 and the CI plan doc).

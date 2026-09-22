@@ -27,6 +27,11 @@ kotlin {
         // platform table: "Ads: Android [only]"), so neither needs this on its classpath. See
         // libs.versions.toml's playServicesAds entry for the version-pin verification.
         androidMain.dependencies {
+            // Plus purchase flow: AdRevenueTracker reports real ad revenue into RevenueCat through
+            // Purchases.adTracker, so this module now needs the same purchases-kmp-core that
+            // core:monetization's androidMain already depends on. Android-gated for the same reason
+            // it is there: jvm/wasmJs never render an ad at all.
+            implementation(libs.revenuecat.purchases.kmp.core)
             // Plain GAV-string notation (version still sourced from libs.versions.toml's own
             // playServicesAds entry, no duplicated/hardcoded number) rather than the
             // `libs.play.services.ads` catalog accessor directly: this Gradle/AGP combination's

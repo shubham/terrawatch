@@ -41,20 +41,20 @@ import com.yugma.terrawatch.home.LayoutMode
 import com.yugma.terrawatch.home.QuakeSelectionViewModel
 import com.yugma.terrawatch.home.layoutMode
 import com.yugma.terrawatch.insights.InsightsScreen
-import com.yugma.terrawatch.monetization.EntitlementsProvider
 import com.yugma.terrawatch.motion.LocalReducedMotion
 import com.yugma.terrawatch.onboarding.OnboardingScreen
-import com.yugma.terrawatch.paywall.PaywallScreen
 import com.yugma.terrawatch.settings.SettingsScreen
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 
 /**
  * Task 4 (Plan 3): the app's nav destinations. [HOME]/[HISTORY]/[INSIGHTS] are the 3 persistent
- * tabs (bottom [NavigationBar] on phone, [NavigationRail] on desktop — see [AppNav]); [SETTINGS],
- * [ONBOARDING], and (Plan 4 Task 6) [PAYWALL] are stack-only routes reached from a tab (Home's gear
- * chip, the app's own conditional start destination, and Settings' "TerraWatch Plus" row,
- * respectively) rather than tabs of their own — none shows in the tab bar/rail (see [TAB_ROUTES]).
+ * tabs (bottom [NavigationBar] on phone, [NavigationRail] on desktop — see [AppNav]); [SETTINGS]
+ * and [ONBOARDING] are stack-only routes reached from a tab (Home's gear chip and the app's own
+ * conditional start destination, respectively) rather than tabs of their own — none shows in the
+ * tab bar/rail (see [TAB_ROUTES]). A third stack-only route, `PAYWALL` (Plan 4 Task 6, reached from
+ * Settings' "TerraWatch Plus" row), was deleted by the 2026-09-21 ads-only-monetization plan along
+ * with that row and the paywall screen itself.
  *
  * Plain `String` constants, not `@Serializable` type-safe route classes (Navigation Compose
  * 2.9's other supported style): every screen here resolves its own ViewModel/state via Koin, not
@@ -70,7 +70,6 @@ object Routes {
     const val INSIGHTS = "insights"
     const val SETTINGS = "settings"
     const val ONBOARDING = "onboarding"
-    const val PAYWALL = "paywall"
 }
 
 /** The 3 routes that show bottom-nav/rail chrome — [Routes.SETTINGS]/[Routes.ONBOARDING] render
@@ -109,13 +108,14 @@ private val AD_ELIGIBLE_ROUTES = TAB_ROUTES
  * "extract the pure fn" convention [com.yugma.terrawatch.home.layoutMode]/
  * [com.yugma.terrawatch.home.shouldShowStalenessBanner] already established for this codebase):
  * pure route → ad-eligibility predicate. Kept OUTSIDE `core:ads`' [com.yugma.terrawatch.ads.
- * adSlotVisible] on purpose — that function's 3-input ad-ethics signature is spec §8 IMMUTABLE
- * (Plan 5 Task 3's own NON-NEGOTIABLE carries forward unchanged here too: no route input is ever
- * added to it). This is a SECOND, independent gate, ANDed with [com.yugma.terrawatch.ads.
- * adSlotVisible]'s result at the [AppNav] call site below — not a 4th input smuggled into that
- * function, and not a reason to weaken what "eligible" already means there: a Plus-free,
- * non-onboarding, detail-closed user on Settings still has `adSlotVisible(...) == true`;
- * [isAdEligibleRoute] is the separate reason the ad still doesn't show there.
+ * adSlotVisible] on purpose — that function's ad-ethics signature (2 inputs since the
+ * 2026-09-21 ads-only-monetization plan dropped isPlusActive) is spec §8 IMMUTABLE (Plan 5 Task
+ * 3's own NON-NEGOTIABLE carries forward unchanged here too: no route input is ever added to it).
+ * This is a SECOND, independent gate, ANDed with [com.yugma.terrawatch.ads.adSlotVisible]'s result
+ * at the [AppNav] call site below — not a 3rd input smuggled into that function, and not a reason
+ * to weaken what "eligible" already means there: a non-onboarding, detail-closed user on Settings
+ * still has `adSlotVisible(...) == true`; [isAdEligibleRoute] is the separate reason the ad still
+ * doesn't show there.
  */
 internal fun isAdEligibleRoute(route: String?): Boolean = route in AD_ELIGIBLE_ROUTES
 
@@ -166,10 +166,11 @@ internal const val NAV_INSIGHTS_TAG = "nav-insights"
  * (androidInstrumentedTest) passes a directly-constructed, Koin-free `OnboardingStore` instead, so
  * pinning "fresh install -> onboarding shown, onboarded -> home" needs no `startKoin{}` at all.
  *
- * Plan 4 Task 6: [entitlementsProvider] is the SAME "defaulted `koinInject()`" shape as
- * [onboardingStore] just above, for the identical reason — it feeds [adSlotVisible] below (spec §8,
- * IMMUTABLE) — one of the two ANDed conditions (the Settings-nav follow-up added [isAdEligibleRoute], the
- * route-based other half) that decide whether [BannerAdSlot] shows anything at all.
+ * Plan 4 Task 6 used to also take an `entitlementsProvider` param here, the SAME defaulted
+ * `koinInject()` shape [onboardingStore] just below still uses, feeding [adSlotVisible]'s now-
+ * removed `isPlusActive` input (spec §8). The 2026-09-21 ads-only-monetization plan (Task 3)
+ * dropped that parameter along with the rest of `core:monetization` — [adSlotVisible] below is
+ * called with only [isDetailOpen]/[isOnboarding] now (see that call site's own comment).
  */
 @Composable
 fun AppNav(
@@ -180,7 +181,6 @@ fun AppNav(
     // call sites - none of which pass this - keep compiling unchanged).
     detailNewsViewModel: DetailNewsViewModel = koinViewModel(),
     onboardingStore: OnboardingStore = koinInject(),
-    entitlementsProvider: EntitlementsProvider = koinInject(),
 ) {
     // One-shot, read exactly once for this composable's whole lifetime (remember, no key) --
     // deliberately NOT re-read on every recomposition: "onboarded" only ever flips false -> true
@@ -197,17 +197,18 @@ fun AppNav(
     val currentRoute = backStackEntry?.destination?.route
     val showTabChrome = currentRoute in TAB_ROUTES
 
-    // Plan 4 Task 6: adSlotVisible's 3 inputs. [isOnboarding] is computed generally here (not
-    // hardcoded `false`) because the real call site below (the Settings-nav follow-up: no longer nested inside
+    // Plan 4 Task 6: adSlotVisible's inputs (2, since the 2026-09-21 ads-only-monetization plan
+    // dropped isPlusActive — Plus was withdrawn before it ever sold). [isOnboarding] is computed
+    // generally here (not hardcoded `false`) because the real call site below (the Settings-nav
+    // follow-up: no longer nested inside
     // `if (showTabChrome)` — see AD_ELIGIBLE_ROUTES'/isAdEligibleRoute's own kdoc above) gates its
-    // OWN mount directly on `!isPlusActive && !isOnboarding`, not on TAB_ROUTES membership — this
-    // val is what actually feeds that condition now, not merely a redundant-but-safe echo of an
-    // exclusion TAB_ROUTES happened to already guarantee. [isDetailOpen]/[isPlusActive] are the two
-    // inputs that actually vary while the ad slot stays mounted.
+    // OWN mount directly on `!isOnboarding`, not on TAB_ROUTES membership — this val is what
+    // actually feeds that condition now, not merely a redundant-but-safe echo of an exclusion
+    // TAB_ROUTES happened to already guarantee. [isDetailOpen] is the one input that actually varies
+    // while the ad slot stays mounted.
     val isOnboarding = currentRoute == Routes.ONBOARDING
     val selectedQuake by selectionViewModel.selectedQuake.collectAsState()
     val isDetailOpen = selectedQuake != null
-    val isPlusActive by entitlementsProvider.isPlusActive.collectAsState()
 
     // Plan 4 Task 4 (c): ONE shared source of truth, replacing the former per-call-site
     // BoxWithConstraints measurement this kdoc used to describe disagreeing with HomeScreen's own
@@ -258,33 +259,34 @@ fun AppNav(
                 // Plan 5 Task 3 (user dogfooding: "ads appearing causes glitchy experience"): this
                 // call site does TWO separate things, not one — see BannerAdSlot's own (expect)
                 // kdoc for the full split. (a) This `if` gates whether BannerAdSlot is called AT
-                // ALL: only while `!isPlusActive && !isOnboarding`, i.e. exactly the two axes that
-                // are meant to be a genuine destroy()/recreate (Plus purchase, onboarding
-                // finishing) rather than a frequent, in-session toggle. (b) The full 3-input
-                // adSlotVisible (isDetailOpen included) still feeds `visible` below, interpreted by
-                // BannerAdSlot as "collapse the reserved height + pause," never as "tear the AdView
-                // down" — so isDetailOpen toggling (opening/closing the quake detail sheet) never
+                // ALL: only while `!isOnboarding`, the one axis meant to be a genuine
+                // destroy()/recreate (onboarding finishing) rather than a frequent, in-session
+                // toggle — this used to also check `!isPlusActive`, but the 2026-09-21
+                // ads-only-monetization plan withdrew Plus before it ever sold, leaving onboarding
+                // as the only remaining structural-unmount axis. (b) The full adSlotVisible
+                // (isDetailOpen included) still feeds `visible` below, interpreted by BannerAdSlot
+                // as "collapse the reserved height + pause," never as "tear the AdView down" — so
+                // isDetailOpen toggling (opening/closing the quake detail sheet) never
                 // destroys/reloads the ad.
                 //
                 // The Settings-nav follow-up (user dogfooding follow-up — see AD_ELIGIBLE_ROUTES'/
                 // isAdEligibleRoute's own kdoc above for the full gap this closes, named but
                 // deliberately left unfixed by task-3-report.md section 4): THIS call site is no
-                // longer nested inside `if (showTabChrome)` — that nesting was the bug. Settings/
-                // Paywall navigation no longer tears this composable down and rebuilds a fresh
-                // AdView, because neither route flips `isPlusActive` or `isOnboarding`,  the only
-                // two things gate (a) above still checks. `isAdEligibleRoute(currentRoute)`, ANDed
-                // into `visible` alongside the untouched 3-input adSlotVisible, is what keeps
-                // Settings from ever visually showing an ad despite the AdView staying mounted
-                // underneath it — the same "collapse reserved height + pause + View.GONE" path
-                // adSlotVisible's own isDetailOpen=true case already takes, never a destroy.
-                // AppBottomBar's own `if (showTabChrome)` gate (below) is now a fully independent
-                // `if` — the two only ever rose and fell together before because they were written
-                // inside the same block, not because either one's OWN lifecycle actually depended
-                // on the other; conflating them is exactly what caused this bug.
-                if (!isPlusActive && !isOnboarding) {
+                // longer nested inside `if (showTabChrome)` — that nesting was the bug. Settings
+                // navigation no longer tears this composable down and rebuilds a fresh AdView,
+                // because that route doesn't flip `isOnboarding`, the only thing gate (a) above
+                // still checks. `isAdEligibleRoute(currentRoute)`, ANDed into `visible` alongside
+                // the untouched adSlotVisible, is what keeps Settings from ever visually showing an
+                // ad despite the AdView staying mounted underneath it — the same "collapse reserved
+                // height + pause + View.GONE" path adSlotVisible's own isDetailOpen=true case
+                // already takes, never a destroy. AppBottomBar's own `if (showTabChrome)` gate
+                // (below) is now a fully independent `if` — the two only ever rose and fell
+                // together before because they were written inside the same block, not because
+                // either one's OWN lifecycle actually depended on the other; conflating them is
+                // exactly what caused this bug.
+                if (!isOnboarding) {
                     BannerAdSlot(
                         visible = adSlotVisible(
-                            isPlusActive = isPlusActive,
                             isDetailOpen = isDetailOpen,
                             isOnboarding = isOnboarding,
                         ) && isAdEligibleRoute(currentRoute),
@@ -393,9 +395,10 @@ private fun AppNavHost(
     val reducedMotion = LocalReducedMotion.current
     NavHost(navController = navController, startDestination = startDestination, modifier = modifier) {
         // Only the 4 routes the doc's own Part 3 table names (Home/History/Insights/Settings) get
-        // the crossfade - Paywall/Onboarding keep whatever default Navigation Compose already
-        // applies, deliberately out of this item's named scope (a first-run-only pager and a rare
-        // purchase-flow push read differently from a "switching sibling tabs" crossfade).
+        // the crossfade - Onboarding keeps whatever default Navigation Compose already applies,
+        // deliberately out of this item's named scope (a first-run-only pager reads differently
+        // from a "switching sibling tabs" crossfade). The former PAYWALL route was the other
+        // out-of-scope example here; it was deleted by the 2026-09-21 ads-only-monetization plan.
         // popEnterTransition/popExitTransition default to enterTransition/exitTransition when not
         // set explicitly, so back-direction (e.g. a Settings->Home system-back) gets the identical
         // fade, not a directional asymmetry.
@@ -446,22 +449,16 @@ private fun AppNavHost(
         // NavBackStackEntry (same shape History/Insights already use for their own ViewModels).
         // onBack pops this stack-only route — see SettingsScreen's own kdoc for why it needs one at
         // all (unlike HOME/HISTORY/INSIGHTS, this isn't a tab with its own back-stack root).
-        // Plan 4 Task 6: onPlusClick pushes the new PAYWALL route — same "stack-only route reached
-        // from a tab, popped via onBack" shape.
+        // Plan 4 Task 6 used to also wire onPlusClick here to push a PAYWALL route; both the route
+        // and the paywall screen it led to were deleted by the 2026-09-21 ads-only-monetization
+        // plan (Tasks 3/4).
         composable(
             Routes.SETTINGS,
             enterTransition = { tabEnterTransition(reducedMotion) },
             exitTransition = { tabExitTransition(reducedMotion) },
         ) {
-            SettingsScreen(
-                onBack = { navController.popBackStack() },
-                onPlusClick = { navController.navigate(Routes.PAYWALL) },
-            )
+            SettingsScreen(onBack = { navController.popBackStack() })
         }
-        // Plan 4 Task 6: the "TerraWatch Plus" paywall STUB (real purchases-kmp-ui wiring is Task
-        // 8, once a RevenueCat account/product exists — see PaywallScreen's own kdoc). Stack-only,
-        // same "reached from a tab, own onBack pops it" shape as SETTINGS/ONBOARDING above.
-        composable(Routes.PAYWALL) { PaywallScreen(onBack = { navController.popBackStack() }) }
         // Task 8 (Plan 3): the real 3-step pager replaces the OnboardingPlaceholder this route
         // used to render (Task 4's own scaffolding, deleted below — see OnboardingScreen.kt's own
         // kdoc for the 3 steps). onFinish fires from EITHER the pager's own "Done" (final step) or
