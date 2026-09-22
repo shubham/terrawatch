@@ -77,11 +77,16 @@ is intentional and correct for development and for the closed test.
 ## 4. Current state (as of this handoff)
 
 - **Branch `main` @ latest**, fully pushed, CI green. Everything below is merged.
-- **Version 1.1.0 / versionCode 4.** The app is **live on Google Play**. The first release (1.0.0)
-  was uploaded manually, as Play requires for any app's first release. The upload key misplaced on
-  2026-09-05 has since been resolved: **Google approved the upload-key reset** (owner-confirmed
-  2026-09-21), so the replacement at `~/keys/terrawatch/terrawatch-upload-new.jks` signs valid
-  uploads.
+- **Version 1.1.0 / versionCode 4.** The app is on Google Play in **CLOSED TESTING, not
+  production** — Play Console shows status "Closed testing", installed audience 9, last updated
+  2026-08-21 (versionCode 3). An earlier revision of this file said "live on Google Play", which
+  was too loose: it is published to a closed track, and is not publicly discoverable. That
+  distinction matters because AdMob is reluctant to serve real ad inventory to an app it cannot
+  verify against a public listing — the leading explanation for the NO_FILL seen on 2026-09-21/22
+  (see docs/qa/ads-only-monetization/RESULTS.md and docs/RELEASING.md §3).
+  The upload key misplaced on 2026-09-05 has been resolved: **Google approved the upload-key
+  reset** (owner-confirmed 2026-09-21), so the replacement at
+  `~/keys/terrawatch/terrawatch-upload-new.jks` signs valid uploads.
 - **Monetization is ads-only as of 1.1.0.** The TerraWatch Plus one-time purchase, the paywall and
   the entire `core/monetization` module were deleted before Plus ever sold — `REVENUECAT_API_KEY`
   was never set, so no shipped build could transact. The withdrawn implementation is preserved on
