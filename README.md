@@ -51,8 +51,8 @@ core:network                Ktor clients: USGS feed/archive, EMSC WebSocket, GDE
 core:database               SQLDelight (.sq + .sqm migrations), QuakeDao, stores
 core:data                   QuakeRepository, dedupe, alert engine, AlertDigestWorker, feature stores
 core:ui                     Design system (TerraTheme, Inter font, tokens), shared components
-core:monetization           EntitlementsProvider (Plus gate) — android=RevenueCat, jvm/wasm=always-free
-core:ads                    BannerAd expect/actual — android=AdMob, adSlotVisible ethics truth table
+core:ads                    BannerAd expect/actual — android=AdMob, adSlotVisible ethics truth table,
+                            AdRevenueTracker (ad revenue -> RevenueCat)
 ```
 
 ## Stack

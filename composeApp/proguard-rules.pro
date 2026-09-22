@@ -84,11 +84,13 @@
 # and play-services-ads' own AdMob SDK internals both ship their OWN bundled consumer-rules.pro
 # (same "well-maintained library, no explicit keep needed" default this file's header already states
 # for AndroidX/Compose/Koin/Ktor/SQLDelight/kotlinx-serialization/maplibre-compose) — confirmed by
-# the clean `assembleRelease` result above, not assumed. `RevenueCatEntitlements` itself
-# (core:monetization androidMain) is UNREACHABLE at runtime throughout Task 6 (no RevenueCat API key
-# configured — see that class's own kdoc), so this is a compile/shrink-time-only proof for now; a
-# real on-device purchase-flow smoke pass is Task 8's job, once a real account/product exists to
-# smoke-test against.
+# the clean `assembleRelease` result above, not assumed.
+#
+# UPDATED 2026-09-21 (ads-only monetization): `core:monetization` and `RevenueCatEntitlements` no
+# longer exist — the Plus purchase was withdrawn before it ever sold. `purchases-kmp-core` is still
+# on the release classpath, now via `core:ads`, where `AdRevenueTracker` is its only consumer, so
+# the consumer-rules reasoning above still applies unchanged. Re-verified by a clean R8
+# `assembleRelease` plus an on-device pass on a Pixel 8 (docs/qa/ads-only-monetization/).
 #
 # One real, non-cosmetic dependency-resolution issue Task 6 DID hit and fix (not an R8/proguard-rule
 # concern — recorded here for proximity, fixed in core:ads/build.gradle.kts and
